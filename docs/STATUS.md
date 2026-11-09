@@ -203,3 +203,9 @@ User supplied a fresh command output from host `spark-7ea3`:
 - Coverage includes conversation persistence, in-memory SQLite behavior, worker routing and registry validation, planner/schema validation, dependency-wave execution, durable execution state, OpenAI API continuity, bearer authentication, and process-local worker concurrency enforcement including logical aliases of the same runtime.
 - The tested source is suitable for controlled DGX staging, but not yet production-ready for multi-user LAN use. Open WebUI mapping, streaming, image transport, tenant isolation, TLS termination, and live DGX compatibility checks remain deployment gates.
 - No DGX Spark host, model, runtime, container, service, or workstation was changed.
+
+
+### 2026-11-09 — Authentication and runtime-alias concurrency recheck
+- Final code revision `6974a962b399bafc02b1b572c874a320f93dcde7` passed GitHub Actions run [42602083537](https://github.com/hamedg2881-bot/CLICoding/actions/runs/42602083537).
+- Result remains **37 passed**, one Starlette/httpx deprecation warning.
+- The final recheck includes case-insensitive Bearer scheme handling and verifies the API authentication test after the change. The latest subsequent commits only update staging documentation.
