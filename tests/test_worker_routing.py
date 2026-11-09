@@ -66,3 +66,48 @@ def test_yaml_registry_rejects_non_list_capabilities(tmp_path):
         assert False, "Expected RegistryError"
     except RegistryError:
         pass
+
+
+def test_registry_rejects_non_http_worker_endpoint():
+    try:
+        WorkerRegistry([
+            Worker("bad", "file:///etc/passwd", "model", frozenset({"chat"}))
+        ])
+    except RegistryError as exc:
+        assert "HTTP(S)" in str(exc)
+    else:
+        raise AssertionError("non-HTTP worker endpoint must be rejected")
+
+
+def test_registry_rejects_invalid_worker_concurrency():
+    try:
+        WorkerRegistry([
+            Worker(
+                "bad", "http://localhost:8000/v1", "model",
+                frozenset({"chat"}), max_concurrency=0
+            )
+        ])
+    except RegistryError as exc:
+        assert "invalid limits" in str(exc)
+    else:
+        raise AssertionError("zero worker concurrency must be rejected")
+
+
+def test_yaml_registry_rejects_missing_secret_environment_variable(tmp_path, monkeypatch):
+    monkeypatch.delenv("MISSING_CLICODING_SECRET", raising=False)
+    path = tmp_path / "workers.yaml"
+    path.write_text(
+        "workers:\\n"
+        "  - id: coder\\n"
+        "    base_url: http://localhost:8000/v1\\n"
+        "    model: coder\\n"
+        "    capabilities: [coding]\\n"
+        "    api_key_env: MISSING_CLICODING_SECRET\\n",
+        encoding="utf-8",
+    )
+    try:
+        WorkerRegistry.from_yaml(str(path))
+    except RegistryError as exc:
+        assert "unset or empty" in str(exc)
+    else:
+        raise AssertionError("missing configured secret must fail closed")
