@@ -97,12 +97,12 @@ def test_yaml_registry_rejects_missing_secret_environment_variable(tmp_path, mon
     monkeypatch.delenv("MISSING_CLICODING_SECRET", raising=False)
     path = tmp_path / "workers.yaml"
     path.write_text(
-        "workers:\\n"
-        "  - id: coder\\n"
-        "    base_url: http://localhost:8000/v1\\n"
-        "    model: coder\\n"
-        "    capabilities: [coding]\\n"
-        "    api_key_env: MISSING_CLICODING_SECRET\\n",
+        "workers:\n"
+        "  - id: coder\n"
+        "    base_url: http://localhost:8000/v1\n"
+        "    model: coder\n"
+        "    capabilities: [coding]\n"
+        "    api_key_env: MISSING_CLICODING_SECRET\n",
         encoding="utf-8",
     )
     try:
