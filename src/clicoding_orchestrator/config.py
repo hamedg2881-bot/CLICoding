@@ -14,6 +14,7 @@ class Settings:
     request_timeout_seconds: float = 180.0
     workers_file: str | None = None
     enable_planning: bool = False
+    max_parallel_tasks: int = 3
     api_key: str | None = None
 
     def __post_init__(self) -> None:
@@ -21,6 +22,8 @@ class Settings:
             raise ValueError("database_path cannot be empty")
         if not math.isfinite(self.request_timeout_seconds) or self.request_timeout_seconds <= 0:
             raise ValueError("request_timeout_seconds must be a finite positive number")
+        if self.max_parallel_tasks < 1 or self.max_parallel_tasks > 3:
+            raise ValueError("max_parallel_tasks must be between 1 and 3 for the three-runtime topology")
         if self.api_key is not None and (
             len(self.api_key) < 32 or not self.api_key.isascii() or not self.api_key.strip()
         ):
@@ -41,5 +44,6 @@ class Settings:
             ),
             workers_file=os.getenv("CLICODING_WORKERS_FILE") or None,
             enable_planning=os.getenv("CLICODING_ENABLE_PLANNING", "false").lower() in ("1", "true", "yes"),
+            max_parallel_tasks=int(os.getenv("CLICODING_MAX_PARALLEL_TASKS", "3")),
             api_key=os.getenv("CLICODING_API_KEY") or None,
         )
