@@ -13,7 +13,7 @@ class Completion:
 
 
 class ModelGateway(Protocol):
-    async def complete(self, messages: list[dict[str, str]]) -> Completion: ...
+    async def complete(self, messages: list[dict[str, object]]) -> Completion: ...
 
 
 class GatewayError(RuntimeError):
@@ -35,7 +35,7 @@ class OpenAICompatibleGateway:
         self.api_key = api_key
         self.timeout_seconds = timeout_seconds
 
-    async def complete(self, messages: list[dict[str, str]]) -> Completion:
+    async def complete(self, messages: list[dict[str, object]]) -> Completion:
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
