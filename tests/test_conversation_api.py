@@ -115,3 +115,72 @@ def test_disabled_worker_is_not_selected_and_returns_503(tmp_path):
         json={"content": "Change code", "task_type": "coding"},
     )
     assert response.status_code == 503
+
+
+class FakeOrchestrator:
+    def __init__(self):
+        self.calls = []
+
+    async def run(self, conversation_id, user_request, conversation_context=""):
+        from types import SimpleNamespace
+
+        self.calls.append((conversation_id, user_request, conversation_context))
+        return SimpleNamespace(
+            execution_id=f"execution-{len(self.calls)}",
+            answer=f"orchestrated-{len(self.calls)}",
+        )
+
+
+def test_openai_compatible_endpoint_uses_orchestrator_and_keeps_one_identity(tmp_path):
+    gateway = FakeGateway()
+    database = Database(str(tmp_path / "orchestrated.sqlite3"))
+    orchestrator = FakeOrchestrator()
+    app = create_app(
+        settings=Settings(database_path=str(tmp_path / "orchestrated.sqlite3")),
+        gateway=gateway,
+        database=database,
+        orchestrator=orchestrator,
+    )
+    client = TestClient(app)
+
+    first = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "clicoding",
+            "messages": [{"role": "user", "content": "Analyze this task"}],
+        },
+    )
+    assert first.status_code == 200
+    first_body = first.json()
+    conversation_id = first_body["conversation_id"]
+    assert first_body["model"] == "clicoding"
+    assert first_body["choices"][0]["message"]["content"] == "orchestrated-1"
+    assert first_body["x_clicoding"]["orchestrated"] is True
+    assert first_body["x_clicoding"]["execution_id"] == "execution-1"
+
+    second = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "clicoding",
+            "conversation_id": conversation_id,
+            "messages": [
+                {"role": "user", "content": "Analyze this task"},
+                {"role": "assistant", "content": "orchestrated-1"},
+                {"role": "user", "content": "Now continue"},
+            ],
+        },
+    )
+    assert second.status_code == 200
+    assert second.json()["conversation_id"] == conversation_id
+    assert second.json()["choices"][0]["message"]["content"] == "orchestrated-2"
+    assert orchestrator.calls[0][0] == conversation_id
+    assert orchestrator.calls[1][0] == conversation_id
+    assert orchestrator.calls[1][1] == "Now continue"
+    assert "user: Analyze this task" in orchestrator.calls[1][2]
+    assert "assistant: orchestrated-1" in orchestrator.calls[1][2]
+    assert gateway.calls == []
+
+    stored = client.get(f"/api/v1/conversations/{conversation_id}").json()
+    assert [event["producer"] for event in stored["events"]] == [
+        "user", "orchestrator", "user", "orchestrator"
+    ]
