@@ -29,7 +29,7 @@
 - [x] End-to-end workflow.
 - [x] Architecture decision log.
 - [x] Status and next-action record.
-- [ ] Confirm target AI server hardware/OS and project allocation.
+- [ ] Confirm target AI server hardware/OS and project allocation. (Tracked in [Issue #1](https://github.com/hamedg2881-bot/CLICoding/issues/1))
 - [ ] Confirm workstation OS mix.
 - [ ] Confirm expected number of concurrent developers.
 - [ ] Select first sample .NET/web project for acceptance testing.
@@ -51,4 +51,5 @@ Then run controlled evaluations for repository understanding, C# edits, tool cal
 - Inspected repository metadata; repository was empty.
 - Confirmed main as default branch and write permission.
 - Established project charter, architecture, roadmap, workflow, and decisions.
+- Created [Issue #1](https://github.com/hamedg2881-bot/CLICoding/issues/1) for Phase 1 inventory and model capability validation.
 - No infrastructure or source-code changes have been made.
