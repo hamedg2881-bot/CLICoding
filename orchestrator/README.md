@@ -23,7 +23,7 @@ python -m venv .venv
 pip install -e '.[test]'
 cp .env.example .env
 # Edit CLICODING_UPSTREAM_BASE_URL and CLICODING_UPSTREAM_MODEL for your local endpoint.
-uvicorn clicoding_orchestrator.app:app --app-dir src --host 127.0.0.1 --port 8090
+uvicorn clicoding_orchestrator.app:create_app --factory --app-dir src --host 127.0.0.1 --port 8090
 ```
 
 The service loads values from the local `.env` file and binds to loopback by default. Do not expose it to the LAN before authentication,
