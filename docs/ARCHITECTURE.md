@@ -119,3 +119,7 @@ See [ORCHESTRATOR_SPEC.md](ORCHESTRATOR_SPEC.md) for logical contracts, lifecycl
 
 LiteLLM is a candidate OpenAI-compatible transport/gateway layer only. It is not assumed to provide conversation memory, task decomposition, dependency-graph execution, tool governance, or resource-aware orchestration. The gateway can be replaced without changing Conversation, Task, or Execution Plan contracts.
 
+## 10. Client-to-Orchestrator boundary
+
+The user-facing client connects to one stable Orchestrator endpoint and one assistant alias. It must not connect directly to worker model runtimes or expose their model IDs in the normal user experience. Any LiteLLM instance is downstream/internal. The Orchestrator owns worker selection and handoffs, while client conversation identifiers are mapped to canonical Orchestrator conversation IDs.
+
