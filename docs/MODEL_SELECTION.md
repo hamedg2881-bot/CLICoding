@@ -70,3 +70,48 @@ Select the primary by end-to-end task success and patch correctness, not by toke
 ## Current decision
 
 Keep Qwen3.8-Flash-Next as the primary candidate; do not add models; do not delete any weights yet. Keep Qwen3.6-VL, Qwen3.8-27B, and Qwen3-Coder-Next on disk only until comparative tests determine whether any deserve a secondary role. Defer qwen3-vl-8b-vllm cleanup until the same test suite confirms it is redundant.
+
+
+## Superseding architecture direction — concurrent resident models (2026-11-09)
+
+The earlier single-primary / swap-on-demand recommendation is superseded by the user's explicit preference: the required models should remain resident and available simultaneously. Model switching is not the preferred normal operating mode.
+
+The user also rejects Qwen3.8-27B Dense as a primary candidate because of its expected low decode speed. Do not recommend it as a preferred production model unless new local measurements overturn that constraint.
+
+### Leading two-model configuration to validate
+
+1. **Coding specialist: Qwen3-Coder-Next 80B-A3B NVFP4 (GB10 build).**
+   - Community GB10 checkpoint reports about 43.22 GiB resident weights, 80B total / 3B active, 12 full-attention layers out of 48, FP8 KV cache, native 262K context, and tool-call parser support.
+   - A separate GB10 measurement reports about 61 tok/s without speculative decoding; results depend on checkpoint/runtime.
+   - References: https://huggingface.co/gdubicki/qwen3-coder-next and https://howtospark.com/recipes/qwen3-coder-next-nvfp4
+
+2. **Vision + general model: Qwen3.6-35B-A3B NVFP4.**
+   - Official vLLM recipe lists a 21 GB minimum VRAM profile for NVFP4, explicitly supports DGX Spark GB10, and recommends FP8 KV cache, max context 262K, max 8 sequences, and GPU-memory-utilization 0.5 for the Spark profile.
+   - This model supplies image understanding that Nemotron 3.5 Lightning does not provide.
+   - Reference: https://github.com/vllm-project/recipes/blob/main/models/Qwen/Qwen3.6-35B-A3B.yaml
+
+### Competing candidate: Nemotron 3.5 Lightning 30B-A3B NVFP4
+
+- NVIDIA lists about 30 GB unified memory before KV-cache headroom on DGX Spark.
+- It is a text-only model, optimized for agentic workflows, coding and tool use; NVIDIA reports SWE-bench Verified 52.80 for the NVFP4 checkpoint.
+- It is a strong alternative general/agentic worker, but it does not replace the Vision role. Pairing it with Qwen3-Coder-Next consumes more memory than the Qwen3.6 NVFP4 minimum and still leaves Vision uncovered.
+- References: https://build.nvidia.com/nvidia/nemotron-3.5-lightning-30b-a3b/modelcard and https://build.nvidia.com/playbooks/nim-llm/overview
+
+### Preliminary memory arithmetic — not a fit guarantee
+
+- Qwen3-Coder-Next: approximately 43.22 GiB resident model weights in the cited GB10 recipe; that recipe separately caps KV cache at 8 GiB for a single-user full-context configuration.
+- Qwen3.6-35B-A3B: official recipe's minimum VRAM field is 21 GB (not a complete measured resident-memory figure).
+- Combined model-weight / minimum-footprint starting point: roughly 64 GB-class, before both runtimes' allocations, KV caches, CUDA graphs, activations, concurrency, OS, Docker, Open WebUI, Gateway, and other existing services.
+- Nemotron 3.5 Lightning requires roughly 30 GB on DGX Spark before KV cache headroom. It is text-only.
+- The Qwen3.8 Flash-Next recipe in the current vLLM recipes lists a 130 GB minimum VRAM requirement for its default NVFP4 variant; this confirms it is not a sensible always-resident member of a multi-model set on a 128 GB Spark alongside other models. Custom community recipes are not equivalent to official supported memory profiles.
+- Reference: https://github.com/vllm-project/recipes/blob/main/models/Qwen/Qwen3.8-Flash-Next.yaml
+
+### Provisional recommendation
+
+Validate **Qwen3-Coder-Next + Qwen3.6-35B-A3B** as the preferred concurrent pair. Do not download or remove anything yet. Nemotron 3.5 Lightning remains a challenger to compare against Qwen3.6 for text-only agentic/general work, but not a Vision substitute.
+
+### Required next measurements
+
+Before deployment, obtain a fresh read-only snapshot of total / available RAM and swap; resident processes and per-container memory; currently loaded model runtime and its memory use; exact on-disk sizes of candidate checkpoints; and existing services that must remain available.
+
+Then test the pair with explicit per-model KV-cache budgets, conservative context/concurrency limits, and an OS/service reserve. Do not rely on each vLLM instance independently setting gpu-memory-utilization to 0.5: both instances share the same unified-memory pool, so independent percentages can overcommit the host.
