@@ -239,8 +239,6 @@ class Database:
         error: str | None = None,
         worker_id: str | None = None,
     ) -> None:
-        import json
-
         allowed = {"proposed", "ready", "running", "succeeded", "failed", "blocked", "cancelled"}
         if status not in allowed:
             raise ValueError(f"unsupported task status: {status}")
@@ -269,10 +267,12 @@ class Database:
             raise ValueError(f"unsupported execution status: {status}")
         now = utc_now()
         with self.session() as connection:
-            connection.execute(
+            cursor = connection.execute(
                 "UPDATE executions SET status = ?, updated_at = ? WHERE id = ?",
                 (status, now, execution_id),
             )
+            if cursor.rowcount != 1:
+                raise ValueError("execution does not exist")
 
     def get_execution(self, execution_id: str) -> dict[str, Any] | None:
         import json
