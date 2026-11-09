@@ -295,36 +295,28 @@ def create_app(
         }
 
 
-    @app.post("/api/v1/conversations/{conversation_id}/orchestrated-turns", response_model=TurnResponse)
-    async def create_orchestrated_turn(conversation_id: str, request: TurnRequest) -> TurnResponse:
+    @app.post(
+        "/api/v1/conversations/{conversation_id}/orchestrated-turns",
+        response_model=TurnResponse,
+    )
+    async def create_orchestrated_turn(
+        conversation_id: str, request: TurnRequest
+    ) -> TurnResponse:
         if multi_model is None:
-            raise HTTPException(status_code=503, detail="Multi-model planning is disabled")
-        if not db.conversation_exists(conversation_id):
-            raise HTTPException(status_code=404, detail="Conversation not found")
-        lock = conversation_locks.setdefault(conversation_id, asyncio.Lock())
-        async with lock:
-            user_event = db.append_event(conversation_id, role="user", content=request.content, producer="user")
-            context = "\n\n".join(
-                f"{event['role']}: {event['content']}"
-                for event in db.list_events(conversation_id)
-                if event["role"] in ("user", "assistant")
+            raise HTTPException(
+                status_code=503, detail="Multi-model planning is disabled"
             )
-            try:
-                result = await multi_model.run(conversation_id, request.content, context)
-            except NoEligibleWorker as exc:
-                raise HTTPException(status_code=503, detail=str(exc)) from exc
-            except Exception as exc:
-                raise HTTPException(status_code=502, detail="Multi-model orchestration failed") from exc
-            assistant_event = db.append_event(conversation_id, role="assistant", content=result.answer, producer="orchestrator")
-            return TurnResponse(
-                conversation_id=conversation_id,
-                user_event_id=user_event["id"],
-                assistant_event_id=assistant_event["id"],
-                assistant_content=result.answer,
-                producer="orchestrator",
-                execution_id=result.execution_id,
-            )
-
+        user_event, assistant_event, answer, execution_id = await run_turn(
+            conversation_id, request.content, request.task_type
+        )
+        return TurnResponse(
+            conversation_id=conversation_id,
+            user_event_id=user_event["id"],
+            assistant_event_id=assistant_event["id"],
+            assistant_content=answer,
+            producer=assistant_event["producer"],
+            execution_id=execution_id,
+        )
 
     @app.get("/api/v1/conversations/{conversation_id}/executions/{execution_id}")
     async def get_execution(conversation_id: str, execution_id: str) -> dict[str, Any]:
