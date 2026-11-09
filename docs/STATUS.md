@@ -237,3 +237,13 @@ User supplied a fresh command output from host `spark-7ea3`:
 - The example registry now declares the three selected worker identities and capability sets. Example ports/served aliases remain placeholders pending read-only discovery; entries remain disabled by default and do not start/load models.
 - No DGX host, model, container, runtime, service, or configuration has been changed in this implementation step.
 - Next implementation tasks: multimodal image transport to Qwen3.6, configurable global parallelism of 3, worker readiness checks, then controlled simultaneous-residency validation on DGX. Flash remains untouched until acceptance and explicit retirement approval.
+
+
+### 2026-11-09 — Three-runtime orchestration and multimodal transport implementation
+- Added configurable global parallelism, defaulting to 3 through `CLICODING_MAX_PARALLEL_TASKS`; the executor now allows three independent tasks to overlap. Per-runtime worker semaphores still enforce each runtime's own `max_concurrency` (default 1).
+- Updated the standard OpenAI-compatible chat request to accept text blocks and base64 image data URIs (maximum 12 MB per encoded image field; remote URLs and other modalities are rejected). Multimodal user content is stored in the canonical SQLite conversation event and restored when building worker history.
+- When an image is present, the planner is instructed to create a vision task. The Orchestrator validates that requirement and forwards the actual image content only to workers declaring the `vision` capability; Coder receives textual context/findings, not the raw image payload.
+- Added tests for three-way concurrency, three selected worker-role routing, API image validation/persistence, and image forwarding to the multimodal worker without leaking image data to Coder.
+- GitHub Actions run [42606589994](https://github.com/hamedg2881-bot/CLICoding/actions/runs/42606589994) passed on commit `446473111e7273527cde3c6d49e1351caf459f2f`: **44 passed**, one Starlette/httpx deprecation warning.
+- These tests use fake worker gateways. Live Qwen3.6 image inference, GPT-OSS/Coder endpoint compatibility, Open WebUI conversation-ID behavior, streaming, and simultaneous resident memory use on DGX remain unverified.
+- No DGX host, model, container, runtime, service, or configuration was changed.
