@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from .config import Settings
 from .database import Database
 from .gateway import GatewayError, ModelGateway, OpenAICompatibleGateway
-from .registry import RegistryError, Worker, WorkerRegistry
+from .registry import RegistryError, Worker, WorkerRegistry, runtime_key
 from .router import CapabilityRouter, NoEligibleWorker
 from .orchestration import MultiModelOrchestrator
 
@@ -90,9 +90,15 @@ def create_app(
     router = CapabilityRouter(worker_registry)
     multi_model = orchestrator or (MultiModelOrchestrator(db, router) if config.enable_planning else None)
     conversation_locks: dict[str, asyncio.Lock] = {}
+    runtime_limits: dict[tuple[str, str], int] = {}
+    for worker in worker_registry.enabled_workers():
+        key = runtime_key(worker)
+        runtime_limits[key] = min(
+            runtime_limits.get(key, worker.max_concurrency),
+            worker.max_concurrency,
+        )
     worker_semaphores = {
-        worker.id: asyncio.Semaphore(worker.max_concurrency)
-        for worker in worker_registry.enabled_workers()
+        key: asyncio.Semaphore(limit) for key, limit in runtime_limits.items()
     }
 
     app = FastAPI(
@@ -211,7 +217,7 @@ def create_app(
                     timeout_seconds=worker.timeout_seconds,
                 )
                 try:
-                    async with worker_semaphores[worker.id]:
+                    async with worker_semaphores[runtime_key(worker)]:
                         completion = await selected_gateway.complete(history)
                 except GatewayError as exc:
                     raise HTTPException(status_code=502, detail=str(exc)) from exc
