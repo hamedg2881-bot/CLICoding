@@ -1,6 +1,6 @@
 # CLICoding — Offline AI Development Platform
 
-**Project status:** Architecture baseline established; first persistent-conversation service slice committed, verification pending.  
+**Project status:** Architecture baseline established; first persistent-conversation service slice committed; isolated behavior checks passed, direct repository test run pending.  
 **Operating mode:** Internet unavailable during development; internal LAN available.  
 **IDE policy:** IDE-agnostic.  
 **Canonical project repository:** https://github.com/hamedg2881-bot/CLICoding
