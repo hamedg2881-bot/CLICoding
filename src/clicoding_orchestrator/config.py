@@ -11,6 +11,7 @@ class Settings:
     upstream_api_key: str | None = None
     upstream_model: str = "default"
     request_timeout_seconds: float = 180.0
+    workers_file: str | None = None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -25,4 +26,5 @@ class Settings:
             request_timeout_seconds=float(
                 os.getenv("CLICODING_REQUEST_TIMEOUT_SECONDS", "180")
             ),
+            workers_file=os.getenv("CLICODING_WORKERS_FILE") or None,
         )
