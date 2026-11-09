@@ -4,6 +4,7 @@ from clicoding_orchestrator.app import create_app
 from clicoding_orchestrator.config import Settings
 from clicoding_orchestrator.database import Database
 from clicoding_orchestrator.gateway import Completion
+from clicoding_orchestrator.registry import Worker, WorkerRegistry
 
 
 class FakeGateway:
@@ -14,20 +15,28 @@ class FakeGateway:
         self.calls.append(messages)
         return Completion(
             content=f"answer-{len(self.calls)}",
-            model=f"test-worker-{len(self.calls)}",
+            model=f"test-model-{len(self.calls)}",
         )
 
 
-def make_client(tmp_path):
+def make_client(tmp_path, registry=None):
     gateway = FakeGateway()
     database = Database(str(tmp_path / "conversations.sqlite3"))
     settings = Settings(database_path=str(tmp_path / "conversations.sqlite3"))
-    app = create_app(settings=settings, gateway=gateway, database=database)
+    app = create_app(
+        settings=settings, gateway=gateway, database=database, registry=registry
+    )
     return TestClient(app), gateway
 
 
-def test_conversation_history_survives_multiple_turns_and_worker_change(tmp_path):
-    client, gateway = make_client(tmp_path)
+def test_conversation_history_survives_worker_handoff(tmp_path):
+    registry = WorkerRegistry(
+        [
+            Worker("chat-worker", "http://chat/v1", "chat-model", frozenset({"chat"})),
+            Worker("coder-worker", "http://coder/v1", "coder-model", frozenset({"coding"})),
+        ]
+    )
+    client, gateway = make_client(tmp_path, registry)
 
     created = client.post("/api/v1/conversations")
     assert created.status_code == 201
@@ -35,32 +44,32 @@ def test_conversation_history_survives_multiple_turns_and_worker_change(tmp_path
 
     first = client.post(
         f"/api/v1/conversations/{conversation_id}/turns",
-        json={"content": "Inspect this project"},
+        json={"content": "Hello"},
     )
     assert first.status_code == 200
-    assert first.json()["assistant_content"] == "answer-1"
+    assert first.json()["producer"] == "chat-worker"
 
     second = client.post(
         f"/api/v1/conversations/{conversation_id}/turns",
-        json={"content": "Now continue and fix the issue"},
+        json={"content": "Fix the Python function", "task_type": "coding"},
     )
     assert second.status_code == 200
-    assert second.json()["assistant_content"] == "answer-2"
+    assert second.json()["producer"] == "coder-worker"
 
-    # The second worker call receives the first user message and assistant result.
     assert gateway.calls[1] == [
-        {"role": "user", "content": "Inspect this project"},
+        {"role": "user", "content": "Hello"},
         {"role": "assistant", "content": "answer-1"},
-        {"role": "user", "content": "Now continue and fix the issue"},
+        {"role": "user", "content": "Fix the Python function"},
     ]
 
     history = client.get(f"/api/v1/conversations/{conversation_id}")
     assert history.status_code == 200
-    assert [event["role"] for event in history.json()["events"]] == [
+    events = history.json()["events"]
+    assert [event["role"] for event in events] == [
         "user", "assistant", "user", "assistant"
     ]
-    assert history.json()["events"][1]["producer"] == "test-worker-1"
-    assert history.json()["events"][3]["producer"] == "test-worker-2"
+    assert events[1]["producer"] == "chat-worker"
+    assert events[3]["producer"] == "coder-worker"
 
 
 def test_unknown_conversation_returns_404(tmp_path):
@@ -70,6 +79,7 @@ def test_unknown_conversation_returns_404(tmp_path):
         json={"content": "hello"},
     )
     assert response.status_code == 404
+
 
 def test_conversation_events_survive_database_reopen(tmp_path):
     database_path = str(tmp_path / "persistent.sqlite3")
@@ -87,3 +97,21 @@ def test_conversation_events_survive_database_reopen(tmp_path):
     assert len(restored["events"]) == 1
     assert restored["events"][0]["content"] == "Keep this context"
 
+
+def test_disabled_worker_is_not_selected_and_returns_503(tmp_path):
+    registry = WorkerRegistry(
+        [
+            Worker(
+                "disabled-coder", "http://coder/v1", "coder",
+                frozenset({"coding"}), enabled=False
+            )
+        ]
+    )
+    client, _ = make_client(tmp_path, registry)
+    conversation_id = client.post("/api/v1/conversations").json()["id"]
+
+    response = client.post(
+        f"/api/v1/conversations/{conversation_id}/turns",
+        json={"content": "Change code", "task_type": "coding"},
+    )
+    assert response.status_code == 503
