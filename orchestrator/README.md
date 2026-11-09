@@ -26,7 +26,7 @@ cp .env.example .env
 uvicorn clicoding_orchestrator.app:app --app-dir src --host 127.0.0.1 --port 8090
 ```
 
-The service binds to loopback by default. Do not expose it to the LAN before authentication,
+The service loads values from the local `.env` file and binds to loopback by default. Do not expose it to the LAN before authentication,
 TLS, tenant isolation, and request limits are implemented.
 
 ## API
