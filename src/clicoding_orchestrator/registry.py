@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 import os
+import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -32,6 +35,34 @@ class WorkerRegistry:
         ids = [worker.id for worker in workers]
         if len(ids) != len(set(ids)):
             raise RegistryError("Worker IDs must be unique")
+        for index, worker in enumerate(workers):
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", worker.id):
+                raise RegistryError(f"workers[{index}].id has an invalid format")
+            parsed = urlsplit(worker.base_url)
+            if (
+                parsed.scheme not in {"http", "https"}
+                or not parsed.hostname
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.query
+                or parsed.fragment
+            ):
+                raise RegistryError(f"workers[{index}].base_url must be a valid HTTP(S) URL")
+            if not worker.model.strip() or not worker.capabilities:
+                raise RegistryError(f"workers[{index}] requires a model and capabilities")
+            if any(
+                not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", capability)
+                for capability in worker.capabilities
+            ):
+                raise RegistryError(f"workers[{index}] has an invalid capability name")
+            if (
+                not isinstance(worker.enabled, bool)
+                or worker.priority < 0
+                or worker.max_concurrency < 1
+                or not math.isfinite(worker.timeout_seconds)
+                or worker.timeout_seconds <= 0
+            ):
+                raise RegistryError(f"workers[{index}] has invalid limits or enabled state")
         self._workers = tuple(workers)
 
     @classmethod
@@ -57,7 +88,9 @@ class WorkerRegistry:
                 raw_capabilities = item["capabilities"]
                 if not isinstance(raw_capabilities, list):
                     raise RegistryError(f"workers[{index}].capabilities must be a list")
-                capabilities = frozenset(str(value).strip() for value in raw_capabilities)
+                if not all(isinstance(value, str) for value in raw_capabilities):
+                    raise RegistryError(f"workers[{index}].capabilities must contain strings")
+                capabilities = frozenset(value.strip() for value in raw_capabilities)
                 enabled = item.get("enabled", False)
                 priority = int(item.get("priority", 100))
                 max_concurrency = int(item.get("max_concurrency", 1))
@@ -74,6 +107,11 @@ class WorkerRegistry:
                 raise RegistryError(f"workers[{index}] has invalid limits")
             if api_key_env is not None and not isinstance(api_key_env, str):
                 raise RegistryError(f"workers[{index}].api_key_env must be a string")
+            if api_key_env and not os.getenv(api_key_env):
+                raise RegistryError(
+                    f"workers[{index}] references unset or empty secret environment variable "
+                    f"{api_key_env!r}"
+                )
             workers.append(
                 Worker(
                     id=worker_id,
@@ -82,7 +120,10 @@ class WorkerRegistry:
                     capabilities=capabilities,
                     enabled=enabled,
                     priority=priority,
-                    api_key=os.getenv(api_key_env) if api_key_env else None,
+                    api_key=(
+                        os.getenv(api_key_env) or None
+                        if api_key_env else None
+                    ),
                     timeout_seconds=timeout,
                     max_concurrency=max_concurrency,
                 )
