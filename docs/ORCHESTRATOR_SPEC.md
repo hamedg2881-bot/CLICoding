@@ -1,6 +1,6 @@
 # Conversation Router & Task Orchestrator Specification
 
-**Status:** Accepted architecture contract; conversation persistence, deterministic capability handoff, OpenAI-compatible text API, validated execution-plan contracts, and an in-memory bounded dependency-wave executor are implemented. Semantic plan generation, task persistence, and chat/API integration remain pending.
+**Status:** Accepted architecture contract; conversation persistence, deterministic capability handoff, OpenAI-compatible text API, validated execution-plan contracts, a structured LLM Planner with capability allow-list validation, and an in-memory bounded dependency-wave executor are implemented as callable components. Planner/Executor chat integration and task persistence remain pending.
 **Date:** 2026-11-09
 **Scope:** Model-independent conversation continuity, single-model routing, multi-model task orchestration, tool coordination, and unified user experience.
 
@@ -146,7 +146,7 @@ Plans are versioned. Replanning creates a new version and preserves prior execut
 Parallel execution is an optimization, not a requirement. Resource limits, fairness, and safe host reserve take precedence.
 
 ### Current implementation boundary
-The source currently validates task IDs, capability declarations, dependency references, and acyclic graphs. It computes topological waves so independent tasks can share a wave. The in-memory executor bounds concurrent tasks, passes dependency outputs to later tasks, retains successful siblings, and blocks dependants when prerequisites fail. This is not yet a production scheduler: plans/results are not persisted, worker dispatch is supplied by a future adapter, and the chat endpoint does not yet invoke the planner or executor.
+The source currently validates task IDs, capability declarations, dependency references, and acyclic graphs. It computes topological waves so independent tasks can share a wave. The in-memory executor bounds concurrent tasks, passes dependency outputs to later tasks, retains successful siblings, and blocks dependants when prerequisites fail. This is not yet a production scheduler: plans/results are not persisted, worker dispatch is supplied by a future adapter, and the chat endpoint does not yet invoke the planner or executor. The structured Planner requests schema-constrained JSON from an injected planning gateway, validates the dependency graph locally, and rejects capabilities absent from the caller's allow-list. It is not yet wired to registry selection or the public chat route.
 
 ## 5. Context continuity and multimodal handoff
 
