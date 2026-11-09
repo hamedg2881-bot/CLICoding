@@ -100,3 +100,22 @@ Exit gate: a clean workstation can be provisioned from internal artifacts and co
 
 ## Change control
 A phase may be marked complete only when its exit gate has reproducible evidence recorded in docs/STATUS.md or a linked test report. Planned is not implemented; implemented is not verified.
+
+## Phase 2A — Conversation and orchestration core (required before multi-model workflows)
+
+**Status:** Specification accepted; implementation not yet started.
+
+Deliverables:
+- [ ] Conversation/event contract with stable conversation identity independent of model.
+- [ ] Persistent task and execution-plan contracts.
+- [ ] Context assembly and multimodal attachment handoff.
+- [ ] Capability-based worker selection.
+- [ ] Sequential, parallel, and hybrid task execution with dependency tracking.
+- [ ] Unified response/streaming and transparent model handoff.
+- [ ] Bounded retry, partial failure recovery, cancellation, and approval gates.
+- [ ] Contract/acceptance tests from [ORCHESTRATOR_SPEC.md](ORCHESTRATOR_SPEC.md).
+
+Exit gate: pass the single-model continuity, model handoff, Vision-to-Coder handoff, sequential and parallel workflow, partial failure, cancellation, context integrity, and resource safety tests.
+
+Phase 2 gateway work must expose transport primitives required by this core, but LiteLLM or any other gateway must not become the owner of conversation or task state. The first implementation should be a thin vertical slice, not a large framework adoption.
+
