@@ -90,7 +90,7 @@ For each implementation session:
 
 ## Conversation and multi-model orchestration
 
-CLICoding presents one assistant and one continuous conversation while a central Task Orchestrator may assign work to one or multiple model workers and workstation tools. Complex requests can be decomposed into sequential, parallel, or hybrid tasks; dependencies, context handoffs, validation, retries, cancellation, and approvals are centrally managed. Model identity is hidden from the normal user experience.
+The target design presents one assistant and one continuous conversation while a central Task Orchestrator assigns work to one or more model workers. The current code supports validated task decomposition, sequential/parallel dependency waves, capability routing, durable task state, and result synthesis. Tool execution, human approval gates, cancellation, retries, streaming, and multimodal transport remain planned work. Model identity is hidden from the normal user experience.
 
 The gateway is only the model transport layer. Conversation history and task state are model-independent. See [docs/ORCHESTRATOR_SPEC.md](docs/ORCHESTRATOR_SPEC.md) for the accepted contracts and acceptance tests.
 
