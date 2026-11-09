@@ -1,6 +1,6 @@
 # CLICoding — Offline AI Development Platform
 
-**Project status:** Persistent conversation core and YAML-backed capability router/worker handoff committed; expanded direct test run and deployment validation pending.  
+**Project status:** Conversation persistence, capability routing, planner-backed multi-model execution, and an OpenAI-compatible API are implemented and CI-tested. Open WebUI integration and DGX deployment validation remain pending.  
 **Operating mode:** Internet unavailable during development; internal LAN available.  
 **IDE policy:** IDE-agnostic.  
 **Canonical project repository:** https://github.com/hamedg2881-bot/CLICoding
@@ -59,12 +59,13 @@ See [docs/ROADMAP.md](docs/ROADMAP.md) for phases and exit gates.
 
 ## Current status
 
-- Repository inspected: empty at project kickoff.
-- Initial architecture and workflow are recorded.\n- First FastAPI + SQLite conversation service and OpenAI-compatible model adapter are committed under `src/clicoding_orchestrator`.
-- No runtime, model, IDE extension, or hardware deployment has yet been selected as final.\n- Conversation persistence and deterministic worker handoff are implemented in source; the expanded tests are committed but still require execution from a repository checkout. See [orchestrator/README.md](orchestrator/README.md).
-- Next implementation action: verify the committed router tests, then add persistent task contracts and a sequential two-worker workflow. No deployment is authorized or implied.
-
-See [docs/STATUS.md](docs/STATUS.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/WORKFLOW.md](docs/WORKFLOW.md), and [docs/DECISIONS.md](docs/DECISIONS.md).
+- The canonical repository contains the FastAPI/SQLite Orchestrator, YAML worker registry, capability router, structured planner, dependency-wave executor, durable execution/task state, and OpenAI-compatible API.
+- When `CLICODING_ENABLE_PLANNING=true`, the standard `/v1/chat/completions` endpoint routes through the multi-model Orchestrator while exposing one public assistant alias. When disabled, deterministic capability routing is used.
+- Worker `max_concurrency` limits are enforced across concurrent requests within one service process.
+- An optional inbound bearer key (`CLICODING_API_KEY`) protects API and diagnostic endpoints; `/health` remains public. Configure a strong key before any LAN exposure and use internal TLS.
+- The API is currently non-streaming and text-only. Open WebUI conversation-ID preservation has not been verified; do not assume a generic client stores the returned `conversation_id`.
+- The code has not yet been deployed or validated on DGX Spark. Hardware/runtime inventory, ARM64 dependency staging, service configuration, and end-to-end model compatibility are still deployment gates.
+- Latest implementation and test evidence is recorded in [docs/STATUS.md](docs/STATUS.md). See [orchestrator/README.md](orchestrator/README.md) for the current API and run instructions.
 
 ## Security and offline requirements
 
