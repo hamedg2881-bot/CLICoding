@@ -1,46 +1,39 @@
-# Copy to workers.yaml and edit endpoint/model values for your environment.
-# This registers three physical model runtimes. It never downloads, loads, wakes,
-# sleeps, or otherwise changes a model runtime.
+# Copy to workers.yaml and replace the endpoint/model aliases with verified values.
+# This registers three physical model runtimes. It never starts/stops or changes them.
 #
-# IMPORTANT:
-# - "model" must be the exact model alias served by the OpenAI-compatible runtime,
-#   not the on-disk model directory.
-# - The small/fast model is intentionally not named yet; select it after benchmark.
-# - Replace every example URL and alias with verified live runtime values.
+# All three models are intended to remain loaded simultaneously on DGX Spark.
+# Configure each runtime's own memory/KV budget in its serving configuration.
+# Keep one request per runtime initially; increase only after load testing.
+# The model field must be the exact OpenAI-compatible served alias.
 
 workers:
-  # Model 1 of 3: small/fast assistant.
-  # The same runtime handles planning and final synthesis/chat.
-  - id: small-orchestrator
+  # GPT-OSS-20B MXFP4 — fast reasoning, planning, chat and synthesis.
+  - id: fast-reasoning
     base_url: http://127.0.0.1:8002/v1
-    model: your-small-fast-model-alias
+    model: gpt-oss-20b
     capabilities: [chat, planning]
     enabled: false
     priority: 10
     max_concurrency: 1
     timeout_seconds: 120
-    # api_key_env: CLICODING_SMALL_API_KEY
+    # api_key_env: CLICODING_FAST_API_KEY
 
-  # Model 2 of 3: coding specialist.
-  # Expected local model directory:
-  # /opt/ai/models/Qwen3-Coder-Next-NVFP4-GB10
+  # Qwen3-Coder-Next NVFP4 — coding and code review.
   - id: coding-primary
     base_url: http://127.0.0.1:8000/v1
-    model: your-coding-model-alias
+    model: qwen3-coder-next
     capabilities: [coding, review]
     enabled: false
     priority: 10
     max_concurrency: 1
-    timeout_seconds: 180
+    timeout_seconds: 240
     # api_key_env: CLICODING_CODER_API_KEY
 
-  # Model 3 of 3: vision specialist.
-  # Expected local model directory:
-  # /opt/ai/models/Qwen3.6-VL-35B-A3B-NVFP4-DGX-Spark-VisionSafe
-  - id: vision-primary
+  # Qwen3.6-35B-A3B NVFP4 — general multimodal, image understanding and vision.
+  - id: multimodal-primary
     base_url: http://127.0.0.1:8001/v1
-    model: your-vision-model-alias
-    capabilities: [vision]
+    model: qwen3.6-35b-a3b
+    capabilities: [chat, vision]
     enabled: false
     priority: 10
     max_concurrency: 1
