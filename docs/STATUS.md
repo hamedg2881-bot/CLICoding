@@ -120,3 +120,15 @@ User supplied a fresh command output from host `spark-7ea3`:
 - Added tests for capability/priority selection, disabled-worker exclusion, YAML validation, environment-backed credentials, and chat-to-coding handoff continuity. These tests are committed but have not yet been executed from a direct repository checkout in this environment.
 - Important limitations: task type is currently a deterministic request hint, not semantic intent detection; `max_concurrency` is metadata only and not yet enforced; vision capability selection exists but actual image payload transport does not; streaming, multi-process locking, idempotency, planner/task graph, parallel execution, tool broker, authentication, and resource-aware scheduling remain future work.
 - No DGX Spark configuration, model, container, runtime, service, or workstation was changed. No deployment or package installation was performed.
+
+
+### 2026-11-09 — OpenAI-compatible client API
+- Added `GET /v1/models` with exactly one public model alias, `clicoding`; internal worker IDs and upstream model aliases are not exposed as client model choices.
+- Added non-streaming, text-only `POST /v1/chat/completions` using the standard chat-completion response shape plus a `conversation_id` extension.
+- Added explicit continuation: clients send the returned `conversation_id` on subsequent requests; the Orchestrator then loads its canonical event history and routes to the selected worker.
+- When no conversation ID is supplied, a new canonical conversation is created and the request's prior text turns are imported as bootstrap history. System messages are applied to the worker request but are not persisted as conversation events.
+- Added tests for the stable public model list, initial history import, system-message forwarding, explicit continuation, and rejection of streaming/unknown model aliases.
+- Updated runbook with the API contract and a warning: a generic OpenAI client that discards the custom `conversation_id` response field will not automatically maintain canonical conversation mapping. Open WebUI integration is not yet verified.
+- Current limitations remain: no streaming, image/audio payloads, tool/function calling, idempotency, safe regenerate/edit semantics, authentication, multi-process locking, or semantic task planner. The task type remains an explicit internal API hint.
+- The CI workflow has been added, but no successful GitHub Actions run has yet been observed. Tests are committed, not verified by execution in this session.
+- No DGX Spark host, running service, model, container, workstation, or local installation was changed.
