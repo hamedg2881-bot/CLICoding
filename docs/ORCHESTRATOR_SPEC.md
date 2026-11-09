@@ -1,6 +1,6 @@
 # Conversation Router & Task Orchestrator Specification
 
-**Status:** Accepted architecture contract; conversation persistence and deterministic capability-based worker handoff are implemented as initial source slices. Complex planning and multi-task execution remain pending.
+**Status:** Accepted architecture contract; conversation persistence, deterministic capability handoff, OpenAI-compatible text API, validated execution-plan contracts, and an in-memory bounded dependency-wave executor are implemented. Semantic plan generation, task persistence, and chat/API integration remain pending.
 **Date:** 2026-11-09
 **Scope:** Model-independent conversation continuity, single-model routing, multi-model task orchestration, tool coordination, and unified user experience.
 
@@ -144,6 +144,9 @@ Plans are versioned. Replanning creates a new version and preserves prior execut
 12. Append one user-facing assistant result to the same conversation.
 
 Parallel execution is an optimization, not a requirement. Resource limits, fairness, and safe host reserve take precedence.
+
+### Current implementation boundary
+The source currently validates task IDs, capability declarations, dependency references, and acyclic graphs. It computes topological waves so independent tasks can share a wave. The in-memory executor bounds concurrent tasks, passes dependency outputs to later tasks, retains successful siblings, and blocks dependants when prerequisites fail. This is not yet a production scheduler: plans/results are not persisted, worker dispatch is supplied by a future adapter, and the chat endpoint does not yet invoke the planner or executor.
 
 ## 5. Context continuity and multimodal handoff
 
