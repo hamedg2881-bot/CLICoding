@@ -36,7 +36,7 @@ class SequentialWaveExecutor:
     did not succeed. The executor never starts a dependent task after a failure.
     """
 
-    def __init__(self, max_parallel_tasks: int = 2):
+    def __init__(self, max_parallel_tasks: int = 3):
         if max_parallel_tasks < 1:
             raise ValueError("max_parallel_tasks must be at least one")
         self.max_parallel_tasks = max_parallel_tasks
