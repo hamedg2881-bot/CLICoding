@@ -103,7 +103,7 @@ A phase may be marked complete only when its exit gate has reproducible evidence
 
 ## Phase 2A — Conversation and orchestration core (required before multi-model workflows)
 
-**Status:** First single-model persistence slice implemented in source; automated tests are written but not yet executed. Multi-model orchestration remains unimplemented.
+**Status:** First single-model persistence slice implemented; three equivalent scenarios passed in an isolated local verification harness. The committed checkout still needs a direct `pytest` run. Multi-model orchestration remains unimplemented.
 
 Deliverables:
 - [x] Initial conversation/event persistence contract with stable conversation identity independent of model (single-process SQLite slice).
