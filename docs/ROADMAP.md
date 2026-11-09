@@ -103,14 +103,14 @@ A phase may be marked complete only when its exit gate has reproducible evidence
 
 ## Phase 2A — Conversation and orchestration core (required before multi-model workflows)
 
-**Status:** Conversation persistence, deterministic capability-based handoff, OpenAI-compatible non-streaming text API, validated execution-plan contracts, and a bounded dependency-wave executor are implemented in source. Planner component and execution engine are implemented as callable modules. Planner/Executor chat integration, persistence, and final CI verification remain pending.
+**Status:** Conversation persistence, deterministic capability-based handoff, validated execution plans, durable task state, bounded dependency-wave execution, and opt-in planner-backed orchestration are implemented in source. When `CLICODING_ENABLE_PLANNING=true`, the standard non-streaming OpenAI-compatible chat route now invokes the Orchestrator while preserving one public assistant alias and canonical conversation history. Latest integration CI is pending; Open WebUI mapping and production hardening remain open.
 
 Deliverables:
 - [x] Initial conversation/event persistence contract with stable conversation identity independent of model (single-process SQLite slice).
 - [x] In-memory task and execution-plan contracts with dependency/cycle validation.\n- [x] Persistent task and execution-plan storage in SQLite.\n- [x] Structured LLM Planner component with local schema, graph, and capability allow-list validation.
 - [ ] Context assembly and multimodal attachment handoff.
 - [x] Configuration-backed capability-based worker selection (deterministic task-type hint).
-- [x] Dependency-wave executor with bounded parallelism, dependency-output handoff, and failure blocking.\n- [x] Durable sequential/parallel task execution service and opt-in conversation API route.\n- [ ] Integrate orchestration into the standard OpenAI chat route after client and safety tests.
+- [x] Dependency-wave executor with bounded parallelism, dependency-output handoff, and failure blocking.\n- [x] Durable sequential/parallel task execution service and opt-in conversation API route.\n- [x] Integrate opt-in orchestration into the standard OpenAI chat route; Open WebUI mapping and safety/production validation remain pending.
 - [x] Non-streaming transparent worker handoff with shared conversation history.
 - [ ] Unified response streaming.
 - [ ] Bounded retry, partial failure recovery, cancellation, and approval gates.
@@ -119,5 +119,5 @@ Deliverables:
 
 Exit gate: pass the single-model continuity, model handoff, Vision-to-Coder handoff, sequential and parallel workflow, partial failure, cancellation, context integrity, and resource safety tests.
 
-Phase 2 gateway work must expose transport primitives required by this core, but LiteLLM or any other gateway must not become the owner of conversation or task state. The first implementation should be a thin vertical slice, not a large framework adoption. The current code includes a YAML-backed worker registry, deterministic capability routing, same-conversation history, a non-streaming OpenAI-compatible text API, validated execution plans, a structured LLM Planner, SQLite-persisted execution/task state, and a multi-model orchestration service with bounded dependency-wave execution. The service is available through an opt-in conversation route; the standard OpenAI chat endpoint remains on single-worker routing. Open WebUI conversation mapping, streaming, multimodal image transport, cancellation/retry, cross-process locking, and resource-aware scheduling remain unimplemented. Open WebUI's ability to preserve the returned conversation ID remains unverified.
+Phase 2 gateway work must expose transport primitives required by this core, but LiteLLM or any other gateway must not become the owner of conversation or task state. The first implementation should be a thin vertical slice, not a large framework adoption. The current code includes a YAML-backed worker registry, deterministic capability routing, same-conversation history, a non-streaming OpenAI-compatible text API, validated execution plans, a structured LLM Planner, SQLite-persisted execution/task state, and a multi-model orchestration service with bounded dependency-wave execution. The service is available through both the standard OpenAI chat endpoint and the internal conversation route when planning is enabled; otherwise the standard endpoint retains deterministic single-worker routing. Open WebUI conversation mapping, streaming, multimodal image transport, cancellation/retry, cross-process locking, and resource-aware scheduling remain unimplemented. Open WebUI's ability to preserve the returned conversation ID remains unverified.
 
