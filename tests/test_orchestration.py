@@ -76,3 +76,34 @@ def test_orchestrator_dispatches_workers_and_persists_plan_and_results(tmp_path)
         assert gateways["synth"].calls == 1
 
     asyncio.run(scenario())
+
+
+def test_orchestrator_returns_worker_outputs_when_no_synthesis_worker_exists(tmp_path):
+    async def scenario():
+        db = Database(str(tmp_path / "orchestration-no-synth.sqlite3"))
+        conversation = db.create_conversation()
+        registry = WorkerRegistry(
+            [
+                Worker("planner", "http://planner/v1", "planner", frozenset({"planning"}), priority=1),
+                Worker("coder", "http://coder/v1", "coder", frozenset({"coding"})),
+                Worker("vision", "http://vision/v1", "vision", frozenset({"vision"})),
+            ]
+        )
+
+        def gateway_factory(worker):
+            return FakeGateway(worker.id)
+
+        orchestrator = MultiModelOrchestrator(
+            db, CapabilityRouter(registry), max_parallel_tasks=2,
+            gateway_factory=gateway_factory,
+        )
+        result = await orchestrator.run(
+            conversation["id"], "Review the code and screenshot", ""
+        )
+
+        assert result.execution.succeeded
+        assert "final synthesis was unavailable" in result.answer
+        assert "result-from-coder" in result.answer
+        assert "result-from-vision" in result.answer
+
+    asyncio.run(scenario())
