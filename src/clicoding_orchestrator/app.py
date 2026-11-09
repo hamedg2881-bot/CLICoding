@@ -369,7 +369,7 @@ def create_app(
                     db.append_event(
                         conversation_id,
                         role=message.role,
-                        content=message.content,
+                        content=_store_content(message.content),
                         producer="client-import",
                     )
 
