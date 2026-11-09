@@ -201,8 +201,6 @@ def test_deterministic_routing_enforces_worker_limit_across_conversations(tmp_pa
     import asyncio
     import httpx
 
-    from clicoding_orchestrator.registry import CapabilityRouter
-
     async def scenario():
         active = 0
         maximum_active = 0
