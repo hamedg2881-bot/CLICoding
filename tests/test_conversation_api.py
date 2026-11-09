@@ -184,3 +184,14 @@ def test_openai_compatible_endpoint_uses_orchestrator_and_keeps_one_identity(tmp
     assert [event["producer"] for event in stored["events"]] == [
         "user", "orchestrator", "user", "orchestrator"
     ]
+
+
+def test_in_memory_database_persists_across_repository_sessions():
+    database = Database(":memory:")
+    conversation = database.create_conversation()
+    database.append_event(
+        conversation["id"], role="user", content="memory survives", producer="test"
+    )
+    restored = database.get_conversation(conversation["id"])
+    assert restored is not None
+    assert restored["events"][0]["content"] == "memory survives"
