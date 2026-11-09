@@ -82,3 +82,15 @@ User supplied a fresh command output from host `spark-7ea3`:
 - Local model directory sizes: qwen3-vl-8b-vllm 17G; Qwen3.8-27B-NVFP4 21G; Qwen3.6-VL-35B-A3B-NVFP4-DGX-Spark-VisionSafe 25G; Qwen3-Coder-Next-NVFP4-GB10 43G; Qwen3.8-Flash-Next-FP4-Local 96G.
 - Current free/available memory is not sufficient to load another large model alongside the running Flash runtime. No model was stopped, downloaded, deleted, or reconfigured.
 - Initial disk-size sum for the proposed Coder-Next + Qwen3.6 pair is about 68G, but this is not a measured concurrent runtime footprint. Next step is read-only inspection of the running container's launch args, model paths, and each candidate's config before any controlled runtime experiment.
+
+## 2026-11-09 — Conversation Router and Orchestrator contract accepted
+- User confirmed that complex requests may require multiple models and that seamless model changes and model-to-model integration are among the highest priorities.
+- Accepted a central, model-independent Task Orchestrator. It owns plans, task decomposition, dependencies, sequential/parallel/hybrid execution, worker dispatch, validation, retries, cancellation, approval gates, and final synthesis.
+- Accepted a canonical Conversation Manager: stable conversation identity and shared event history independent of model; task-specific context assembly preserves relevant turns, summaries, attachments, tool evidence, constraints, and dependency outputs.
+- Accepted capability- and resource-aware routing. The system must not use multiple models unnecessarily or exceed measured resource budgets; queue instead of interrupting active inference.
+- Accepted a unified user experience: one assistant identity, one conversation, and one coherent response stream. Model handoffs are transparent by default.
+- LiteLLM remains a candidate gateway only; it is not the orchestrator or conversation-memory owner. LangGraph is not mandatory.
+- Added [docs/ORCHESTRATOR_SPEC.md](ORCHESTRATOR_SPEC.md) as the first implementation contract, including logical data contracts, execution semantics, safety, resource policy, implementation slices, and ten acceptance tests.
+- Current work is architecture/specification and repository documentation only. No host services, model runtimes, containers, model files, or user workspaces were changed. No software has been installed and no server service was restarted.
+- Next step: choose the smallest persistence/gateway/orchestration stack against the contract, then implement and test the first single-model continuity slice before enabling multi-model execution.
+
