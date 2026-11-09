@@ -115,3 +115,17 @@ Validate **Qwen3-Coder-Next + Qwen3.6-35B-A3B** as the preferred concurrent pair
 Before deployment, obtain a fresh read-only snapshot of total / available RAM and swap; resident processes and per-container memory; currently loaded model runtime and its memory use; exact on-disk sizes of candidate checkpoints; and existing services that must remain available.
 
 Then test the pair with explicit per-model KV-cache budgets, conservative context/concurrency limits, and an OS/service reserve. Do not rely on each vLLM instance independently setting gpu-memory-utilization to 0.5: both instances share the same unified-memory pool, so independent percentages can overcommit the host.
+
+
+## Fresh host evidence supplied 2026-11-09
+
+The latest read-only host snapshot reports 121 GiB RAM total and 15 GiB available, with swap use 2.3 GiB. The running `VLLM::EngineCore` process reports 97,383 MiB on GB10 while the `qwen38-flash` container is active. Docker cgroup memory reports 4.945 GiB for that container and must not be confused with the GB10 allocation.
+
+Exact local directory sizes:
+- Qwen3-Coder-Next NVFP4 GB10: 43G
+- Qwen3.6-VL-35B-A3B NVFP4: 25G
+- Qwen3.8 Flash: 96G
+- Qwen3.8-27B Dense: 21G
+- Qwen3-VL-8B: 17G
+
+The proposed Coder-Next + Qwen3.6 pair therefore occupies about 68G on disk. This is only a first sizing indicator, not a concurrent runtime-memory measurement. Current free memory (15 GiB) is not enough to add either large candidate while Flash remains loaded. No runtime change is authorized or performed. Inspect runtime arguments and model configs before planning a controlled test.
