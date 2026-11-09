@@ -25,7 +25,7 @@ class MultiModelOrchestrator:
         self,
         database: Database,
         router: CapabilityRouter,
-        max_parallel_tasks: int = 2,
+        max_parallel_tasks: int = 3,
         gateway_factory=None,
     ):
         self.database = database
