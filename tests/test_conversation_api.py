@@ -121,7 +121,9 @@ class FakeOrchestrator:
     def __init__(self):
         self.calls = []
 
-    async def run(self, conversation_id, user_request, conversation_context=""):
+    async def run(
+        self, conversation_id, user_request, conversation_context="", user_content=None
+    ):
         from types import SimpleNamespace
 
         self.calls.append((conversation_id, user_request, conversation_context))
