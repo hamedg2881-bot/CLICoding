@@ -233,3 +233,28 @@ def test_three_model_topology_uses_small_model_for_planning_and_synthesis(tmp_pa
         }
 
     asyncio.run(scenario())
+
+
+
+def test_three_selected_worker_roles_route_chat_vision_and_coding(tmp_path):
+    registry = WorkerRegistry(
+        [
+            Worker(
+                "fast-reasoning", "http://fast/v1", "gpt-oss-20b",
+                frozenset({"chat", "planning"}), priority=1,
+            ),
+            Worker(
+                "coding-primary", "http://coder/v1", "qwen3-coder-next",
+                frozenset({"coding", "review"}),
+            ),
+            Worker(
+                "multimodal-primary", "http://multi/v1", "qwen3.6-35b-a3b",
+                frozenset({"chat", "vision"}),
+            ),
+        ]
+    )
+    router = CapabilityRouter(registry)
+    assert router.planning_worker().id == "fast-reasoning"
+    assert router.select("coding").id == "coding-primary"
+    assert router.select("vision").id == "multimodal-primary"
+    assert router.select("chat").id == "fast-reasoning"
