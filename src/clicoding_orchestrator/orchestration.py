@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from typing import Any
 
 from .database import Database
 from .executor import PlanExecution, SequentialWaveExecutor
@@ -46,7 +47,7 @@ class MultiModelOrchestrator:
         }
 
     async def _complete(
-        self, worker: Worker, messages: list[dict[str, str]]
+        self, worker: Worker, messages: list[dict[str, object]]
     ) -> Completion:
         semaphore = self._worker_semaphores.get(runtime_key(worker))
         if semaphore is None:
@@ -68,6 +69,7 @@ class MultiModelOrchestrator:
         conversation_id: str,
         user_request: str,
         conversation_context: str = "",
+        user_content: str | list[dict[str, Any]] | None = None,
     ) -> OrchestrationResult:
         planning_worker = self.router.planning_worker()
 
@@ -83,7 +85,23 @@ class MultiModelOrchestrator:
                 for capability in worker.capabilities
             },
         )
-        plan = await planner.create_plan(user_request, conversation_context)
+        image_parts = [
+            part for part in (user_content if isinstance(user_content, list) else [])
+            if part.get("type") == "image_url"
+        ]
+        planning_request = user_request
+        if image_parts:
+            planning_request = (
+                (user_request.strip() or "Analyze the attached image(s).")
+                + f"\n\nThe user attached {len(image_parts)} image(s). "
+                + "Create at least one task requiring the vision capability so the "
+                + "multimodal worker receives the actual image content."
+            )
+        plan = await planner.create_plan(planning_request, conversation_context)
+        if image_parts and not any(
+            "vision" in task.required_capabilities for task in plan.tasks
+        ):
+            raise ValueError("Planner must create a vision task when image attachments are present")
         persisted = self.database.create_execution(conversation_id, plan.model_dump())
         execution_id = persisted["id"]
 
@@ -92,6 +110,19 @@ class MultiModelOrchestrator:
             self.database.update_execution_task(
                 execution_id, task.task_id, "running", worker_id=worker.id
             )
+            user_task_text = (
+                f"Overall goal:\n{plan.goal}\n\n"
+                f"Task:\n{task.objective}\n\n"
+                f"Expected output:\n{task.expected_output}\n\n"
+                f"Dependency outputs:\n{dependency_outputs}\n\n"
+                f"Relevant conversation context:\n{conversation_context}"
+            )
+            user_message_content: object = user_task_text
+            if image_parts and "vision" in worker.capabilities:
+                user_message_content = [
+                    {"type": "text", "text": user_task_text},
+                    *image_parts,
+                ]
             messages = [
                 {
                     "role": "system",
@@ -102,16 +133,7 @@ class MultiModelOrchestrator:
                         "the useful result without discussing internal model routing."
                     ),
                 },
-                {
-                    "role": "user",
-                    "content": (
-                        f"Overall goal:\n{plan.goal}\n\n"
-                        f"Task:\n{task.objective}\n\n"
-                        f"Expected output:\n{task.expected_output}\n\n"
-                        f"Dependency outputs:\n{dependency_outputs}\n\n"
-                        f"Relevant conversation context:\n{conversation_context}"
-                    ),
-                },
+                {"role": "user", "content": user_message_content},
             ]
             try:
                 completion = await self._complete(worker, messages)
