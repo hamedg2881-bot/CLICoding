@@ -80,7 +80,7 @@ fi
 echo
 
 echo "===== LISTENING PORTS ====="
-ss -lntp 2>/dev/null | grep -E ':(3000|5090|8000|8001|8002|8100|8400|8500)\\b' || true
+ss -lntp 2>/dev/null | grep -E ':(3000|5090|8000|8001|8002|8100|8400|8500)\b' || true
 echo
 
 echo "===== MODEL API DISCOVERY ====="
