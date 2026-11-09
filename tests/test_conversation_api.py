@@ -70,3 +70,20 @@ def test_unknown_conversation_returns_404(tmp_path):
         json={"content": "hello"},
     )
     assert response.status_code == 404
+
+def test_conversation_events_survive_database_reopen(tmp_path):
+    database_path = str(tmp_path / "persistent.sqlite3")
+    first_database = Database(database_path)
+    conversation = first_database.create_conversation()
+    first_database.append_event(
+        conversation["id"], role="user", content="Keep this context", producer="user"
+    )
+
+    reopened_database = Database(database_path)
+    restored = reopened_database.get_conversation(conversation["id"])
+
+    assert restored is not None
+    assert restored["id"] == conversation["id"]
+    assert len(restored["events"]) == 1
+    assert restored["events"][0]["content"] == "Keep this context"
+
