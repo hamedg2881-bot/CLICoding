@@ -103,10 +103,10 @@ A phase may be marked complete only when its exit gate has reproducible evidence
 
 ## Phase 2A — Conversation and orchestration core (required before multi-model workflows)
 
-**Status:** Specification accepted; implementation not yet started.
+**Status:** First single-model persistence slice implemented in source; automated tests are written but not yet executed. Multi-model orchestration remains unimplemented.
 
 Deliverables:
-- [ ] Conversation/event contract with stable conversation identity independent of model.
+- [x] Initial conversation/event persistence contract with stable conversation identity independent of model (single-process SQLite slice).
 - [ ] Persistent task and execution-plan contracts.
 - [ ] Context assembly and multimodal attachment handoff.
 - [ ] Capability-based worker selection.
@@ -117,5 +117,5 @@ Deliverables:
 
 Exit gate: pass the single-model continuity, model handoff, Vision-to-Coder handoff, sequential and parallel workflow, partial failure, cancellation, context integrity, and resource safety tests.
 
-Phase 2 gateway work must expose transport primitives required by this core, but LiteLLM or any other gateway must not become the owner of conversation or task state. The first implementation should be a thin vertical slice, not a large framework adoption.
+Phase 2 gateway work must expose transport primitives required by this core, but LiteLLM or any other gateway must not become the owner of conversation or task state. The first implementation should be a thin vertical slice, not a large framework adoption. The current code proves persistence and same-conversation context reconstruction for one configured upstream model; it does not yet prove dynamic worker handoff or multi-model execution.
 
