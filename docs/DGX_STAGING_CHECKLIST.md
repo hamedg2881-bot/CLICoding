@@ -63,7 +63,7 @@ Confirm ARM64 architecture, Python version, disk location for the SQLite databas
 - Copy `config/workers.example.yaml` to a private file outside Git and replace every example endpoint/model alias with a verified live endpoint.
 - Keep worker concurrency conservative (start at 1); the configured limit is process-local.
 - Supply worker credentials through environment variables referenced by `api_key_env`.
-- Generate a random inbound secret of at least 32 ASCII characters and set `CLICODING_API_KEY` before any network exposure.
+- Generate a random inbound secret of at least 32 ASCII characters and set `CLICODING_API_KEY` before any network exposure. The application rejects shorter or non-ASCII inbound secrets.
 - Keep Uvicorn bound to `127.0.0.1` for the first smoke test. `/health` is public; all other API/diagnostic endpoints require the Bearer key when configured.
 - Use one Uvicorn process. Multiple processes do not share conversation locks or worker concurrency semaphores.
 - Do not connect Open WebUI yet. Streaming is not implemented and preservation of the returned `conversation_id` has not been verified.
