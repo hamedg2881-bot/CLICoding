@@ -1,6 +1,6 @@
 # Conversation Router & Task Orchestrator Specification
 
-**Status:** Accepted architecture contract; implementation not yet started.
+**Status:** Accepted architecture contract; conversation persistence and deterministic capability-based worker handoff are implemented as initial source slices. Complex planning and multi-task execution remain pending.
 **Date:** 2026-11-09
 **Scope:** Model-independent conversation continuity, single-model routing, multi-model task orchestration, tool coordination, and unified user experience.
 
