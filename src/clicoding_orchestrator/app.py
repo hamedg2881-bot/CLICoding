@@ -297,4 +297,12 @@ def create_app(
                 execution_id=result.execution_id,
             )
 
+
+    @app.get("/api/v1/conversations/{conversation_id}/executions/{execution_id}")
+    async def get_execution(conversation_id: str, execution_id: str) -> dict[str, Any]:
+        execution = db.get_execution(execution_id)
+        if execution is None or execution["conversation_id"] != conversation_id:
+            raise HTTPException(status_code=404, detail="Execution not found")
+        return execution
+
     return app
