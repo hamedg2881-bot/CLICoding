@@ -152,3 +152,15 @@ User supplied a fresh command output from host `spark-7ea3`:
 - The planner is a callable component only. It is not yet selected through the worker registry, invoked from `/v1/chat/completions`, or persisted as a plan. No automatic multi-model execution is enabled by this commit.
 - GitHub Actions is running tests for the new commits; final CI result for the latest branch head is pending.
 - No DGX Spark host, model, runtime, container, service, or workstation was changed.
+
+
+### 2026-11-09 — Durable execution and multi-model orchestration service
+- Added SQLite tables for executions and task lifecycle records, including the validated plan JSON, task capability requirements, dependency IDs, assigned worker, status, output, and error.
+- Added database operations to create an execution atomically with its tasks, update task lifecycle, finish an execution, and retrieve a complete execution after database reopen.
+- Added capability selection requiring a worker to support every capability declared by a task; added planning-worker selection that prefers an explicit planning capability and falls back to chat.
+- Added `MultiModelOrchestrator`: it selects a planning worker, obtains and validates a plan, persists it before dispatch, routes tasks to capability-compatible workers, executes dependency waves with bounded concurrency, records task outcomes, and synthesizes multiple successful outputs through a chat worker.
+- Added an opt-in `POST /api/v1/conversations/{conversation_id}/orchestrated-turns` route and `CLICODING_ENABLE_PLANNING` setting. The existing OpenAI `/v1/chat/completions` path remains on deterministic single-worker routing until the next integration slice; this is deliberate so existing clients are not silently moved to a higher-cost planner path.
+- Added tests for persistence across DB reopen and an end-to-end fake-gateway orchestration across planner, coding, vision, and synthesis workers.
+- CI runs for the latest commits are pending. Do not treat these newly added tests as passed until the latest main-branch Actions run reports success.
+- Current limits: no Open WebUI conversation-ID mapping verification, no streaming, no multimodal image transport in the OpenAI endpoint, no task cancellation/retry, no cross-process scheduling locks, and no resource-aware model admission. The orchestrated route is opt-in and still requires deployment configuration plus API security before LAN exposure.
+- No DGX Spark host, model, runtime, container, service, or workstation was changed.
