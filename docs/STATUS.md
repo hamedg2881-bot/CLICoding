@@ -94,3 +94,7 @@ User supplied a fresh command output from host `spark-7ea3`:
 - Current work is architecture/specification and repository documentation only. No host services, model runtimes, containers, model files, or user workspaces were changed. No software has been installed and no server service was restarted.
 - Next step: choose the smallest persistence/gateway/orchestration stack against the contract, then implement and test the first single-model continuity slice before enabling multi-model execution.
 
+### 2026-11-09 — Single client endpoint rule
+- Accepted that Open WebUI or another reference client must connect only to the CLICoding Orchestrator endpoint and see one assistant alias. Individual model runtimes remain internal workers; LiteLLM, if adopted, is downstream of the Orchestrator.
+- Rationale: avoid model-specific sessions and ensure the Orchestrator—not the UI model picker—owns routing and multi-model workflows.
+
