@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
@@ -39,10 +38,6 @@ def create_app(
     )
     conversation_locks: dict[str, asyncio.Lock] = {}
 
-    @asynccontextmanager
-    async def lifespan(_: FastAPI):
-        yield
-
     app = FastAPI(
         title="CLICoding Orchestrator",
         version="0.1.0",
@@ -50,7 +45,6 @@ def create_app(
             "First vertical slice: persistent, model-independent conversations "
             "with an OpenAI-compatible upstream model."
         ),
-        lifespan=lifespan,
     )
     app.state.database = db
     app.state.gateway = model_gateway
