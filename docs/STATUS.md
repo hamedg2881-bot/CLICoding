@@ -3,7 +3,7 @@
 **Last updated:** 2026-11-09  
 **Canonical repository:** https://github.com/hamedg2881-bot/CLICoding  
 **Current phase:** Phase 2A — conversation and multi-model orchestration core  
-**Overall state:** Conversation persistence, capability routing, structured planning, durable multi-model execution, optional Bearer authentication, and the non-streaming OpenAI-compatible API are implemented. Three-model target topology is documented and covered by CI tests. Latest GitHub Actions run verified 38 passing tests; Open WebUI integration and DGX deployment validation remain open.
+**Overall state:** Conversation persistence, capability routing, structured planning, durable multi-model execution, optional Bearer authentication, and the non-streaming OpenAI-compatible API are implemented. Three-model MoE identities and concurrent-residency direction are selected. Multimodal transport, global three-way parallelism, Open WebUI integration, and DGX deployment validation remain open.
 
 ## Confirmed requirements
 - Internet is unavailable during development; internal LAN is available.
@@ -225,3 +225,15 @@ User supplied a fresh command output from host `spark-7ea3`:
 - Three related commits are on `main`; latest reviewed documentation commit is `f3e5f699853492be92108f0de706781d733b12e8`.
 - Remaining blockers: choose and benchmark the small/fast model; verify actual served aliases and endpoints; implement and test image payload transport to Vision; verify Open WebUI conversation mapping and streaming; measure safe concurrent memory use on DGX.
 - No DGX model, container, runtime, service, or host configuration was changed. Flash remains untouched pending replacement acceptance and explicit approval.
+
+
+### 2026-11-09 — Three-model MoE selection and concurrent residency confirmed
+- User selected the three-model target set for CLICoding:
+  - **Fast reasoning/planning:** OpenAI GPT-OSS-20B MXFP4 (MoE; 20.9B total / 3.6B active); text-only.
+  - **Coding:** Qwen3-Coder-Next NVFP4 (MoE; 80B total / 3B active).
+  - **Multimodal general + vision:** Qwen3.6-35B-A3B NVFP4 (MoE; 35B total / 3B active).
+- The 35B Qwen3.6 model is assigned both general chat and vision; it is not a vision-only worker.
+- User clarified that all three runtimes must remain loaded simultaneously. Runtime switching/unloading is not part of normal request handling. Start with one active request per runtime and allow up to three independent tasks in parallel.
+- The example registry now declares the three selected worker identities and capability sets. Example ports/served aliases remain placeholders pending read-only discovery; entries remain disabled by default and do not start/load models.
+- No DGX host, model, container, runtime, service, or configuration has been changed in this implementation step.
+- Next implementation tasks: multimodal image transport to Qwen3.6, configurable global parallelism of 3, worker readiness checks, then controlled simultaneous-residency validation on DGX. Flash remains untouched until acceptance and explicit retirement approval.
