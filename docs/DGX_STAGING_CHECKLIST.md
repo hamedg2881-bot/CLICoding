@@ -15,10 +15,10 @@ git pull --ff-only origin main
 git status --short
 git rev-parse HEAD
 git bundle create CLICoding-main.bundle main
-sha256sum CLICoding-main.bundle
+sha256sum CLICoding-main.bundle > CLICoding-main.bundle.sha256
 ```
 
-Copy the bundle and its SHA-256 value to DGX through the approved LAN transfer path. On DGX, verify the checksum before importing:
+Copy both `CLICoding-main.bundle` and `CLICoding-main.bundle.sha256` to DGX through the approved LAN transfer path. On DGX, verify the checksum before importing:
 
 ```bash
 sha256sum -c CLICoding-main.bundle.sha256
@@ -26,12 +26,6 @@ git clone CLICoding-main.bundle CLICoding
 cd CLICoding
 git checkout main
 git rev-parse HEAD
-```
-
-Create the checksum file on the source machine with:
-
-```bash
-sha256sum CLICoding-main.bundle > CLICoding-main.bundle.sha256
 ```
 
 If using a direct Git fetch from DGX is permitted, verify the exact commit SHA against the reviewed SHA in the status record instead.
