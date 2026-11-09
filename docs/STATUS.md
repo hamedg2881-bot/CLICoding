@@ -105,7 +105,7 @@ User supplied a fresh command output from host `spark-7ea3`:
 - Added API routes to create a conversation, append a turn, retrieve its full history, and check health.
 - Added a test proving that a later model invocation receives the earlier user and assistant messages while retaining the same conversation ID; the fake worker changes its producer ID between calls.
 - Added local run instructions, environment example, and package metadata.
-- Tests are written but have not yet been executed in this environment. Do not mark the slice verified until `pytest` passes.
+- Three first-slice tests are committed: conversation continuity across worker/producer changes, unknown conversation handling, and persistence after reopening the SQLite database. An isolated local verification harness ran the equivalent test scenarios successfully (3 passed). The environment could not clone GitHub to execute the committed checkout directly, so rerun `pytest` from a repository checkout before declaring the commit-level test run complete.
 - Known limits: one configured upstream model per process, non-streaming text-only API, single-process turn locks, no idempotency keys, no authentication/tenant isolation, no planner/task graph, and no tool broker.
 - No DGX Spark host, model runtime, container, service, or workstation workspace was changed. No package was installed on the user's machines.
-- Next: run tests and fix any failures; then add explicit worker selection behind the API and prove model handoff without changing conversation identity.
+- Next: rerun the committed tests from a repository checkout; then add a server-side worker registry/selector and prove real upstream model handoff without changing conversation identity.
