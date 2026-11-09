@@ -134,8 +134,8 @@ class MultiModelOrchestrator:
         elif len(successful) == 1:
             answer = successful[0].split("] ", 1)[1]
         else:
-            synthesis_worker = self.router.select("chat")
             try:
+                synthesis_worker = self.router.select("chat")
                 synthesis = await self.gateway_factory(synthesis_worker).complete(
                     [
                         {
