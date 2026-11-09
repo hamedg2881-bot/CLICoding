@@ -195,3 +195,55 @@ def test_in_memory_database_persists_across_repository_sessions():
     restored = database.get_conversation(conversation["id"])
     assert restored is not None
     assert restored["events"][0]["content"] == "memory survives"
+
+
+def test_deterministic_routing_enforces_worker_limit_across_conversations(tmp_path):
+    import asyncio
+    import httpx
+
+    from clicoding_orchestrator.registry import CapabilityRouter
+
+    async def scenario():
+        active = 0
+        maximum_active = 0
+
+        class SlowGateway:
+            async def complete(self, messages):
+                nonlocal active, maximum_active
+                active += 1
+                maximum_active = max(maximum_active, active)
+                await asyncio.sleep(0.02)
+                active -= 1
+                return Completion("ok", "chat")
+
+        database = Database(str(tmp_path / "deterministic-limits.sqlite3"))
+        registry = WorkerRegistry([
+            Worker(
+                "chat", "http://chat/v1", "chat", frozenset({"chat"}),
+                max_concurrency=1,
+            )
+        ])
+        app = create_app(
+            settings=Settings(database_path=str(tmp_path / "deterministic-limits.sqlite3")),
+            gateway=SlowGateway(),
+            database=database,
+            registry=registry,
+        )
+        first = database.create_conversation()["id"]
+        second = database.create_conversation()["id"]
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            responses = await asyncio.gather(
+                client.post(
+                    f"/api/v1/conversations/{first}/turns",
+                    json={"content": "first"},
+                ),
+                client.post(
+                    f"/api/v1/conversations/{second}/turns",
+                    json={"content": "second"},
+                ),
+            )
+        assert [response.status_code for response in responses] == [200, 200]
+        assert maximum_active == 1
+
+    asyncio.run(scenario())
