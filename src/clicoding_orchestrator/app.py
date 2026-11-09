@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import time
+import uuid
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException
@@ -25,6 +27,26 @@ class TurnResponse(BaseModel):
     assistant_event_id: str
     assistant_content: str
     producer: str
+
+
+class ChatMessage(BaseModel):
+    role: Literal["system", "user", "assistant"]
+    content: str = Field(min_length=1, max_length=200_000)
+
+
+class OpenAIChatRequest(BaseModel):
+    model: str = "clicoding"
+    messages: list[ChatMessage] = Field(min_length=1, max_length=500)
+    conversation_id: str | None = None
+    task_type: Literal["chat", "coding", "review", "vision"] = "chat"
+    stream: bool = False
+    temperature: float | None = None
+    max_tokens: int | None = Field(default=None, gt=0)
+    user: str | None = None
+
+
+def _chat_message(role: str, content: str) -> dict[str, str]:
+    return {"role": role, "content": content}
 
 
 def create_app(
@@ -65,10 +87,10 @@ def create_app(
 
     app = FastAPI(
         title="CLICoding Orchestrator",
-        version="0.2.0",
+        version="0.3.0",
         description=(
-            "Persistent conversations with configuration-backed, capability-based "
-            "worker selection."
+            "OpenAI-compatible single-assistant API with persistent conversations "
+            "and capability-based internal worker selection."
         ),
     )
     app.state.database = db
@@ -78,6 +100,21 @@ def create_app(
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok", "component": "conversation-router"}
+
+    @app.get("/v1/models")
+    async def list_public_models() -> dict[str, object]:
+        # Never expose internal worker IDs or upstream model aliases to clients.
+        return {
+            "object": "list",
+            "data": [
+                {
+                    "id": "clicoding",
+                    "object": "model",
+                    "created": int(time.time()),
+                    "owned_by": "clicoding",
+                }
+            ],
+        }
 
     @app.get("/api/v1/workers")
     async def list_workers() -> dict[str, list[dict[str, object]]]:
@@ -95,27 +132,23 @@ def create_app(
             raise HTTPException(status_code=404, detail="Conversation not found")
         return conversation
 
-    @app.post(
-        "/api/v1/conversations/{conversation_id}/turns",
-        response_model=TurnResponse,
-    )
-    async def create_turn(conversation_id: str, request: TurnRequest) -> TurnResponse:
+    async def run_turn(
+        conversation_id: str, content: str, task_type: str
+    ) -> tuple[dict[str, Any], dict[str, Any], str]:
         if not db.conversation_exists(conversation_id):
             raise HTTPException(status_code=404, detail="Conversation not found")
-
         lock = conversation_locks.setdefault(conversation_id, asyncio.Lock())
         async with lock:
             user_event = db.append_event(
-                conversation_id, role="user", content=request.content, producer="user"
+                conversation_id, role="user", content=content, producer="user"
             )
             history = [
                 {"role": event["role"], "content": event["content"]}
                 for event in db.list_events(conversation_id)
                 if event["role"] in ("user", "assistant")
             ]
-
             try:
-                worker = router.select(request.task_type)
+                worker = router.select(task_type)
             except NoEligibleWorker as exc:
                 raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -140,12 +173,89 @@ def create_app(
                 content=completion.content,
                 producer=worker.id,
             )
-            return TurnResponse(
-                conversation_id=conversation_id,
-                user_event_id=user_event["id"],
-                assistant_event_id=assistant_event["id"],
-                assistant_content=completion.content,
-                producer=worker.id,
+            return user_event, assistant_event, completion.content
+
+    @app.post(
+        "/api/v1/conversations/{conversation_id}/turns",
+        response_model=TurnResponse,
+    )
+    async def create_turn(conversation_id: str, request: TurnRequest) -> TurnResponse:
+        user_event, assistant_event, answer = await run_turn(
+            conversation_id, request.content, request.task_type
+        )
+        return TurnResponse(
+            conversation_id=conversation_id,
+            user_event_id=user_event["id"],
+            assistant_event_id=assistant_event["id"],
+            assistant_content=answer,
+            producer=assistant_event["producer"],
+        )
+
+    @app.post("/v1/chat/completions")
+    async def openai_chat_completions(request: OpenAIChatRequest) -> dict[str, Any]:
+        if request.model not in ("clicoding", "assistant", "auto"):
+            raise HTTPException(status_code=404, detail="Unknown public model alias")
+        if request.stream:
+            raise HTTPException(
+                status_code=400,
+                detail="Streaming is not supported yet; set stream=false",
             )
+        if not request.messages or request.messages[-1].role != "user":
+            raise HTTPException(
+                status_code=400,
+                detail="The final message must be a user message",
+            )
+
+        last_user = request.messages[-1].content
+        supplied_system = [
+            _chat_message(message.role, message.content)
+            for message in request.messages
+            if message.role == "system"
+        ]
+
+        if request.conversation_id:
+            conversation_id = request.conversation_id
+            if not db.conversation_exists(conversation_id):
+                raise HTTPException(status_code=404, detail="Conversation not found")
+        else:
+            created = db.create_conversation()
+            conversation_id = created["id"]
+            # On the first call, import the client-provided prior turns so a client
+            # that sends full history can bootstrap continuity. The final user turn
+            # is appended by run_turn below.
+            for message in request.messages[:-1]:
+                if message.role in ("user", "assistant"):
+                    db.append_event(
+                        conversation_id,
+                        role=message.role,
+                        content=message.content,
+                        producer="client-import",
+                    )
+
+        user_event, assistant_event, answer = await run_turn(
+            conversation_id, last_user, request.task_type
+        )
+
+        response_id = f"chatcmpl-{uuid.uuid4().hex}"
+        return {
+            "id": response_id,
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": "clicoding",
+            "conversation_id": conversation_id,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": answer},
+                    "finish_reason": "stop",
+                }
+            ],
+            "x_clicoding": {
+                "user_event_id": user_event["id"],
+                "assistant_event_id": assistant_event["id"],
+                "producer": assistant_event["producer"],
+                "system_messages_applied": len(supplied_system),
+            },
+        }
 
     return app
