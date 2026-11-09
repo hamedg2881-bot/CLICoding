@@ -206,6 +206,24 @@ def test_openai_image_payload_is_forwarded_to_vision_worker_and_persisted(tmp_pa
     conversation_id = response.json()["conversation_id"]
     saved = database.list_events(conversation_id)
     assert saved[0]["content"].startswith("__CLICODING_MULTIMODAL_V1__")
+    restored = client.get(f"/api/v1/conversations/{conversation_id}")
+    assert restored.json()["events"][0]["content"] == content
+
+    follow_up = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "clicoding",
+            "conversation_id": conversation_id,
+            "messages": [{"role": "user", "content": "Explain the highlighted section"}],
+        },
+    )
+    assert follow_up.status_code == 200
+    assert any(
+        part.get("type") == "image_url"
+        for message in gateway.calls[1]
+        if isinstance(message.get("content"), list)
+        for part in message["content"]
+    )
 
 
 def test_openai_image_payload_rejects_remote_urls(tmp_path):
