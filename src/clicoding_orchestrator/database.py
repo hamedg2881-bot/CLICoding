@@ -76,7 +76,7 @@ class Database:
         return {"id": conversation_id, "created_at": now, "updated_at": now}
 
     def conversation_exists(self, conversation_id: str) -> bool:
-        with self.connect() as connection:
+        with self.session() as connection:
             row = connection.execute(
                 "SELECT 1 FROM conversations WHERE id = ?", (conversation_id,)
             ).fetchone()
@@ -87,7 +87,7 @@ class Database:
     ) -> dict[str, Any]:
         now = utc_now()
         event_id = str(uuid.uuid4())
-        with self.connect() as connection:
+        with self.session() as connection:
             row = connection.execute(
                 "SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence "
                 "FROM conversation_events WHERE conversation_id = ?",
@@ -117,7 +117,7 @@ class Database:
         }
 
     def list_events(self, conversation_id: str) -> list[dict[str, Any]]:
-        with self.connect() as connection:
+        with self.session() as connection:
             rows = connection.execute(
                 """
                 SELECT id, conversation_id, sequence, role, content, producer, created_at
@@ -130,7 +130,7 @@ class Database:
         return [dict(row) for row in rows]
 
     def get_conversation(self, conversation_id: str) -> dict[str, Any] | None:
-        with self.connect() as connection:
+        with self.session() as connection:
             row = connection.execute(
                 "SELECT id, created_at, updated_at FROM conversations WHERE id = ?",
                 (conversation_id,),
