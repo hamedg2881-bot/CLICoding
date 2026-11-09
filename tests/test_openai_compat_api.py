@@ -225,3 +225,11 @@ def test_openai_image_payload_rejects_remote_urls(tmp_path):
         },
     )
     assert response.status_code == 422
+
+
+def test_parallelism_defaults_to_three_and_rejects_more_than_three():
+    import pytest
+
+    assert Settings().max_parallel_tasks == 3
+    with pytest.raises(ValueError, match="between 1 and 3"):
+        Settings(max_parallel_tasks=4)
