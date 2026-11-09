@@ -142,7 +142,7 @@ def create_app(
         content: str,
         task_type: str,
         system_messages: list[dict[str, str]] | None = None,
-    ) -> tuple[dict[str, Any], dict[str, Any], str]:
+    ) -> tuple[dict[str, Any], dict[str, Any], str, str | None]:
         if not db.conversation_exists(conversation_id):
             raise HTTPException(status_code=404, detail="Conversation not found")
         lock = conversation_locks.setdefault(conversation_id, asyncio.Lock())
@@ -150,45 +150,70 @@ def create_app(
             user_event = db.append_event(
                 conversation_id, role="user", content=content, producer="user"
             )
-            history = list(system_messages or []) + [
+            events = [
                 {"role": event["role"], "content": event["content"]}
                 for event in db.list_events(conversation_id)
                 if event["role"] in ("user", "assistant")
             ]
-            try:
-                worker = router.select(task_type)
-            except NoEligibleWorker as exc:
-                raise HTTPException(status_code=503, detail=str(exc)) from exc
+            history = list(system_messages or []) + events
+            execution_id: str | None = None
 
-            selected_gateway = gateway or OpenAICompatibleGateway(
-                base_url=worker.base_url,
-                model=worker.model,
-                api_key=worker.api_key,
-                timeout_seconds=worker.timeout_seconds,
-            )
-            try:
-                completion = await selected_gateway.complete(history)
-            except GatewayError as exc:
-                raise HTTPException(status_code=502, detail=str(exc)) from exc
-            except Exception as exc:
-                raise HTTPException(
-                    status_code=502, detail="Unexpected upstream model failure"
-                ) from exc
+            if multi_model is not None:
+                # The Orchestrator owns planning and internal worker handoffs.
+                # The public API continues to expose one assistant identity.
+                context_messages = list(system_messages or []) + events[:-1]
+                context = "\n\n".join(
+                    f"{message['role']}: {message['content']}"
+                    for message in context_messages
+                )
+                try:
+                    result = await multi_model.run(conversation_id, content, context)
+                except NoEligibleWorker as exc:
+                    raise HTTPException(status_code=503, detail=str(exc)) from exc
+                except Exception as exc:
+                    raise HTTPException(
+                        status_code=502, detail="Multi-model orchestration failed"
+                    ) from exc
+                answer = result.answer
+                producer = "orchestrator"
+                execution_id = result.execution_id
+            else:
+                try:
+                    worker = router.select(task_type)
+                except NoEligibleWorker as exc:
+                    raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+                selected_gateway = gateway or OpenAICompatibleGateway(
+                    base_url=worker.base_url,
+                    model=worker.model,
+                    api_key=worker.api_key,
+                    timeout_seconds=worker.timeout_seconds,
+                )
+                try:
+                    completion = await selected_gateway.complete(history)
+                except GatewayError as exc:
+                    raise HTTPException(status_code=502, detail=str(exc)) from exc
+                except Exception as exc:
+                    raise HTTPException(
+                        status_code=502, detail="Unexpected upstream model failure"
+                    ) from exc
+                answer = completion.content
+                producer = worker.id
 
             assistant_event = db.append_event(
                 conversation_id,
                 role="assistant",
-                content=completion.content,
-                producer=worker.id,
+                content=answer,
+                producer=producer,
             )
-            return user_event, assistant_event, completion.content
+            return user_event, assistant_event, answer, execution_id
 
     @app.post(
         "/api/v1/conversations/{conversation_id}/turns",
         response_model=TurnResponse,
     )
     async def create_turn(conversation_id: str, request: TurnRequest) -> TurnResponse:
-        user_event, assistant_event, answer = await run_turn(
+        user_event, assistant_event, answer, execution_id = await run_turn(
             conversation_id, request.content, request.task_type
         )
         return TurnResponse(
@@ -197,6 +222,7 @@ def create_app(
             assistant_event_id=assistant_event["id"],
             assistant_content=answer,
             producer=assistant_event["producer"],
+            execution_id=execution_id,
         )
 
     @app.post("/v1/chat/completions")
@@ -240,7 +266,7 @@ def create_app(
                         producer="client-import",
                     )
 
-        user_event, assistant_event, answer = await run_turn(
+        user_event, assistant_event, answer, execution_id = await run_turn(
             conversation_id, last_user, request.task_type, supplied_system
         )
 
@@ -263,6 +289,8 @@ def create_app(
                 "assistant_event_id": assistant_event["id"],
                 "producer": assistant_event["producer"],
                 "system_messages_applied": len(supplied_system),
+                "execution_id": execution_id,
+                "orchestrated": multi_model is not None,
             },
         }
 
