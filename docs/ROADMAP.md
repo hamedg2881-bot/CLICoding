@@ -109,9 +109,10 @@ Deliverables:
 - [x] Initial conversation/event persistence contract with stable conversation identity independent of model (single-process SQLite slice).
 - [ ] Persistent task and execution-plan contracts.
 - [ ] Context assembly and multimodal attachment handoff.
-- [ ] Capability-based worker selection.
+- [x] Configuration-backed capability-based worker selection (deterministic task-type hint).
 - [ ] Sequential, parallel, and hybrid task execution with dependency tracking.
-- [ ] Unified response/streaming and transparent model handoff.
+- [x] Non-streaming transparent worker handoff with shared conversation history.
+- [ ] Unified response streaming.
 - [ ] Bounded retry, partial failure recovery, cancellation, and approval gates.
 - [ ] Contract/acceptance tests from [ORCHESTRATOR_SPEC.md](ORCHESTRATOR_SPEC.md).
 
