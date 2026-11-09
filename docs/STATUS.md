@@ -3,7 +3,7 @@
 **Last updated:** 2026-11-09  
 **Canonical repository:** https://github.com/hamedg2881-bot/CLICoding  
 **Current phase:** Phase 2A — conversation and multi-model orchestration core  
-**Overall state:** Conversation persistence, capability routing, structured planning, durable multi-model execution, optional Bearer authentication, and the non-streaming OpenAI-compatible API are implemented. CI verified the previous 28-test revision; final CI for the latest hardening changes is pending. Open WebUI integration and DGX deployment validation remain open.
+**Overall state:** Conversation persistence, capability routing, structured planning, durable multi-model execution, optional Bearer authentication, and the non-streaming OpenAI-compatible API are implemented. GitHub Actions verified the final-reviewed source revision with 37 passing tests; Open WebUI integration and DGX deployment validation remain open. Open WebUI integration and DGX deployment validation remain open.
 
 ## Confirmed requirements
 - Internet is unavailable during development; internal LAN is available.
@@ -194,4 +194,12 @@ User supplied a fresh command output from host `spark-7ea3`:
 - Added regression tests for in-memory SQLite persistence, shared worker concurrency, invalid worker endpoints/limits, missing configured secrets, and API authentication.
 - Updated README, environment example, and Orchestrator runbook to remove stale claims about planner integration, concurrency, and authentication.
 - Latest CI for these final-review changes is pending. DGX deployment is not yet approved: Open WebUI conversation-ID preservation, image transport, streaming, multi-process safety, TLS, and current DGX resource/runtime inventory remain unverified.
+- No DGX Spark host, model, runtime, container, service, or workstation was changed.
+
+
+### 2026-11-09 — Final-review CI verification
+- GitHub Actions run [42601893118](https://github.com/hamedg2881-bot/CLICoding/actions/runs/42601893118) completed successfully for code/test commit `cbe59f3a499a2107f151753e644c1d82e8587054`.
+- Result: **37 passed**, one Starlette/httpx deprecation warning; no test failures.
+- Coverage includes conversation persistence, in-memory SQLite behavior, worker routing and registry validation, planner/schema validation, dependency-wave execution, durable execution state, OpenAI API continuity, bearer authentication, and process-local worker concurrency enforcement including logical aliases of the same runtime.
+- The tested source is suitable for controlled DGX staging, but not yet production-ready for multi-user LAN use. Open WebUI mapping, streaming, image transport, tenant isolation, TLS termination, and live DGX compatibility checks remain deployment gates.
 - No DGX Spark host, model, runtime, container, service, or workstation was changed.
