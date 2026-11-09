@@ -46,10 +46,10 @@ def test_orchestrator_dispatches_workers_and_persists_plan_and_results(tmp_path)
         conversation = db.create_conversation()
         registry = WorkerRegistry(
             [
-                Worker("planner", "http://planner/v1", "planner", frozenset({"chat"}), priority=1),
+                Worker("planner", "http://planner/v1", "planner", frozenset({"planning"}), priority=1),
                 Worker("coder", "http://coder/v1", "coder", frozenset({"coding"})),
                 Worker("vision", "http://vision/v1", "vision", frozenset({"vision"})),
-                Worker("synth", "http://synth/v1", "synth", frozenset({"chat"}), priority=2),
+                Worker("synth", "http://synth/v1", "synth", frozenset({"chat"}), priority=1),
             ]
         )
         gateways = {}
