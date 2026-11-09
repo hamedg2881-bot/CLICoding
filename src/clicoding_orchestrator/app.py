@@ -234,6 +234,8 @@ def create_app(
         conversation = db.get_conversation(conversation_id)
         if conversation is None:
             raise HTTPException(status_code=404, detail="Conversation not found")
+        for event in conversation["events"]:
+            event["content"] = _restore_content(event["content"])
         return conversation
 
     async def run_turn(
@@ -255,6 +257,21 @@ def create_app(
                 if event["role"] in ("user", "assistant")
             ]
             history = list(system_messages or []) + events
+            recent_image_parts: list[dict[str, Any]] = []
+            for event in reversed(events):
+                if event["role"] == "user" and _has_images(event["content"]):
+                    recent_image_parts = [
+                        part for part in event["content"]
+                        if part.get("type") == "image_url"
+                    ]
+                    break
+            vision_content: str | list[dict[str, Any]] = content
+            if not _has_images(content) and recent_image_parts:
+                current_text = _content_text(content)
+                vision_content = (
+                    ([{"type": "text", "text": current_text}] if current_text else [])
+                    + recent_image_parts
+                )
             execution_id: str | None = None
 
             if multi_model is not None:
@@ -272,7 +289,7 @@ def create_app(
                             "Analyze the attached image(s)." if _has_images(content) else ""
                         ),
                         context,
-                        user_content=content,
+                        user_content=vision_content,
                     )
                 except NoEligibleWorker as exc:
                     raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -285,7 +302,7 @@ def create_app(
                 execution_id = result.execution_id
             else:
                 try:
-                    worker = router.select("vision" if _has_images(content) else task_type)
+                    worker = router.select("vision" if _has_images(vision_content) else task_type)
                 except NoEligibleWorker as exc:
                     raise HTTPException(status_code=503, detail=str(exc)) from exc
 
