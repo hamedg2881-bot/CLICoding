@@ -120,3 +120,9 @@ This file records accepted project-level decisions. Superseded decisions remain 
 - **Rationale:** Minimize custom code and framework complexity while proving the core behavior early.
 - **Consequence:** No large framework or runtime deployment is selected until a small proof-of-concept and compatibility tests demonstrate need.
 
+## D-019 — User clients connect only to the Orchestrator
+- **Status:** Accepted
+- **Decision:** The normal chat client connects to one stable CLICoding Orchestrator endpoint and sees one assistant alias. It does not connect directly to worker runtimes or expose internal model IDs as ordinary conversation choices. LiteLLM, if adopted, is an internal downstream gateway.
+- **Rationale:** The Orchestrator must own model choice, multi-model handoffs, and canonical task context; exposing worker endpoints would reintroduce model-specific sessions and user-visible switching.
+- **Consequence:** Validate OpenAI-compatible streaming and conversation semantics between the client and Orchestrator. The client-side conversation record must map reliably to the Orchestrator's canonical conversation ID.
+
