@@ -17,12 +17,22 @@ class Database:
 
     def __init__(self, path: str):
         self.path = path
+        self._uri = path == ":memory:"
+        self._dsn = (
+            f"file:clicoding-{uuid.uuid4().hex}?mode=memory&cache=shared"
+            if self._uri else path
+        )
+        # Keep one connection alive so SQLite's shared in-memory database survives
+        # the short-lived connections used by each repository operation.
+        self._keeper = (
+            sqlite3.connect(self._dsn, uri=True, timeout=15) if self._uri else None
+        )
         if path != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.initialize()
 
     def connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, timeout=15)
+        connection = sqlite3.connect(self._dsn, uri=self._uri, timeout=15)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA busy_timeout = 15000")
