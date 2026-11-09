@@ -98,3 +98,14 @@ User supplied a fresh command output from host `spark-7ea3`:
 - Accepted that Open WebUI or another reference client must connect only to the CLICoding Orchestrator endpoint and see one assistant alias. Individual model runtimes remain internal workers; LiteLLM, if adopted, is downstream of the Orchestrator.
 - Rationale: avoid model-specific sessions and ensure the Orchestrator—not the UI model picker—owns routing and multi-model workflows.
 
+### 2026-11-09 — First Orchestrator source slice committed
+- Added a Python 3.11+ FastAPI service under `src/clicoding_orchestrator`.
+- Added SQLite persistence for conversations and ordered user/assistant/tool events, with producer metadata.
+- Added a replaceable OpenAI-compatible upstream adapter using httpx; the gateway transports requests but does not own conversation state.
+- Added API routes to create a conversation, append a turn, retrieve its full history, and check health.
+- Added a test proving that a later model invocation receives the earlier user and assistant messages while retaining the same conversation ID; the fake worker changes its producer ID between calls.
+- Added local run instructions, environment example, and package metadata.
+- Tests are written but have not yet been executed in this environment. Do not mark the slice verified until `pytest` passes.
+- Known limits: one configured upstream model per process, non-streaming text-only API, single-process turn locks, no idempotency keys, no authentication/tenant isolation, no planner/task graph, and no tool broker.
+- No DGX Spark host, model runtime, container, service, or workstation workspace was changed. No package was installed on the user's machines.
+- Next: run tests and fix any failures; then add explicit worker selection behind the API and prove model handoff without changing conversation identity.
