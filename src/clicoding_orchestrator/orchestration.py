@@ -106,6 +106,11 @@ class MultiModelOrchestrator:
                 self.database.update_execution_task(
                     execution_id, task_id, result.status, error=result.error
                 )
+            elif result.status == "failed":
+                # Also covers failures that occur before a worker is selected.
+                self.database.update_execution_task(
+                    execution_id, task_id, "failed", error=result.error
+                )
 
         status = (
             "succeeded" if execution.succeeded
