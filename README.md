@@ -65,7 +65,7 @@ See [docs/ROADMAP.md](docs/ROADMAP.md) for phases and exit gates.
 - An optional inbound bearer key (`CLICODING_API_KEY`) protects API and diagnostic endpoints; `/health` remains public. Configure a strong key before any LAN exposure and use internal TLS.
 - The API is currently non-streaming and text-only. Open WebUI conversation-ID preservation has not been verified; do not assume a generic client stores the returned `conversation_id`.
 - The code has not yet been deployed or validated on DGX Spark. Hardware/runtime inventory, ARM64 dependency staging, service configuration, and end-to-end model compatibility are still deployment gates.
-- Latest implementation and test evidence is recorded in [docs/STATUS.md](docs/STATUS.md). See [orchestrator/README.md](orchestrator/README.md) for the current API and run instructions.
+- Latest implementation and test evidence is recorded in [docs/STATUS.md](docs/STATUS.md). See [orchestrator/README.md](orchestrator/README.md) for API/run instructions and [docs/DGX_STAGING_CHECKLIST.md](docs/DGX_STAGING_CHECKLIST.md) for controlled DGX staging prerequisites.
 
 ## Security and offline requirements
 
