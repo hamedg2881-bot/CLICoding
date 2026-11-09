@@ -43,12 +43,12 @@ The example endpoint ports and aliases are placeholders, not claims about live s
 
 ## Current implementation gaps
 
-- [ ] OpenAI-compatible multimodal image payload transport to Qwen3.6.
-- [ ] Configurable global execution parallelism defaulting to 3.
+- [x] OpenAI-compatible base64 image data-URI transport to Qwen3.6 is implemented and covered by API/orchestration tests; live runtime validation remains pending.
+- [x] Configurable global execution parallelism defaults to 3 and is wired through `CLICODING_MAX_PARALLEL_TASKS`.
 - [ ] Runtime readiness/health checks and clear unavailable-worker errors.
 - [ ] Real DGX measurements with all three model processes resident simultaneously.
 - [ ] Open WebUI conversation-ID mapping and streaming support.
-- [ ] End-to-end tests proving GPT-OSS planning/synthesis, Coder execution, and Qwen3.6 vision/general handoff.
+- [x] Unit/integration tests cover the selected worker roles, three-way execution, and image-only handoff to the multimodal worker; real model endpoint tests remain pending.
 
 ## Flash retirement gates
 
