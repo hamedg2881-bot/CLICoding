@@ -10,6 +10,8 @@ workers:
     priority: 10
     max_concurrency: 1
     timeout_seconds: 180
+    # Optional: name of an environment variable containing this worker's API key.
+    # api_key_env: CLICODING_CODER_API_KEY
 
   - id: vision-primary
     base_url: http://127.0.0.1:8001/v1
@@ -19,3 +21,4 @@ workers:
     priority: 10
     max_concurrency: 1
     timeout_seconds: 180
+    # api_key_env: CLICODING_VISION_API_KEY
