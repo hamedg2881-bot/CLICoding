@@ -1,6 +1,6 @@
 # CLICoding — Offline AI Development Platform
 
-**Project status:** Architecture baseline established; implementation not yet started.  
+**Project status:** Architecture baseline established; first persistent-conversation service slice committed, verification pending.  
 **Operating mode:** Internet unavailable during development; internal LAN available.  
 **IDE policy:** IDE-agnostic.  
 **Canonical project repository:** https://github.com/hamedg2881-bot/CLICoding
@@ -60,8 +60,8 @@ See [docs/ROADMAP.md](docs/ROADMAP.md) for phases and exit gates.
 ## Current status
 
 - Repository inspected: empty at project kickoff.
-- Initial architecture and workflow are being recorded.
-- No runtime, model, IDE extension, or hardware deployment has yet been selected as final.
+- Initial architecture and workflow are recorded.\n- First FastAPI + SQLite conversation service and OpenAI-compatible model adapter are committed under `src/clicoding_orchestrator`.
+- No runtime, model, IDE extension, or hardware deployment has yet been selected as final.\n- The first code slice is not yet test-verified; see [orchestrator/README.md](orchestrator/README.md).
 - Next implementation action: inventory target server/workstations and verify coding, tool-calling, vision, and concurrency capabilities before choosing components.
 
 See [docs/STATUS.md](docs/STATUS.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/WORKFLOW.md](docs/WORKFLOW.md), and [docs/DECISIONS.md](docs/DECISIONS.md).
