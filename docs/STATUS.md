@@ -247,3 +247,12 @@ User supplied a fresh command output from host `spark-7ea3`:
 - GitHub Actions run [42606589994](https://github.com/hamedg2881-bot/CLICoding/actions/runs/42606589994) passed on commit `446473111e7273527cde3c6d49e1351caf459f2f`: **44 passed**, one Starlette/httpx deprecation warning.
 - These tests use fake worker gateways. Live Qwen3.6 image inference, GPT-OSS/Coder endpoint compatibility, Open WebUI conversation-ID behavior, streaming, and simultaneous resident memory use on DGX remain unverified.
 - No DGX host, model, container, runtime, service, or configuration was changed.
+
+
+### 2026-11-09 — DGX runtime compatibility research and preflight preparation
+- Added `docs/DGX_RUNTIME_PROFILES.md` with model-specific GB10 benchmark references, isolated-runtime strategy, initial context/KV budgets, and acceptance sequence.
+- Current public evidence supports the selected roles: GPT-OSS-20B has a reported 96.2 tok/s result on GB10 with vLLM 0.31.0; Qwen3.6-35B-A3B NVFP4 has a reported 102.3 tok/s with MTP on vLLM 0.31.0; Qwen3-Coder-Next NVFP4 has reported 60.8 tok/s baseline and 72 tok/s with an external EAGLE3 draft on a vLLM 0.24.0 recipe. These are separate single-model tests, not a simultaneous three-runtime benchmark.
+- Runtime versions differ: Qwen3.6 NVFP4 GB10 recipe requires vLLM 0.28.0+; GPT-OSS 20B has a GB10 vLLM 0.31.0 benchmark; the cited Coder-Next NVFP4 recipe is tuned for vLLM 0.24.0/0.25.1 and reports a regression for one checkpoint on 0.26.0. Use isolated containers and verify the actual image tags/checkpoint formats before selecting exact launch images.
+- Added `scripts/dgx_spark_model_preflight.sh`, a read-only inventory of model directories/config metadata, memory, NVIDIA status, Docker images/containers, listening ports and existing OpenAI model endpoints.
+- Preliminary budget arithmetic: approximately 78 GiB of model weights plus 14 GiB initial KV caps leaves roughly 29 GiB of the 121 GiB usable memory for runtime workspaces and OS. This is only an estimate; it does not prove all three processes fit.
+- Next gate: user runs the read-only preflight and shares its output. Then prepare exact per-model Compose/runtime settings using verified local model paths and image versions. No host mutation has occurred.
