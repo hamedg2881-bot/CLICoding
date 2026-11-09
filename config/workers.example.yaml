@@ -1,0 +1,21 @@
+# Copy to workers.yaml and edit endpoint/model values for your environment.
+# This file only registers already-managed runtimes. It never downloads, loads,
+# wakes, sleeps, or otherwise changes a model runtime.
+workers:
+  - id: coding-primary
+    base_url: http://127.0.0.1:8000/v1
+    model: your-coding-model-alias
+    capabilities: [chat, coding, review]
+    enabled: false
+    priority: 10
+    max_concurrency: 1
+    timeout_seconds: 180
+
+  - id: vision-primary
+    base_url: http://127.0.0.1:8001/v1
+    model: your-vision-model-alias
+    capabilities: [chat, vision]
+    enabled: false
+    priority: 10
+    max_concurrency: 1
+    timeout_seconds: 180
