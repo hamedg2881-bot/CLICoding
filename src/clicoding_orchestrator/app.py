@@ -90,6 +90,10 @@ def create_app(
     router = CapabilityRouter(worker_registry)
     multi_model = orchestrator or (MultiModelOrchestrator(db, router) if config.enable_planning else None)
     conversation_locks: dict[str, asyncio.Lock] = {}
+    worker_semaphores = {
+        worker.id: asyncio.Semaphore(worker.max_concurrency)
+        for worker in worker_registry.enabled_workers()
+    }
 
     app = FastAPI(
         title="CLICoding Orchestrator",
@@ -207,7 +211,8 @@ def create_app(
                     timeout_seconds=worker.timeout_seconds,
                 )
                 try:
-                    completion = await selected_gateway.complete(history)
+                    async with worker_semaphores[worker.id]:
+                        completion = await selected_gateway.complete(history)
                 except GatewayError as exc:
                     raise HTTPException(status_code=502, detail=str(exc)) from exc
                 except Exception as exc:
