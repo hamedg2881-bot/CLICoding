@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import Any
 
@@ -53,21 +54,26 @@ class WorkerRegistry:
                 worker_id = str(item["id"]).strip()
                 base_url = str(item["base_url"]).strip().rstrip("/")
                 model = str(item["model"]).strip()
-                capabilities = frozenset(str(value).strip() for value in item["capabilities"])
+                raw_capabilities = item["capabilities"]
+                if not isinstance(raw_capabilities, list):
+                    raise RegistryError(f"workers[{index}].capabilities must be a list")
+                capabilities = frozenset(str(value).strip() for value in raw_capabilities)
                 enabled = item.get("enabled", False)
                 priority = int(item.get("priority", 100))
                 max_concurrency = int(item.get("max_concurrency", 1))
                 timeout = float(item.get("timeout_seconds", 180))
-                api_key = item.get("api_key")
+                api_key_env = item.get("api_key_env")
             except (KeyError, TypeError, ValueError) as exc:
                 raise RegistryError(f"Invalid workers[{index}] entry: {exc}") from exc
 
-            if not worker_id or not base_url or not model or not capabilities:
+            if not worker_id or not base_url or not model or not capabilities or "" in capabilities:
                 raise RegistryError(f"workers[{index}] requires id, base_url, model and capabilities")
             if not isinstance(enabled, bool):
                 raise RegistryError(f"workers[{index}].enabled must be boolean")
             if priority < 0 or max_concurrency < 1 or timeout <= 0:
                 raise RegistryError(f"workers[{index}] has invalid limits")
+            if api_key_env is not None and not isinstance(api_key_env, str):
+                raise RegistryError(f"workers[{index}].api_key_env must be a string")
             workers.append(
                 Worker(
                     id=worker_id,
@@ -76,7 +82,7 @@ class WorkerRegistry:
                     capabilities=capabilities,
                     enabled=enabled,
                     priority=priority,
-                    api_key=str(api_key) if api_key else None,
+                    api_key=os.getenv(api_key_env) if api_key_env else None,
                     timeout_seconds=timeout,
                     max_concurrency=max_concurrency,
                 )
