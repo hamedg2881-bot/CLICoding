@@ -3,7 +3,7 @@
 **Last updated:** 2026-11-09  
 **Canonical repository:** https://github.com/hamedg2881-bot/CLICoding  
 **Current phase:** Phase 2A — conversation and multi-model orchestration core  
-**Overall state:** Conversation persistence, capability routing, structured planning, durable multi-model execution, optional Bearer authentication, and the non-streaming OpenAI-compatible API are implemented. GitHub Actions verified the final-reviewed source revision with 37 passing tests; Open WebUI integration and DGX deployment validation remain open. Open WebUI integration and DGX deployment validation remain open.
+**Overall state:** Conversation persistence, capability routing, structured planning, durable multi-model execution, optional Bearer authentication, and the non-streaming OpenAI-compatible API are implemented. Three-model target topology is documented and covered by CI tests. Latest GitHub Actions run verified 38 passing tests; Open WebUI integration and DGX deployment validation remain open.
 
 ## Confirmed requirements
 - Internet is unavailable during development; internal LAN is available.
@@ -209,3 +209,19 @@ User supplied a fresh command output from host `spark-7ea3`:
 - Final code revision `6974a962b399bafc02b1b572c874a320f93dcde7` passed GitHub Actions run [42602083537](https://github.com/hamedg2881-bot/CLICoding/actions/runs/42602083537).
 - Result remains **37 passed**, one Starlette/httpx deprecation warning.
 - The final recheck includes case-insensitive Bearer scheme handling and verifies the API authentication test after the change. The latest subsequent commits only update staging documentation.
+
+
+### 2026-11-09 — Three-model replacement topology recorded and tested
+- User reaffirmed that Qwen3.8 Flash is not the target architecture; it is to be replaced by three specialist runtimes after successful validation.
+- Confirmed model roles:
+  - **Coder:** Qwen3-Coder-Next-NVFP4-GB10; local directory `/opt/ai/models/Qwen3-Coder-Next-NVFP4-GB10`.
+  - **Vision:** Qwen3.6-VL-35B-A3B-NVFP4-DGX-Spark-VisionSafe; local directory `/opt/ai/models/Qwen3.6-VL-35B-A3B-NVFP4-DGX-Spark-VisionSafe`.
+  - **Small/fast:** exact model remains unselected; earlier discussion only established a 4B–8B target class. Do not infer a model identity or endpoint.
+- The small/fast runtime is configured to provide both `planning` and `chat` capabilities, allowing it to propose structured plans and synthesize final results. The Orchestrator remains responsible for validating plans, dependency execution, capability dispatch, conversation state, and final response handling.
+- Updated `config/workers.example.yaml` to a three-runtime topology, disabled by default, with placeholder served aliases/endpoints. The file does not start, stop, wake, sleep, download, or install models.
+- Added `docs/THREE_MODEL_TOPOLOGY.md` with request flow, resource/lifecycle policy, exact known model paths, and explicit gates before Flash retirement.
+- Added an orchestration test proving the small/fast worker handles both planning and synthesis while Coder and Vision independently execute specialist tasks.
+- GitHub Actions run [42603776820](https://github.com/hamedg2881-bot/CLICoding/actions/runs/42603776820) passed: **38 passed**, one Starlette/httpx deprecation warning.
+- Three related commits are on `main`; latest reviewed documentation commit is `f3e5f699853492be92108f0de706781d733b12e8`.
+- Remaining blockers: choose and benchmark the small/fast model; verify actual served aliases and endpoints; implement and test image payload transport to Vision; verify Open WebUI conversation mapping and streaming; measure safe concurrent memory use on DGX.
+- No DGX model, container, runtime, service, or host configuration was changed. Flash remains untouched pending replacement acceptance and explicit approval.
