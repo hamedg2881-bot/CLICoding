@@ -31,6 +31,19 @@ class MultiModelOrchestrator:
         self.router = router
         self.executor = SequentialWaveExecutor(max_parallel_tasks=max_parallel_tasks)
         self.gateway_factory = gateway_factory or self._default_gateway
+        # Shared across executions: per-worker limits must apply across conversations,
+        # not only within one plan's dependency wave.
+        self._worker_semaphores = {
+            worker.id: __import__("asyncio").Semaphore(worker.max_concurrency)
+            for worker in router.registry.enabled_workers()
+        }
+
+    async def _complete(self, worker: Worker, messages: list[dict[str, str]]):
+        semaphore = self._worker_semaphores.get(worker.id)
+        if semaphore is None:
+            raise RuntimeError(f"No concurrency slot configured for worker {worker.id!r}")
+        async with semaphore:
+            return await self.gateway_factory(worker).complete(messages)
 
     @staticmethod
     def _default_gateway(worker: Worker) -> ModelGateway:
@@ -48,8 +61,12 @@ class MultiModelOrchestrator:
         conversation_context: str = "",
     ) -> OrchestrationResult:
         planning_worker = self.router.planning_worker()
+        class LimitedPlanningGateway:
+            async def complete(inner_self, messages):
+                return await self._complete(planning_worker, messages)
+
         planner = StructuredPlanner(
-            self.gateway_factory(planning_worker),
+            LimitedPlanningGateway(),
             allowed_capabilities={
                 capability
                 for worker in self.router.registry.enabled_workers()
@@ -87,7 +104,7 @@ class MultiModelOrchestrator:
                 },
             ]
             try:
-                completion = await self.gateway_factory(worker).complete(messages)
+                completion = await self._complete(worker, messages)
                 self.database.update_execution_task(
                     execution_id, task.task_id, "succeeded",
                     output=completion.content, worker_id=worker.id
@@ -136,7 +153,7 @@ class MultiModelOrchestrator:
         else:
             try:
                 synthesis_worker = self.router.select("chat")
-                synthesis = await self.gateway_factory(synthesis_worker).complete(
+                synthesis = await self._complete(synthesis_worker,
                     [
                         {
                             "role": "system",
