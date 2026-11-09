@@ -136,7 +136,7 @@ def test_configured_bearer_key_protects_api_but_not_health(tmp_path):
     app = create_app(
         settings=Settings(
             database_path=str(tmp_path / "auth.sqlite3"),
-            api_key="test-only-secret",
+            api_key="test-only-secret-0123456789-abcdef-012345",
         ),
         gateway=gateway,
         database=database,
@@ -151,7 +151,7 @@ def test_configured_bearer_key_protects_api_but_not_health(tmp_path):
     ).status_code == 401
 
     authorized = client.get(
-        "/v1/models", headers={"Authorization": "Bearer test-only-secret"}
+        "/v1/models", headers={"Authorization": "Bearer test-only-secret-0123456789-abcdef-012345"}
     )
     assert authorized.status_code == 200
-    assert "test-only-secret" not in authorized.text
+    assert "test-only-secret-0123456789-abcdef-012345" not in authorized.text
