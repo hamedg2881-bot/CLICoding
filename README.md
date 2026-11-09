@@ -1,6 +1,6 @@
 # CLICoding — Offline AI Development Platform
 
-**Project status:** Architecture baseline established; first persistent-conversation service slice committed; isolated behavior checks passed, direct repository test run pending.  
+**Project status:** Persistent conversation core and YAML-backed capability router/worker handoff committed; expanded direct test run and deployment validation pending.  
 **Operating mode:** Internet unavailable during development; internal LAN available.  
 **IDE policy:** IDE-agnostic.  
 **Canonical project repository:** https://github.com/hamedg2881-bot/CLICoding
@@ -61,8 +61,8 @@ See [docs/ROADMAP.md](docs/ROADMAP.md) for phases and exit gates.
 
 - Repository inspected: empty at project kickoff.
 - Initial architecture and workflow are recorded.\n- First FastAPI + SQLite conversation service and OpenAI-compatible model adapter are committed under `src/clicoding_orchestrator`.
-- No runtime, model, IDE extension, or hardware deployment has yet been selected as final.\n- The first code slice is not yet test-verified; see [orchestrator/README.md](orchestrator/README.md).
-- Next implementation action: inventory target server/workstations and verify coding, tool-calling, vision, and concurrency capabilities before choosing components.
+- No runtime, model, IDE extension, or hardware deployment has yet been selected as final.\n- Conversation persistence and deterministic worker handoff are implemented in source; the expanded tests are committed but still require execution from a repository checkout. See [orchestrator/README.md](orchestrator/README.md).
+- Next implementation action: verify the committed router tests, then add persistent task contracts and a sequential two-worker workflow. No deployment is authorized or implied.
 
 See [docs/STATUS.md](docs/STATUS.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/WORKFLOW.md](docs/WORKFLOW.md), and [docs/DECISIONS.md](docs/DECISIONS.md).
 
