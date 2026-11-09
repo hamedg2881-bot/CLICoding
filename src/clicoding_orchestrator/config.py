@@ -12,6 +12,7 @@ class Settings:
     upstream_model: str = "default"
     request_timeout_seconds: float = 180.0
     workers_file: str | None = None
+    enable_planning: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -27,4 +28,5 @@ class Settings:
                 os.getenv("CLICODING_REQUEST_TIMEOUT_SECONDS", "180")
             ),
             workers_file=os.getenv("CLICODING_WORKERS_FILE") or None,
+            enable_planning=os.getenv("CLICODING_ENABLE_PLANNING", "false").lower() in ("1", "true", "yes"),
         )
