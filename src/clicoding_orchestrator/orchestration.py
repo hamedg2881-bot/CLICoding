@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 
 from .database import Database
 from .executor import PlanExecution, SequentialWaveExecutor
-from .gateway import ModelGateway, OpenAICompatibleGateway
+from .gateway import Completion, ModelGateway, OpenAICompatibleGateway
 from .planner import StructuredPlanner
 from .registry import Worker
 from .router import CapabilityRouter
@@ -34,11 +35,13 @@ class MultiModelOrchestrator:
         # Shared across executions: per-worker limits must apply across conversations,
         # not only within one plan's dependency wave.
         self._worker_semaphores = {
-            worker.id: __import__("asyncio").Semaphore(worker.max_concurrency)
+            worker.id: asyncio.Semaphore(worker.max_concurrency)
             for worker in router.registry.enabled_workers()
         }
 
-    async def _complete(self, worker: Worker, messages: list[dict[str, str]]):
+    async def _complete(
+        self, worker: Worker, messages: list[dict[str, str]]
+    ) -> Completion:
         semaphore = self._worker_semaphores.get(worker.id)
         if semaphore is None:
             raise RuntimeError(f"No concurrency slot configured for worker {worker.id!r}")
@@ -61,6 +64,7 @@ class MultiModelOrchestrator:
         conversation_context: str = "",
     ) -> OrchestrationResult:
         planning_worker = self.router.planning_worker()
+
         class LimitedPlanningGateway:
             async def complete(inner_self, messages):
                 return await self._complete(planning_worker, messages)
@@ -153,7 +157,8 @@ class MultiModelOrchestrator:
         else:
             try:
                 synthesis_worker = self.router.select("chat")
-                synthesis = await self._complete(synthesis_worker,
+                synthesis = await self._complete(
+                    synthesis_worker,
                     [
                         {
                             "role": "system",
@@ -177,7 +182,10 @@ class MultiModelOrchestrator:
             except Exception:
                 # Completed task outputs are still useful if the final chat worker is
                 # unavailable; do not turn a successful execution into an HTTP failure.
-                answer = "The tasks completed, but final synthesis was unavailable.\n\n" + "\n\n".join(successful)
+                answer = (
+                    "The tasks completed, but final synthesis was unavailable.\n\n"
+                    + "\n\n".join(successful)
+                )
 
         return OrchestrationResult(
             execution_id=execution_id, answer=answer, execution=execution
