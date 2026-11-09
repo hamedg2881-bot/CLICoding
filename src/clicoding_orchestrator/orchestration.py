@@ -135,27 +135,32 @@ class MultiModelOrchestrator:
             answer = successful[0].split("] ", 1)[1]
         else:
             synthesis_worker = self.router.select("chat")
-            synthesis = await self.gateway_factory(synthesis_worker).complete(
-                [
-                    {
-                        "role": "system",
-                        "content": (
-                            "Synthesize worker results into one coherent answer to the "
-                            "user. Resolve overlap, preserve important caveats, and do "
-                            "not invent facts absent from the results."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": (
-                            f"Original request:\n{user_request}\n\n"
-                            f"Acceptance criteria:\n{plan.acceptance_criteria}\n\n"
-                            f"Worker results:\n" + "\n\n".join(successful)
-                        ),
-                    },
-                ]
-            )
-            answer = synthesis.content
+            try:
+                synthesis = await self.gateway_factory(synthesis_worker).complete(
+                    [
+                        {
+                            "role": "system",
+                            "content": (
+                                "Synthesize worker results into one coherent answer to the "
+                                "user. Resolve overlap, preserve important caveats, and do "
+                                "not invent facts absent from the results."
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": (
+                                f"Original request:\n{user_request}\n\n"
+                                f"Acceptance criteria:\n{plan.acceptance_criteria}\n\n"
+                                f"Worker results:\n" + "\n\n".join(successful)
+                            ),
+                        },
+                    ]
+                )
+                answer = synthesis.content
+            except Exception:
+                # Completed task outputs are still useful if the final chat worker is
+                # unavailable; do not turn a successful execution into an HTTP failure.
+                answer = "The tasks completed, but final synthesis was unavailable.\n\n" + "\n\n".join(successful)
 
         return OrchestrationResult(
             execution_id=execution_id, answer=answer, execution=execution
