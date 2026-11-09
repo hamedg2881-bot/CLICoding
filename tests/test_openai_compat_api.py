@@ -167,3 +167,61 @@ def test_settings_rejects_short_inbound_api_key():
 
     with pytest.raises(ValueError, match="at least 32"):
         Settings(api_key="too-short")
+
+
+
+def test_openai_image_payload_is_forwarded_to_vision_worker_and_persisted(tmp_path):
+    gateway = FakeGateway()
+    database = Database(str(tmp_path / "image.sqlite3"))
+    registry = WorkerRegistry(
+        [
+            Worker(
+                "multimodal-primary",
+                "http://vision/v1",
+                "qwen3.6-35b-a3b",
+                frozenset({"chat", "vision"}),
+            )
+        ]
+    )
+    app = create_app(
+        settings=Settings(database_path=str(tmp_path / "image.sqlite3")),
+        gateway=gateway,
+        database=database,
+        registry=registry,
+    )
+    client = TestClient(app)
+    image_uri = "data:image/png;base64,aGVsbG8="
+    content = [
+        {"type": "text", "text": "Describe this screenshot"},
+        {"type": "image_url", "image_url": {"url": image_uri}},
+    ]
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "clicoding", "messages": [{"role": "user", "content": content}]},
+    )
+
+    assert response.status_code == 200
+    assert gateway.calls[0][-1]["content"] == content
+    conversation_id = response.json()["conversation_id"]
+    saved = database.list_events(conversation_id)
+    assert saved[0]["content"].startswith("__CLICODING_MULTIMODAL_V1__")
+
+
+def test_openai_image_payload_rejects_remote_urls(tmp_path):
+    client, _ = make_client(tmp_path)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "clicoding",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": "https://example.com/image.png"}}
+                    ],
+                }
+            ],
+        },
+    )
+    assert response.status_code == 422
