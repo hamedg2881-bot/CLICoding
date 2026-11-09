@@ -2,8 +2,8 @@
 
 **Last updated:** 2026-11-09  
 **Canonical repository:** https://github.com/hamedg2881-bot/CLICoding  
-**Current phase:** Phase 2A — execution-plan contract and dependency-wave executor  
-**Overall state:** Conversation persistence, capability routing, OpenAI-compatible non-streaming API, execution-plan validation, and bounded dependency-wave execution are committed. Direct checkout test verification remains pending.
+**Current phase:** Phase 2A — conversation and multi-model orchestration core  
+**Overall state:** Conversation persistence, capability routing, structured planning, durable multi-model execution, optional Bearer authentication, and the non-streaming OpenAI-compatible API are implemented. CI verified the previous 28-test revision; final CI for the latest hardening changes is pending. Open WebUI integration and DGX deployment validation remain open.
 
 ## Confirmed requirements
 - Internet is unavailable during development; internal LAN is available.
@@ -182,3 +182,16 @@ User supplied a fresh command output from host `spark-7ea3`:
 - Result: **28 passed**, one upstream Starlette/httpx deprecation warning; no test failures.
 - This verifies the OpenAI-compatible endpoint orchestration integration, stable conversation continuity test, persisted execution tests, and fallback when a synthesis worker is not available.
 - Documentation-only commits may follow this tested code revision; no runtime deployment has been performed.
+
+
+### 2026-11-09 — Final source review and pre-deployment hardening
+- Reviewed all current Python modules, project configuration, example worker registry, tests, and deployment-facing documentation.
+- Fixed SQLite `:memory:` behavior: repository operations now share a kept-alive in-memory database instead of opening unrelated empty databases per session.
+- Enforced each enabled worker's configured `max_concurrency` across concurrent requests within one process, both for deterministic chat routing and planner-backed execution. These limits are process-local and are not a distributed scheduler.
+- Hardened worker registry validation: worker IDs/capability names, HTTP(S) endpoint URLs, enabled flags, concurrency, priority, timeout, and configured secret environment variables are validated; a declared but missing API-key environment variable now fails closed.
+- Added optional inbound Bearer authentication using `CLICODING_API_KEY`; all API and diagnostic routes are protected when configured, while `/health` remains available for health checks. This is one shared key only, not user/tenant isolation. Internal TLS remains required for LAN exposure.
+- Unified the legacy `orchestrated-turns` endpoint with the canonical turn pipeline to avoid duplicated conversation handling and inconsistent context assembly.
+- Added regression tests for in-memory SQLite persistence, shared worker concurrency, invalid worker endpoints/limits, missing configured secrets, and API authentication.
+- Updated README, environment example, and Orchestrator runbook to remove stale claims about planner integration, concurrency, and authentication.
+- Latest CI for these final-review changes is pending. DGX deployment is not yet approved: Open WebUI conversation-ID preservation, image transport, streaming, multi-process safety, TLS, and current DGX resource/runtime inventory remain unverified.
+- No DGX Spark host, model, runtime, container, service, or workstation was changed.
