@@ -152,3 +152,84 @@ def test_worker_concurrency_limit_is_shared_across_parallel_executions(tmp_path)
         assert maximum_active == 1
 
     asyncio.run(scenario())
+
+
+def test_three_model_topology_uses_small_model_for_planning_and_synthesis(tmp_path):
+    async def scenario():
+        db = Database(str(tmp_path / "three-model-topology.sqlite3"))
+        conversation = db.create_conversation()
+        registry = WorkerRegistry(
+            [
+                Worker(
+                    "small-orchestrator", "http://small/v1", "small-fast",
+                    frozenset({"chat", "planning"}), priority=1,
+                ),
+                Worker(
+                    "coding-primary", "http://coder/v1", "qwen-coder",
+                    frozenset({"coding", "review"}),
+                ),
+                Worker(
+                    "vision-primary", "http://vision/v1", "qwen-vision",
+                    frozenset({"vision"}),
+                ),
+            ]
+        )
+
+        class ThreeModelGateway:
+            def __init__(self, worker_id):
+                self.worker_id = worker_id
+                self.calls = 0
+
+            async def complete(self, messages):
+                self.calls += 1
+                if self.worker_id == "small-orchestrator" and self.calls == 1:
+                    plan = {
+                        "goal": "Review source and screenshot",
+                        "acceptance_criteria": ["Both specialist results are combined"],
+                        "tasks": [
+                            {
+                                "task_id": "source",
+                                "objective": "Inspect source code",
+                                "required_capabilities": ["coding"],
+                                "expected_output": "Code findings",
+                            },
+                            {
+                                "task_id": "visual",
+                                "objective": "Inspect screenshot",
+                                "required_capabilities": ["vision"],
+                                "expected_output": "Visual findings",
+                            },
+                        ],
+                    }
+                    return Completion(json.dumps(plan), "small-fast")
+                if self.worker_id == "small-orchestrator":
+                    return Completion("One coherent response", "small-fast")
+                return Completion(f"findings from {self.worker_id}", self.worker_id)
+
+        gateways = {}
+
+        def gateway_factory(worker):
+            gateways.setdefault(worker.id, ThreeModelGateway(worker.id))
+            return gateways[worker.id]
+
+        orchestrator = MultiModelOrchestrator(
+            db,
+            CapabilityRouter(registry),
+            max_parallel_tasks=2,
+            gateway_factory=gateway_factory,
+        )
+        result = await orchestrator.run(
+            conversation["id"], "Review this code and screenshot", "Earlier context"
+        )
+
+        assert result.answer == "One coherent response"
+        assert result.execution.succeeded
+        assert gateways["small-orchestrator"].calls == 2
+        assert gateways["coding-primary"].calls == 1
+        assert gateways["vision-primary"].calls == 1
+        saved = db.get_execution(result.execution_id)
+        assert {task["worker_id"] for task in saved["tasks"]} == {
+            "coding-primary", "vision-primary"
+        }
+
+    asyncio.run(scenario())
