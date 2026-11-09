@@ -107,3 +107,42 @@ def test_orchestrator_returns_worker_outputs_when_no_synthesis_worker_exists(tmp
         assert "result-from-vision" in result.answer
 
     asyncio.run(scenario())
+
+
+def test_worker_concurrency_limit_is_shared_across_parallel_executions(tmp_path):
+    async def scenario():
+        import asyncio
+
+        from clicoding_orchestrator.gateway import Completion
+
+        db = Database(str(tmp_path / "worker-concurrency.sqlite3"))
+        registry = WorkerRegistry(
+            [Worker(
+                "chat", "http://chat/v1", "chat",
+                frozenset({"chat"}), max_concurrency=1
+            )]
+        )
+        active = 0
+        maximum_active = 0
+
+        class SlowGateway:
+            async def complete(self, messages):
+                nonlocal active, maximum_active
+                active += 1
+                maximum_active = max(maximum_active, active)
+                await asyncio.sleep(0.02)
+                active -= 1
+                return Completion("ok", "chat")
+
+        orchestrator = MultiModelOrchestrator(
+            db, CapabilityRouter(registry),
+            gateway_factory=lambda worker: SlowGateway(),
+        )
+        worker = registry.enabled_workers()[0]
+        await asyncio.gather(
+            orchestrator._complete(worker, [{"role": "user", "content": "one"}]),
+            orchestrator._complete(worker, [{"role": "user", "content": "two"}]),
+        )
+        assert maximum_active == 1
+
+    asyncio.run(scenario())
