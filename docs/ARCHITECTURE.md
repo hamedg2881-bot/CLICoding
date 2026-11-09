@@ -104,3 +104,18 @@ With public internet blocked:
 - Build/test/restore work using local SDKs and package sources.
 - No required external telemetry, update checks, auth, or cloud API calls occur.
 - Egress monitoring confirms no unexpected public destinations.
+
+## 8. Conversation Router and multi-model orchestration — accepted
+
+The system uses a model-independent Conversation Manager and a central Task Orchestrator. The Orchestrator owns plans, task state, dependencies, scheduling, retries, cancellation, approvals, and result synthesis. Models are replaceable workers; they do not own the conversation or global workflow.
+
+The Router supports simple single-model requests and complex requests decomposed into sequential, parallel, or hybrid tasks. It selects workers by tested capabilities, modalities, health, and resource availability. It assembles task-specific context from the shared conversation, summaries, attachments, dependency outputs, and real tool evidence.
+
+The user sees one assistant identity, one conversation, and one coherent response stream. Model handoffs are transparent by default. Vision-to-text/coding handoffs preserve structured findings; original image content remains retrievable for later vision tasks.
+
+See [ORCHESTRATOR_SPEC.md](ORCHESTRATOR_SPEC.md) for logical contracts, lifecycle, context rules, failure semantics, safety, resource scheduling, implementation slices, and acceptance tests.
+
+## 9. Gateway boundary
+
+LiteLLM is a candidate OpenAI-compatible transport/gateway layer only. It is not assumed to provide conversation memory, task decomposition, dependency-graph execution, tool governance, or resource-aware orchestration. The gateway can be replaced without changing Conversation, Task, or Execution Plan contracts.
+
