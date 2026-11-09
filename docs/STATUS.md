@@ -58,3 +58,14 @@ Then run controlled evaluations for repository understanding, C# edits, tool cal
 - User confirmed DGX Spark as the target AI server for CLICoding.
 - Historical DGX Spark details are recorded as leads only; fresh read-only verification is still required.
 - No server-side changes were made.
+
+
+### 2026-11-09 — Concurrent model residency direction
+- User clarified that the desired architecture keeps required models resident simultaneously; frequent model sleep/load switching is not the target design.
+- User prefers MoE models and does not want Qwen3.8-27B Dense as a preferred option because of its expected low decode speed.
+- Preliminary pair to validate: Qwen3-Coder-Next 80B-A3B NVFP4 (coding/tool use) + Qwen3.6-35B-A3B NVFP4 (vision/general).
+- Nemotron 3.5 Lightning 30B-A3B NVFP4 remains a text-only agentic challenger, not a Vision replacement.
+- Published starting points: Coder-Next GB10 recipe reports ~43.22 GiB resident weights and uses an 8 GiB KV budget in its single-user full-context recipe; Qwen3.6 official vLLM recipe lists 21 GB minimum VRAM for NVFP4 on GB10; Nemotron 3.5 Lightning requires roughly 30 GB before KV headroom.
+- These figures are not additive guarantees or proof of concurrent fit. Runtime allocations, KV cache, CUDA graphs, activations, system services, and current workloads must be measured.
+- No model was downloaded, deleted, restarted, or reconfigured.
+- Next action: collect a fresh read-only memory/process/container snapshot and exact local model directory sizes before any deployment experiment.
