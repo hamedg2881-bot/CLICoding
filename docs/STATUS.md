@@ -256,3 +256,11 @@ User supplied a fresh command output from host `spark-7ea3`:
 - Added `scripts/dgx_spark_model_preflight.sh`, a read-only inventory of model directories/config metadata, memory, NVIDIA status, Docker images/containers, listening ports and existing OpenAI model endpoints.
 - Preliminary budget arithmetic: approximately 78 GiB of model weights plus 14 GiB initial KV caps leaves roughly 29 GiB of the 121 GiB usable memory for runtime workspaces and OS. This is only an estimate; it does not prove all three processes fit.
 - Next gate: user runs the read-only preflight and shares its output. Then prepare exact per-model Compose/runtime settings using verified local model paths and image versions. No host mutation has occurred.
+
+
+### 2026-11-09 — Multimodal conversation continuity completed
+- Conversation retrieval now restores persisted multimodal content blocks to the OpenAI-style array form instead of exposing the internal SQLite storage encoding.
+- Follow-up turns without a new image reuse the most recent user image attachment for Vision routing, so requests such as “explain the highlighted part” retain the image context across turns.
+- The actual image payload is included only in the multimodal worker request; the Coder worker receives text/context rather than raw image bytes.
+- GitHub Actions run [42607106297](https://github.com/hamedg2881-bot/CLICoding/actions/runs/42607106297) passed on commit `52dc2ef68fa9413601f01c109de8f702aa4f4a80`: **44 passed**, one existing Starlette/httpx deprecation warning.
+- Latest workflow also validates the read-only DGX preflight shell script with `bash -n` and parses the example worker YAML.
