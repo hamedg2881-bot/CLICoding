@@ -115,8 +115,9 @@ Deliverables:
 - [ ] Unified response streaming.
 - [ ] Bounded retry, partial failure recovery, cancellation, and approval gates.
 - [ ] Contract/acceptance tests from [ORCHESTRATOR_SPEC.md](ORCHESTRATOR_SPEC.md).
+- [x] OpenAI-compatible non-streaming text endpoint with one public model alias and an explicit conversation ID extension.
 
 Exit gate: pass the single-model continuity, model handoff, Vision-to-Coder handoff, sequential and parallel workflow, partial failure, cancellation, context integrity, and resource safety tests.
 
-Phase 2 gateway work must expose transport primitives required by this core, but LiteLLM or any other gateway must not become the owner of conversation or task state. The first implementation should be a thin vertical slice, not a large framework adoption. The current code includes a YAML-backed worker registry and deterministic chat/coding/review/vision capability routing, plus same-conversation handoff tests. It does not yet implement semantic planning, task decomposition, dependency graphs, parallel execution, multimodal transport, streaming, or resource-aware scheduling.
+Phase 2 gateway work must expose transport primitives required by this core, but LiteLLM or any other gateway must not become the owner of conversation or task state. The first implementation should be a thin vertical slice, not a large framework adoption. The current code includes a YAML-backed worker registry, deterministic chat/coding/review/vision capability routing, same-conversation handoff, and a non-streaming OpenAI-compatible text API. It does not yet implement semantic planning, task decomposition, dependency graphs, parallel execution, multimodal transport, streaming, or resource-aware scheduling. Open WebUI's ability to preserve the returned conversation ID remains unverified.
 
