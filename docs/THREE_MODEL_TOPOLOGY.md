@@ -1,56 +1,60 @@
-# Three-model runtime topology
+# Three-model MoE runtime topology
 
-**Status:** Architecture/configuration baseline. The small/fast model identity and all served aliases/endpoints remain to be selected and verified by benchmark. This document does not authorize DGX changes.
+**Status:** Model identities and roles selected. All three runtimes are intended to stay loaded concurrently. Endpoint aliases, runtime compatibility, actual resident memory, and end-to-end behavior remain deployment verification gates. This document does not itself authorize host mutation.
 
-## Goal
+## Selected models
 
-Replace the single Qwen3.8 Flash runtime as the central model with three specialist model runtimes behind one CLICoding Orchestrator endpoint. Users see one assistant and one continuous conversation; internal model handoffs are not exposed.
+| Runtime | Selected model | Architecture | Responsibility |
+|---|---|---|---|
+| Fast reasoning | OpenAI GPT-OSS-20B MXFP4 | MoE; 20.9B total / 3.6B active | Lightweight reasoning, planning, chat, final synthesis, tool selection |
+| Coding | Qwen3-Coder-Next NVFP4 | MoE; 80B total / 3B active | Repository/code analysis, coding, multi-file implementation reasoning, review |
+| Multimodal general | Qwen3.6-35B-A3B NVFP4 | MoE; 35B total / 3B active | General reasoning, image understanding, screenshot/UI review, multimodal tasks |
 
-## Agreed model roles
+The Qwen3.6 model is not a vision-only model: it owns both general chat and vision capabilities. GPT-OSS is text-only; image payloads must be routed to Qwen3.6.
 
-| Runtime | Agreed model family / identity | Responsibility |
-|---|---|---|
-| Small/fast | Not selected yet; target class previously discussed was 4B–8B | Lightweight chat, structured planning proposal, and final synthesis |
-| Coder | Qwen3-Coder-Next-NVFP4-GB10 | Source-code analysis, implementation-oriented reasoning, code review |
-| Vision | Qwen3.6-VL-35B-A3B-NVFP4-DGX-Spark-VisionSafe | Screenshot/image understanding, UI inspection, visual findings |
+## Runtime residency and concurrency
 
-Known DGX model directories:
-- Coder: `/opt/ai/models/Qwen3-Coder-Next-NVFP4-GB10`
-- Vision: `/opt/ai/models/Qwen3.6-VL-35B-A3B-NVFP4-DGX-Spark-VisionSafe`
-
-The small/fast model's exact name and path have **not** been agreed. Do not infer them from the old Qwen3.8 Flash deployment or select one without benchmark evidence and user approval.
+- All three physical model runtimes remain loaded simultaneously; model switching/unloading is not part of normal request routing.
+- Each runtime starts with `max_concurrency: 1`. The Orchestrator can execute independent tasks in parallel, up to the global task limit and each worker's own semaphore.
+- Initial target is up to three independent model tasks in parallel, with at most one active request per runtime. Global parallelism must be configured to 3 and validated under real workload.
+- Do not assume that the sum of on-disk model sizes equals resident runtime memory. Measure weight allocation, KV cache, CUDA graphs, workspace, host/system memory and other active services while all three are loaded.
+- Runtime-level memory/KV limits must be configured independently for each server process. Avoid assigning each server a percentage of total unified memory that causes aggregate overcommit.
+- Queue requests when a worker is at its concurrency limit. Never unload or interrupt a model to admit another request.
+- Flash remains available during migration. Retire it only after all three selected models are resident, independently tested, and pass the multi-model acceptance tests, followed by explicit user approval.
 
 ## Request flow
 
-1. The Orchestrator receives the request and appends it to the canonical conversation history.
-2. The small/fast runtime proposes a structured plan. The Orchestrator validates schema, task IDs, dependencies, cycles, and capability allow-lists; the model does not control dispatch directly.
-3. The Orchestrator assigns coding tasks to Coder and image/screenshot tasks to Vision.
-4. Independent tasks may execute in parallel within global and per-runtime limits. Dependent tasks wait for persisted prerequisite outputs.
-5. Vision returns textual/structured findings. Coder receives those findings as context; it must not be sent raw image data unless the Coder runtime is independently verified as multimodal.
-6. The small/fast runtime synthesizes successful task outputs into one user-facing answer. If synthesis is unavailable, the Orchestrator retains and returns the successful task outputs with an explicit limitation.
-7. Conversation identity and history remain owned by the Orchestrator, not by any worker model.
-
-## Resource and lifecycle policy
-
-- Three physical model runtimes are the target topology; do not count logical capabilities as extra model instances.
-- Start with per-model concurrency 1 and conservative global parallelism.
-- Queue work when a required runtime is busy or unavailable; do not interrupt an active inference to make room.
-- Model discovery/registration must not download, install, load, wake, sleep, or activate runtimes.
-- Do not unload Flash until all three replacement runtimes have passed independent smoke tests and the end-to-end multi-model acceptance tests.
-- No runtime lifecycle automation is implemented by this topology document. Lifecycle control must be a separately reviewed component with safe active-request accounting.
+1. Orchestrator persists the user turn in the canonical conversation.
+2. GPT-OSS proposes the smallest useful structured plan; local code validates schema, dependencies, cycles, and capability allow-lists.
+3. The Orchestrator routes coding/review tasks to Qwen3-Coder-Next.
+4. General text and image tasks route to Qwen3.6; raw image content must reach its multimodal endpoint, not a local file path.
+5. Independent tasks may run concurrently across the three already-resident runtimes. Dependency outputs are supplied to downstream tasks.
+6. GPT-OSS synthesizes successful outputs into one user-facing answer.
+7. Conversation identity, event history, execution state, and model handoffs remain owned by the Orchestrator.
 
 ## Configuration contract
 
-`config/workers.example.yaml` contains three disabled-by-default worker entries. The small/fast worker declares both `chat` and `planning`, so the same physical model can plan and synthesize. Coder and Vision each declare their specialist capability. Example URLs and served aliases are placeholders and must be replaced only after read-only endpoint discovery and independent verification.
+`config/workers.example.yaml` declares exactly three disabled-by-default worker records:
+- `fast-reasoning`: `chat` + `planning`.
+- `coding-primary`: `coding` + `review`.
+- `multimodal-primary`: `chat` + `vision`.
 
-## Exit gates before Flash retirement
+The example endpoint ports and aliases are placeholders, not claims about live services. Replace them only after read-only discovery of the actual runtime endpoints and served aliases. Enabling a registry entry does not load or start a model.
 
-- [ ] Exact small/fast model selected from benchmarked candidates.
-- [ ] Actual OpenAI-compatible URL and served alias recorded for each of the three runtimes.
-- [ ] Each runtime independently passes a harmless text request; Vision also passes a real image payload test.
-- [ ] Planner returns valid structured plans for simple and complex multi-step requests.
-- [ ] Coder and Vision handoff works; dependencies and partial failures are persisted correctly.
-- [ ] Conversation continuity survives switching between all three runtimes.
-- [ ] Resource measurements demonstrate safe headroom with the intended concurrency.
-- [ ] Flash can be stopped only after explicit user approval and successful replacement acceptance.
+## Current implementation gaps
 
+- [ ] OpenAI-compatible multimodal image payload transport to Qwen3.6.
+- [ ] Configurable global execution parallelism defaulting to 3.
+- [ ] Runtime readiness/health checks and clear unavailable-worker errors.
+- [ ] Real DGX measurements with all three model processes resident simultaneously.
+- [ ] Open WebUI conversation-ID mapping and streaming support.
+- [ ] End-to-end tests proving GPT-OSS planning/synthesis, Coder execution, and Qwen3.6 vision/general handoff.
+
+## Flash retirement gates
+
+- [ ] All three models are loaded at the same time and remain resident during concurrent requests.
+- [ ] Each runtime passes independent text smoke tests; Qwen3.6 also passes a real image payload test.
+- [ ] A mixed plan dispatches to all three workers and preserves dependencies/results.
+- [ ] Resource headroom is measured under simultaneous residency and representative parallel inference.
+- [ ] Conversation continuity and final synthesis are verified.
+- [ ] User explicitly approves Flash retirement.
