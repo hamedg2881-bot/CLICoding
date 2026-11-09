@@ -50,8 +50,14 @@ This file records accepted project-level decisions. Superseded decisions remain 
 - **Rationale:** Model count should be determined by capability and hardware evidence, not by labels.
 - **Consequence:** Maintain a measured compatibility matrix before final model selection.
 
+## D-009 — DGX Spark as the target AI server
+- **Status:** Accepted by user; technical inventory pending
+- **Decision:** Use the user's NVIDIA DGX Spark as the target central AI server for this project.
+- **Rationale:** Explicit user selection on 2026-11-09.
+- **Consequence:** Phase 1 must verify current hardware, OS, storage, driver/runtime, model inventory, workload sharing, and available capacity before selecting or installing any runtime/model. Historical specs are not treated as fresh evidence.
+
 ## Open decisions (must be resolved with evidence)
-- Target server hardware/OS and whether it is dedicated to this project.
+- Whether DGX Spark is dedicated to CLICoding or shared with existing workloads.
 - Workstation OS mix and target number of concurrent developers.
 - Initial coding and vision model/runtime.
 - Gateway implementation and agent/tool protocol.
