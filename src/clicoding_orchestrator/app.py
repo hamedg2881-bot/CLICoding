@@ -13,6 +13,7 @@ from .database import Database
 from .gateway import GatewayError, ModelGateway, OpenAICompatibleGateway
 from .registry import RegistryError, Worker, WorkerRegistry
 from .router import CapabilityRouter, NoEligibleWorker
+from .orchestration import MultiModelOrchestrator
 
 
 class TurnRequest(BaseModel):
@@ -27,6 +28,7 @@ class TurnResponse(BaseModel):
     assistant_event_id: str
     assistant_content: str
     producer: str
+    execution_id: str | None = None
 
 
 class ChatMessage(BaseModel):
@@ -54,6 +56,7 @@ def create_app(
     gateway: ModelGateway | None = None,
     database: Database | None = None,
     registry: WorkerRegistry | None = None,
+    orchestrator: MultiModelOrchestrator | None = None,
 ) -> FastAPI:
     config = settings or Settings.from_env()
     db = database or Database(config.database_path)
@@ -83,6 +86,7 @@ def create_app(
         )
 
     router = CapabilityRouter(worker_registry)
+    multi_model = orchestrator or (MultiModelOrchestrator(db, router) if config.enable_planning else None)
     conversation_locks: dict[str, asyncio.Lock] = {}
 
     app = FastAPI(
@@ -96,6 +100,7 @@ def create_app(
     app.state.database = db
     app.state.registry = worker_registry
     app.state.router = router
+    app.state.orchestrator = multi_model
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -260,5 +265,36 @@ def create_app(
                 "system_messages_applied": len(supplied_system),
             },
         }
+
+
+    @app.post("/api/v1/conversations/{conversation_id}/orchestrated-turns", response_model=TurnResponse)
+    async def create_orchestrated_turn(conversation_id: str, request: TurnRequest) -> TurnResponse:
+        if multi_model is None:
+            raise HTTPException(status_code=503, detail="Multi-model planning is disabled")
+        if not db.conversation_exists(conversation_id):
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        lock = conversation_locks.setdefault(conversation_id, asyncio.Lock())
+        async with lock:
+            user_event = db.append_event(conversation_id, role="user", content=request.content, producer="user")
+            context = "\n\n".join(
+                f"{event['role']}: {event['content']}"
+                for event in db.list_events(conversation_id)
+                if event["role"] in ("user", "assistant")
+            )
+            try:
+                result = await multi_model.run(conversation_id, request.content, context)
+            except NoEligibleWorker as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+            except Exception as exc:
+                raise HTTPException(status_code=502, detail="Multi-model orchestration failed") from exc
+            assistant_event = db.append_event(conversation_id, role="assistant", content=result.answer, producer="orchestrator")
+            return TurnResponse(
+                conversation_id=conversation_id,
+                user_event_id=user_event["id"],
+                assistant_event_id=assistant_event["id"],
+                assistant_content=result.answer,
+                producer="orchestrator",
+                execution_id=result.execution_id,
+            )
 
     return app
