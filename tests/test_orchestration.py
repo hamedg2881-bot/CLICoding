@@ -258,3 +258,88 @@ def test_three_selected_worker_roles_route_chat_vision_and_coding(tmp_path):
     assert router.select("coding").id == "coding-primary"
     assert router.select("vision").id == "multimodal-primary"
     assert router.select("chat").id == "fast-reasoning"
+
+
+
+def test_orchestrator_forwards_image_bytes_only_to_multimodal_worker(tmp_path):
+    async def scenario():
+        db = Database(str(tmp_path / "orchestration-image.sqlite3"))
+        conversation = db.create_conversation()
+        registry = WorkerRegistry(
+            [
+                Worker(
+                    "fast-reasoning", "http://fast/v1", "gpt-oss-20b",
+                    frozenset({"chat", "planning"}), priority=1,
+                ),
+                Worker(
+                    "coding-primary", "http://coder/v1", "qwen3-coder-next",
+                    frozenset({"coding", "review"}),
+                ),
+                Worker(
+                    "multimodal-primary", "http://multi/v1", "qwen3.6-35b-a3b",
+                    frozenset({"chat", "vision"}),
+                ),
+            ]
+        )
+        image_uri = "data:image/png;base64,aGVsbG8="
+        image_content = [
+            {"type": "text", "text": "Inspect this screenshot"},
+            {"type": "image_url", "image_url": {"url": image_uri}},
+        ]
+        seen = {}
+
+        class ThreeModelGateway:
+            def __init__(self, worker_id):
+                self.worker_id = worker_id
+                self.calls = 0
+
+            async def complete(self, messages):
+                self.calls += 1
+                if self.worker_id == "fast-reasoning" and self.calls == 1:
+                    plan = {
+                        "goal": "Review code and screenshot",
+                        "acceptance_criteria": ["Code and visual findings are combined"],
+                        "tasks": [
+                            {
+                                "task_id": "source",
+                                "objective": "Review the code",
+                                "required_capabilities": ["coding"],
+                                "expected_output": "Code findings",
+                            },
+                            {
+                                "task_id": "visual",
+                                "objective": "Inspect the supplied screenshot",
+                                "required_capabilities": ["vision"],
+                                "expected_output": "Visual findings",
+                            },
+                        ],
+                    }
+                    return Completion(json.dumps(plan), "gpt-oss-20b")
+                if self.worker_id == "fast-reasoning":
+                    return Completion("Unified response", "gpt-oss-20b")
+                seen[self.worker_id] = messages[-1]["content"]
+                return Completion(f"Findings from {self.worker_id}", self.worker_id)
+
+        gateways = {}
+
+        def gateway_factory(worker):
+            gateways.setdefault(worker.id, ThreeModelGateway(worker.id))
+            return gateways[worker.id]
+
+        orchestrator = MultiModelOrchestrator(
+            db, CapabilityRouter(registry), max_parallel_tasks=3,
+            gateway_factory=gateway_factory,
+        )
+        result = await orchestrator.run(
+            conversation["id"],
+            "Inspect this screenshot and review the code",
+            user_content=image_content,
+        )
+
+        assert result.execution.succeeded
+        assert isinstance(seen["multimodal-primary"], list)
+        assert seen["multimodal-primary"][-1]["image_url"]["url"] == image_uri
+        assert isinstance(seen["coding-primary"], str)
+        assert image_uri not in seen["coding-primary"]
+
+    asyncio.run(scenario())
