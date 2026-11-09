@@ -1,6 +1,6 @@
 # Conversation Router & Task Orchestrator Specification
 
-**Status:** Accepted architecture contract; conversation persistence, deterministic capability handoff, OpenAI-compatible text API, validated execution-plan contracts, a structured LLM Planner with capability allow-list validation, and an in-memory bounded dependency-wave executor are implemented as callable components. Planner/Executor chat integration and task persistence remain pending.
+**Status:** Accepted architecture contract; conversation persistence, deterministic capability handoff, OpenAI-compatible text API, validated plans, structured LLM Planner, SQLite execution/task persistence, and capability-routed multi-model orchestration are implemented. Orchestration is exposed through an opt-in conversation route; standard OpenAI chat integration remains pending.
 **Date:** 2026-11-09
 **Scope:** Model-independent conversation continuity, single-model routing, multi-model task orchestration, tool coordination, and unified user experience.
 
@@ -146,7 +146,7 @@ Plans are versioned. Replanning creates a new version and preserves prior execut
 Parallel execution is an optimization, not a requirement. Resource limits, fairness, and safe host reserve take precedence.
 
 ### Current implementation boundary
-The source currently validates task IDs, capability declarations, dependency references, and acyclic graphs. It computes topological waves so independent tasks can share a wave. The in-memory executor bounds concurrent tasks, passes dependency outputs to later tasks, retains successful siblings, and blocks dependants when prerequisites fail. This is not yet a production scheduler: plans/results are not persisted, worker dispatch is supplied by a future adapter, and the chat endpoint does not yet invoke the planner or executor. The structured Planner requests schema-constrained JSON from an injected planning gateway, validates the dependency graph locally, and rejects capabilities absent from the caller's allow-list. It is not yet wired to registry selection or the public chat route.
+The source currently validates task IDs, capability declarations, dependency references, and acyclic graphs. It computes topological waves so independent tasks can share a wave. The executor bounds concurrent tasks, passes dependency outputs to later tasks, retains successful siblings, and blocks dependants when prerequisites fail. Plans and task states are persisted in SQLite before dispatch. The orchestration service selects a planning worker, validates the plan, selects workers that satisfy each task's complete capability set, records task results, and synthesizes multiple successful outputs. It is exposed through an opt-in conversation route controlled by `CLICODING_ENABLE_PLANNING`. The standard OpenAI `/v1/chat/completions` endpoint still uses deterministic single-worker routing until the next integration slice. This is not yet a production scheduler: no cancellation/retry, cross-process locks, resource-aware admission, multimodal payload transport, or verified Open WebUI conversation mapping.
 
 ## 5. Context continuity and multimodal handoff
 
