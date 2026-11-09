@@ -14,6 +14,7 @@ class Settings:
     workers_file: str | None = None
     enable_planning: bool = False
     api_key: str | None = None
+    api_key: str | None = None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -30,5 +31,6 @@ class Settings:
             ),
             workers_file=os.getenv("CLICODING_WORKERS_FILE") or None,
             enable_planning=os.getenv("CLICODING_ENABLE_PLANNING", "false").lower() in ("1", "true", "yes"),
+            api_key=os.getenv("CLICODING_API_KEY") or None,
             api_key=os.getenv("CLICODING_API_KEY") or None,
         )
