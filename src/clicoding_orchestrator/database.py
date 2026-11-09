@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
 import uuid
-from typing import Any
+from typing import Any, Iterator
 
 
 def utc_now() -> str:
@@ -27,8 +28,17 @@ class Database:
         connection.execute("PRAGMA busy_timeout = 15000")
         return connection
 
+    @contextmanager
+    def session(self) -> Iterator[sqlite3.Connection]:
+        connection = self.connect()
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
+
     def initialize(self) -> None:
-        with self.connect() as connection:
+        with self.session() as connection:
             connection.execute("PRAGMA journal_mode = WAL")
             connection.executescript(
                 """
@@ -58,7 +68,7 @@ class Database:
     def create_conversation(self) -> dict[str, str]:
         conversation_id = str(uuid.uuid4())
         now = utc_now()
-        with self.connect() as connection:
+        with self.session() as connection:
             connection.execute(
                 "INSERT INTO conversations (id, created_at, updated_at) VALUES (?, ?, ?)",
                 (conversation_id, now, now),
