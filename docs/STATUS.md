@@ -69,3 +69,16 @@ Then run controlled evaluations for repository understanding, C# edits, tool cal
 - These figures are not additive guarantees or proof of concurrent fit. Runtime allocations, KV cache, CUDA graphs, activations, system services, and current workloads must be measured.
 - No model was downloaded, deleted, restarted, or reconfigured.
 - Next action: collect a fresh read-only memory/process/container snapshot and exact local model directory sizes before any deployment experiment.
+
+
+### 2026-11-09 — DGX Spark live read-only snapshot
+User supplied a fresh command output from host `spark-7ea3`:
+- RAM: 121 GiB total, 106 GiB used, 12 GiB free, 15 GiB available.
+- Swap: 16 GiB configured, 2.3 GiB used.
+- GB10 driver: 580.178.04; CUDA 13.0; GPU utilization 0% at capture.
+- `nvidia-smi` reports `VLLM::EngineCore` PID 993248 using 97,383 MiB unified/GPU memory.
+- Active containers: `qwen38-flash` (eugr/spark-vllm-b12x:nightly-20261015), `open-webui` v0.13.0 healthy, and `open-terminal`.
+- Docker cgroup stats show qwen38-flash 4.945 GiB, Open WebUI 649 MiB, Open Terminal 25.64 MiB; Docker memory stats do not represent the GB10 allocation reported by nvidia-smi.
+- Local model directory sizes: qwen3-vl-8b-vllm 17G; Qwen3.8-27B-NVFP4 21G; Qwen3.6-VL-35B-A3B-NVFP4-DGX-Spark-VisionSafe 25G; Qwen3-Coder-Next-NVFP4-GB10 43G; Qwen3.8-Flash-Next-FP4-Local 96G.
+- Current free/available memory is not sufficient to load another large model alongside the running Flash runtime. No model was stopped, downloaded, deleted, or reconfigured.
+- Initial disk-size sum for the proposed Coder-Next + Qwen3.6 pair is about 68G, but this is not a measured concurrent runtime footprint. Next step is read-only inspection of the running container's launch args, model paths, and each candidate's config before any controlled runtime experiment.
