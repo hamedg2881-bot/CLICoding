@@ -21,7 +21,7 @@ python -m venv .venv
 . .venv/bin/activate
 pip install -e '.[test]'
 cp .env.example .env
-# Configure CLICODING_WORKERS_FILE or the legacy single-upstream variables.
+# Configure CLICODING_WORKERS_FILE or the legacy single-upstream variables. Set CLICODING_ENABLE_PLANNING=true to enable the opt-in multi-model orchestration route.
 uvicorn clicoding_orchestrator.app:create_app --factory --app-dir src --host 127.0.0.1 --port 8090
 ```
 
@@ -129,7 +129,7 @@ Health:
 GET /health
 ```
 
-## Current limitations
+## Opt-in multi-model orchestration\n\nSet `CLICODING_ENABLE_PLANNING=true` to enable the planner-backed route. It uses a worker declaring the `planning` capability (or falls back to a `chat` worker), validates the generated task graph, persists the execution and tasks before dispatch, and routes each task to a worker that supports all of its declared capabilities. Multiple successful task results are synthesized by a `chat` worker.\n\n```http\nPOST /api/v1/conversations/{conversation_id}/orchestrated-turns\nContent-Type: application/json\n\n{"content":"Review the code and inspect this design"}\n```\n\nInspect durable execution state with:\n\n```http\nGET /api/v1/conversations/{conversation_id}/executions/{execution_id}\n```\n\nThe standard `/v1/chat/completions` route remains on deterministic single-worker routing for now. This opt-in route is a development slice, not yet safe for LAN exposure.\n\n## Current limitations
 
 - The OpenAI-compatible text endpoint is implemented, but Open WebUI integration is not yet validated. Its adapter must persist and resend the returned `conversation_id`; do not assume generic clients preserve custom response fields.
 - Task type is currently a deterministic API hint. Automatic semantic classification,
