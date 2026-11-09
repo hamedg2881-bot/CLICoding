@@ -133,7 +133,10 @@ def create_app(
         return conversation
 
     async def run_turn(
-        conversation_id: str, content: str, task_type: str
+        conversation_id: str,
+        content: str,
+        task_type: str,
+        system_messages: list[dict[str, str]] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], str]:
         if not db.conversation_exists(conversation_id):
             raise HTTPException(status_code=404, detail="Conversation not found")
@@ -142,7 +145,7 @@ def create_app(
             user_event = db.append_event(
                 conversation_id, role="user", content=content, producer="user"
             )
-            history = [
+            history = list(system_messages or []) + [
                 {"role": event["role"], "content": event["content"]}
                 for event in db.list_events(conversation_id)
                 if event["role"] in ("user", "assistant")
@@ -233,7 +236,7 @@ def create_app(
                     )
 
         user_event, assistant_event, answer = await run_turn(
-            conversation_id, last_user, request.task_type
+            conversation_id, last_user, request.task_type, supplied_system
         )
 
         response_id = f"chatcmpl-{uuid.uuid4().hex}"
