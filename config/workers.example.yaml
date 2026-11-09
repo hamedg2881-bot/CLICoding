@@ -1,22 +1,46 @@
 # Copy to workers.yaml and edit endpoint/model values for your environment.
-# This file only registers already-managed runtimes. It never downloads, loads,
-# wakes, sleeps, or otherwise changes a model runtime.
+# This registers three physical model runtimes. It never downloads, loads, wakes,
+# sleeps, or otherwise changes a model runtime.
+#
+# IMPORTANT:
+# - "model" must be the exact model alias served by the OpenAI-compatible runtime,
+#   not the on-disk model directory.
+# - The small/fast model is intentionally not named yet; select it after benchmark.
+# - Replace every example URL and alias with verified live runtime values.
+
 workers:
+  # Model 1 of 3: small/fast assistant.
+  # The same runtime handles planning and final synthesis/chat.
+  - id: small-orchestrator
+    base_url: http://127.0.0.1:8002/v1
+    model: your-small-fast-model-alias
+    capabilities: [chat, planning]
+    enabled: false
+    priority: 10
+    max_concurrency: 1
+    timeout_seconds: 120
+    # api_key_env: CLICODING_SMALL_API_KEY
+
+  # Model 2 of 3: coding specialist.
+  # Expected local model directory:
+  # /opt/ai/models/Qwen3-Coder-Next-NVFP4-GB10
   - id: coding-primary
     base_url: http://127.0.0.1:8000/v1
     model: your-coding-model-alias
-    capabilities: [chat, coding, review]
+    capabilities: [coding, review]
     enabled: false
     priority: 10
     max_concurrency: 1
     timeout_seconds: 180
-    # Optional: name of an environment variable containing this worker's API key.
     # api_key_env: CLICODING_CODER_API_KEY
 
+  # Model 3 of 3: vision specialist.
+  # Expected local model directory:
+  # /opt/ai/models/Qwen3.6-VL-35B-A3B-NVFP4-DGX-Spark-VisionSafe
   - id: vision-primary
     base_url: http://127.0.0.1:8001/v1
     model: your-vision-model-alias
-    capabilities: [chat, vision]
+    capabilities: [vision]
     enabled: false
     priority: 10
     max_concurrency: 1
