@@ -28,6 +28,11 @@ class RegistryError(ValueError):
     pass
 
 
+def runtime_key(worker: Worker) -> tuple[str, str]:
+    """Identify a served runtime independently of logical worker/capability IDs."""
+    return worker.base_url.rstrip("/"), worker.model
+
+
 class WorkerRegistry:
     """Configuration-backed registry. Loading it never probes or starts runtimes."""
 
