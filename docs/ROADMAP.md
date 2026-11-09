@@ -103,14 +103,14 @@ A phase may be marked complete only when its exit gate has reproducible evidence
 
 ## Phase 2A — Conversation and orchestration core (required before multi-model workflows)
 
-**Status:** Conversation persistence and deterministic capability-based worker handoff are implemented in source; the expanded committed test suite has not yet been executed from a repository checkout. Complex multi-task orchestration remains unimplemented.
+**Status:** Conversation persistence, deterministic capability-based handoff, OpenAI-compatible non-streaming text API, validated execution-plan contracts, and a bounded dependency-wave executor are implemented in source. Plan generation, persistence, API integration, and direct checkout test verification remain pending.
 
 Deliverables:
 - [x] Initial conversation/event persistence contract with stable conversation identity independent of model (single-process SQLite slice).
-- [ ] Persistent task and execution-plan contracts.
+- [x] In-memory task and execution-plan contracts with dependency/cycle validation.\n- [ ] Persistent task and execution-plan storage.
 - [ ] Context assembly and multimodal attachment handoff.
 - [x] Configuration-backed capability-based worker selection (deterministic task-type hint).
-- [ ] Sequential, parallel, and hybrid task execution with dependency tracking.
+- [x] Dependency-wave executor with bounded parallelism, dependency-output handoff, and failure blocking (in-memory only).\n- [ ] Persistent sequential, parallel, and hybrid task execution integrated with the chat API.
 - [x] Non-streaming transparent worker handoff with shared conversation history.
 - [ ] Unified response streaming.
 - [ ] Bounded retry, partial failure recovery, cancellation, and approval gates.
@@ -119,5 +119,5 @@ Deliverables:
 
 Exit gate: pass the single-model continuity, model handoff, Vision-to-Coder handoff, sequential and parallel workflow, partial failure, cancellation, context integrity, and resource safety tests.
 
-Phase 2 gateway work must expose transport primitives required by this core, but LiteLLM or any other gateway must not become the owner of conversation or task state. The first implementation should be a thin vertical slice, not a large framework adoption. The current code includes a YAML-backed worker registry, deterministic chat/coding/review/vision capability routing, same-conversation handoff, and a non-streaming OpenAI-compatible text API. It does not yet implement semantic planning, task decomposition, dependency graphs, parallel execution, multimodal transport, streaming, or resource-aware scheduling. Open WebUI's ability to preserve the returned conversation ID remains unverified.
+Phase 2 gateway work must expose transport primitives required by this core, but LiteLLM or any other gateway must not become the owner of conversation or task state. The first implementation should be a thin vertical slice, not a large framework adoption. The current code includes a YAML-backed worker registry, deterministic chat/coding/review/vision capability routing, same-conversation handoff, a non-streaming OpenAI-compatible text API, validated execution-plan/dependency graph contracts, and an in-memory bounded dependency-wave executor. It does not yet generate plans semantically, persist task execution state, connect the executor to model workers/chat requests, implement multimodal transport or streaming, or provide resource-aware scheduling. Open WebUI's ability to preserve the returned conversation ID remains unverified.
 
