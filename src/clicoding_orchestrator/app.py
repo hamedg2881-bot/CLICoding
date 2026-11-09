@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import time
 import uuid
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from .config import Settings
@@ -101,6 +103,21 @@ def create_app(
     app.state.registry = worker_registry
     app.state.router = router
     app.state.orchestrator = multi_model
+
+    @app.middleware("http")
+    async def optional_bearer_auth(request: Request, call_next):
+        # Health remains available to local service monitors. When configured, the
+        # same shared secret protects every API and diagnostic endpoint.
+        if config.api_key and request.url.path != "/health":
+            supplied = request.headers.get("authorization", "")
+            expected = f"Bearer {config.api_key}"
+            if not hmac.compare_digest(supplied, expected):
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "Invalid or missing bearer token"},
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+        return await call_next(request)
 
     @app.get("/health")
     async def health() -> dict[str, str]:
