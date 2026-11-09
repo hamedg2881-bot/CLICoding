@@ -86,3 +86,10 @@ For each implementation session:
 4. Record exact commands, environment assumptions, test results, and unresolved issues.
 5. Never report a GitHub update or test as successful without tool confirmation.
 6. Keep this repository as the single source of truth for this project.
+
+## Conversation and multi-model orchestration
+
+CLICoding presents one assistant and one continuous conversation while a central Task Orchestrator may assign work to one or multiple model workers and workstation tools. Complex requests can be decomposed into sequential, parallel, or hybrid tasks; dependencies, context handoffs, validation, retries, cancellation, and approvals are centrally managed. Model identity is hidden from the normal user experience.
+
+The gateway is only the model transport layer. Conversation history and task state are model-independent. See [docs/ORCHESTRATOR_SPEC.md](docs/ORCHESTRATOR_SPEC.md) for the accepted contracts and acceptance tests.
+
