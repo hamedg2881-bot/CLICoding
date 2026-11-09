@@ -2,8 +2,8 @@
 
 **Last updated:** 2026-11-09  
 **Canonical repository:** https://github.com/hamedg2881-bot/CLICoding  
-**Current phase:** Phase 1 — infrastructure and model capability inventory  
-**Overall state:** DGX Spark selected as the target AI server; read-only inventory is pending.
+**Current phase:** Phase 2A — conversation core and deterministic worker handoff  
+**Overall state:** Initial conversation persistence and configuration-backed capability routing are committed; deployment and direct test verification are pending.
 
 ## Confirmed requirements
 - Internet is unavailable during development; internal LAN is available.
@@ -109,3 +109,14 @@ User supplied a fresh command output from host `spark-7ea3`:
 - Known limits: one configured upstream model per process, non-streaming text-only API, single-process turn locks, no idempotency keys, no authentication/tenant isolation, no planner/task graph, and no tool broker.
 - No DGX Spark host, model runtime, container, service, or workstation workspace was changed. No package was installed on the user's machines.
 - Next: rerun the committed tests from a repository checkout; then add a server-side worker registry/selector and prove real upstream model handoff without changing conversation identity.
+
+
+### 2026-11-09 — Capability-based worker registry and handoff
+- Added a YAML-backed worker registry with internal worker ID, OpenAI-compatible endpoint, served model alias, capabilities, enabled state, priority, timeout, and declared concurrency limit.
+- Added environment-variable lookup for worker API keys; credentials are not stored in the example YAML and are omitted from registry diagnostics.
+- Added deterministic routing for task hints `chat`, `coding`, `review`, and `vision`. The router only selects enabled workers that declare the requested capability; lower numeric priority wins and worker ID breaks ties.
+- Connected routing to the persistent conversation turn API. The same canonical history is passed to the selected worker after a handoff, while the persisted producer identifies the internal worker.
+- Added `GET /api/v1/workers` for operator diagnostics and `CLICODING_WORKERS_FILE` configuration. Legacy single-upstream mode remains available when no YAML file is configured.
+- Added tests for capability/priority selection, disabled-worker exclusion, YAML validation, environment-backed credentials, and chat-to-coding handoff continuity. These tests are committed but have not yet been executed from a direct repository checkout in this environment.
+- Important limitations: task type is currently a deterministic request hint, not semantic intent detection; `max_concurrency` is metadata only and not yet enforced; vision capability selection exists but actual image payload transport does not; streaming, multi-process locking, idempotency, planner/task graph, parallel execution, tool broker, authentication, and resource-aware scheduling remain future work.
+- No DGX Spark configuration, model, container, runtime, service, or workstation was changed. No deployment or package installation was performed.
