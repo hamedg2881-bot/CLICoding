@@ -87,6 +87,7 @@ GET /health
 
 ## Current limitations
 
+- The current REST API is an internal development interface, not yet the OpenAI-compatible `/v1/chat/completions` endpoint required by Open WebUI. Do not connect Open WebUI to this slice yet.
 - Task type is currently a deterministic API hint. Automatic semantic classification,
   request decomposition, dependency graphs, parallel execution, and synthesis are not
   implemented yet.
