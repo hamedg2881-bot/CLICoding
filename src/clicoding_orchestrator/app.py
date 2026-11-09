@@ -120,8 +120,12 @@ def create_app(
         # same shared secret protects every API and diagnostic endpoint.
         if config.api_key and request.url.path != "/health":
             supplied = request.headers.get("authorization", "")
-            expected = f"Bearer {config.api_key}"
-            if not hmac.compare_digest(supplied, expected):
+            scheme, separator, token = supplied.partition(" ")
+            if (
+                not separator
+                or scheme.lower() != "bearer"
+                or not hmac.compare_digest(token, config.api_key)
+            ):
                 return JSONResponse(
                     status_code=401,
                     content={"detail": "Invalid or missing bearer token"},
