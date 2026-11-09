@@ -46,7 +46,51 @@ The first deterministic routing contract accepts a task hint of `chat`, `coding`
 lowest numeric priority (worker ID breaks ties). The hint is a task category, not a model
 name. A semantic planner that infers and decomposes complex requests is a later slice.
 
-## API
+## OpenAI-compatible client API
+
+The public client surface exposes one alias only:
+
+```http
+GET /v1/models
+POST /v1/chat/completions
+```
+
+The only public model ID is `clicoding`. Internal worker IDs and upstream model aliases
+are not returned by `/v1/models`. The chat endpoint currently supports non-streaming,
+text-only requests with `system`, `user`, and `assistant` messages.
+
+Example request:
+
+```json
+{
+  "model": "clicoding",
+  "messages": [{"role": "user", "content": "Hello"}],
+  "stream": false
+}
+```
+
+The response includes the standard chat-completion fields plus a CLICoding extension:
+
+```json
+{
+  "model": "clicoding",
+  "conversation_id": "server-generated-id",
+  "choices": [{"message": {"role": "assistant", "content": "Hello"}}]
+}
+```
+
+For reliable canonical history, the client adapter must store the returned
+`conversation_id` with its chat and send it back on every subsequent request. If no
+conversation ID is supplied, the API creates a new canonical conversation and imports
+the supplied prior text turns on that first request. A generic OpenAI client that discards
+unknown response fields will not automatically preserve this mapping; client integration
+must be explicitly tested before connecting Open WebUI.
+
+The API currently rejects `stream=true`, unknown public model aliases, and non-text
+message content. It does not yet support tools/function calls, audio, image payloads,
+regenerate/edit semantics, or idempotency keys.
+
+## Internal conversation API
 
 Create a conversation:
 
@@ -87,17 +131,17 @@ GET /health
 
 ## Current limitations
 
-- The current REST API is an internal development interface, not yet the OpenAI-compatible `/v1/chat/completions` endpoint required by Open WebUI. Do not connect Open WebUI to this slice yet.
+- The OpenAI-compatible text endpoint is implemented, but Open WebUI integration is not yet validated. Its adapter must persist and resend the returned `conversation_id`; do not assume generic clients preserve custom response fields.
 - Task type is currently a deterministic API hint. Automatic semantic classification,
   request decomposition, dependency graphs, parallel execution, and synthesis are not
   implemented yet.
 - The YAML `max_concurrency` field is registered but not yet enforced by a global scheduler.
-- Non-streaming text chat only; image/audio payload transport is not implemented.
+- Non-streaming text chat only; image/audio payload transport is not implemented. Tool/function calling is also not implemented.
 - One process is expected. Per-conversation in-process locks do not coordinate multiple
   service processes.
 - No authentication, user/tenant isolation, quotas, or LAN exposure.
 - Failed upstream requests leave the user event recorded. Idempotency keys and safe client
-  retry semantics are still required.
+  retry semantics are still required; regenerate/edit/resend behavior is not yet defined.
 - No tool broker, approval workflow, distributed queue, or resource-aware runtime scheduler.
 
 ## Tests
