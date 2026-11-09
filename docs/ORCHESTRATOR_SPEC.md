@@ -262,3 +262,12 @@ The architecture is not accepted as implemented until these tests pass:
 - No automatic model downloading, installing, or runtime reconfiguration.
 - No assumption that every request should use multiple models.
 - No requirement to expose model identities to end users.
+
+## 14. Client integration boundary
+
+The normal user-facing client (initially Open WebUI, subject to compatibility tests) connects only to the CLICoding Orchestrator's OpenAI-compatible endpoint. It must not connect directly to individual worker runtimes or expose worker model IDs as the normal user model selector.
+
+The Orchestrator exposes one stable assistant alias (for example, `clicoding` or `assistant`). Internal model selection and multi-worker execution happen behind that endpoint. LiteLLM, if selected, remains an internal downstream gateway. This prevents the client from owning model choice and avoids separate model-specific conversation histories.
+
+The client remains responsible for its normal chat UI and may persist its own conversation view, but the Orchestrator's conversation/task identifiers and durable event state are the authoritative execution context. Integration tests must verify that client retries, regenerate, edit/resend, and conversation resume do not duplicate side effects or lose the canonical conversation mapping.
+
