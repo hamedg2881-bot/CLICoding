@@ -88,7 +88,7 @@ def create_app(
         )
 
     router = CapabilityRouter(worker_registry)
-    multi_model = orchestrator or (MultiModelOrchestrator(db, router) if config.enable_planning else None)
+    multi_model = orchestrator or (MultiModelOrchestrator(db, router, max_parallel_tasks=config.max_parallel_tasks) if config.enable_planning else None)
     conversation_locks: dict[str, asyncio.Lock] = {}
     runtime_limits: dict[tuple[str, str], int] = {}
     for worker in worker_registry.enabled_workers():
