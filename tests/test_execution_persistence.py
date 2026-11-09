@@ -61,3 +61,13 @@ def test_execution_requires_existing_conversation(tmp_path):
         assert "conversation does not exist" in str(exc)
     else:
         raise AssertionError("execution must be tied to a real conversation")
+
+
+def test_finish_execution_rejects_unknown_execution(tmp_path):
+    db = Database(str(tmp_path / "executions.sqlite3"))
+    try:
+        db.finish_execution("missing-execution", "succeeded")
+    except ValueError as exc:
+        assert "does not exist" in str(exc)
+    else:
+        raise AssertionError("unknown execution must not be silently ignored")
