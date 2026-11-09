@@ -64,3 +64,16 @@ This file records accepted project-level decisions. Superseded decisions remain 
 - First reference IDE/client and second IDE for portability test.
 - Internal authentication/TLS and Git/package service topology.
 - Required latency, concurrency, context length, and retention targets.
+
+
+## D-010 — Keep required models resident concurrently
+- **Status:** Accepted by user; capacity validation pending
+- **Decision:** Prefer a multi-model serving layout in which the required models remain resident and available simultaneously. Routine per-request sleep/load swapping is not the desired architecture.
+- **Rationale:** Avoid model-load latency and make Coding and Vision capabilities available at the same time.
+- **Consequence:** Model selection must optimize the combined memory footprint, not the fit of each model independently. Explicit KV-cache limits, concurrency controls, and a protected host/service reserve are mandatory. No deployment is approved until concurrent fit is measured.
+
+## D-011 — Prefer MoE; exclude Qwen3.8-27B Dense from preferred candidates
+- **Status:** Accepted user constraint
+- **Decision:** Prefer suitable MoE models; do not use Qwen3.8-27B Dense as a preferred production candidate because the user expects its decode speed to be too low.
+- **Rationale:** The user prioritizes practical inference performance and simultaneous multi-model availability.
+- **Consequence:** Compare MoE candidates using end-to-end coding, tool-use, Vision, latency, and total resident-memory measurements.
