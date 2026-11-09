@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 import os
 
+from dotenv import load_dotenv
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -12,6 +14,7 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
+        load_dotenv()
         return cls(
             database_path=os.getenv("CLICODING_DATABASE_PATH", "./data/clicoding.db"),
             upstream_base_url=os.getenv(
