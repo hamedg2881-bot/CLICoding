@@ -26,7 +26,7 @@ Build a reliable, secure, LAN-hosted AI software-development workflow for .NET a
 
 - **Developer workstation:** IDE, agent client/adapter, project workspace, Git, .NET SDK, build/test tools, browser, Playwright.
 - **Agent/tool orchestration:** discovery, planning, approvals, context assembly, tool routing, diff presentation, iterative workflow.
-- **LAN AI platform:** authenticated OpenAI-compatible gateway, model registry/router, queue/resource scheduler, coding model, vision-capable model, optional fast and embedding models.
+- **LAN AI platform:** authenticated OpenAI-compatible gateway, model registry/router, queue/resource scheduler, small/fast orchestration model, coding specialist, and vision specialist; optional embedding models remain future work.
 - **Internal services:** Git hosting, NuGet mirror/feed/cache, documentation, project index/vector store, observability.
 - **Trust boundary:** model server does not mount or directly browse developer workspaces. The workstation-side agent exposes only approved tools and scoped workspace access.
 
@@ -64,6 +64,7 @@ See [docs/ROADMAP.md](docs/ROADMAP.md) for phases and exit gates.
 - Worker `max_concurrency` limits are enforced across concurrent requests within one service process.
 - An optional inbound bearer key (`CLICODING_API_KEY`) protects API and diagnostic endpoints; `/health` remains public. Configure a strong key before any LAN exposure and use internal TLS.
 - The API is currently non-streaming and text-only. Open WebUI conversation-ID preservation has not been verified; do not assume a generic client stores the returned `conversation_id`.
+- The target replacement topology is three model runtimes: small/fast (`chat` + `planning`), Qwen3-Coder-Next (coding/review), and Qwen3.6-VL (vision). The exact small/fast model and served aliases/endpoints are not selected yet; see [docs/THREE_MODEL_TOPOLOGY.md](docs/THREE_MODEL_TOPOLOGY.md).
 - The code has not yet been deployed or validated on DGX Spark. Hardware/runtime inventory, ARM64 dependency staging, service configuration, and end-to-end model compatibility are still deployment gates.
 - Latest implementation and test evidence is recorded in [docs/STATUS.md](docs/STATUS.md). See [orchestrator/README.md](orchestrator/README.md) for API/run instructions and [docs/DGX_STAGING_CHECKLIST.md](docs/DGX_STAGING_CHECKLIST.md) for controlled DGX staging prerequisites.
 
@@ -92,5 +93,5 @@ For each implementation session:
 
 The target design presents one assistant and one continuous conversation while a central Task Orchestrator assigns work to one or more model workers. The current code supports validated task decomposition, sequential/parallel dependency waves, capability routing, durable task state, and result synthesis. Tool execution, human approval gates, cancellation, retries, streaming, and multimodal transport remain planned work. Model identity is hidden from the normal user experience.
 
-The gateway is only the model transport layer. Conversation history and task state are model-independent. See [docs/ORCHESTRATOR_SPEC.md](docs/ORCHESTRATOR_SPEC.md) for the accepted contracts and acceptance tests.
+The gateway is only the model transport layer. Conversation history and task state are model-independent. See [docs/ORCHESTRATOR_SPEC.md](docs/ORCHESTRATOR_SPEC.md) for the accepted contracts and acceptance tests, and [docs/THREE_MODEL_TOPOLOGY.md](docs/THREE_MODEL_TOPOLOGY.md) for the agreed three-model layout and Flash retirement gates.
 
