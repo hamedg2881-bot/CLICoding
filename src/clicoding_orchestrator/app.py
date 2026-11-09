@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import json
 import time
 import uuid
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .config import Settings
 from .database import Database
@@ -35,7 +36,39 @@ class TurnResponse(BaseModel):
 
 class ChatMessage(BaseModel):
     role: Literal["system", "user", "assistant"]
-    content: str = Field(min_length=1, max_length=200_000)
+    content: str | list[dict[str, Any]]
+
+    @field_validator("content")
+    @classmethod
+    def validate_content(cls, value):
+        if isinstance(value, str):
+            if not value.strip() or len(value) > 200_000:
+                raise ValueError("text content must be non-empty and at most 200000 characters")
+            return value
+        if not isinstance(value, list) or not value or len(value) > 8:
+            raise ValueError("multimodal content must contain between 1 and 8 parts")
+        for part in value:
+            if not isinstance(part, dict):
+                raise ValueError("content parts must be objects")
+            if part.get("type") == "text":
+                text = part.get("text")
+                if not isinstance(text, str) or len(text) > 200_000:
+                    raise ValueError("text parts must contain at most 200000 characters")
+            elif part.get("type") == "image_url":
+                image = part.get("image_url")
+                url = image.get("url") if isinstance(image, dict) else None
+                if (
+                    not isinstance(url, str)
+                    or not url.startswith("data:image/")
+                    or ";base64," not in url
+                    or len(url) > 16_000_000
+                ):
+                    raise ValueError(
+                        "image_url must be a base64 data URI no larger than 12 MB"
+                    )
+            else:
+                raise ValueError("only text and image_url content parts are supported")
+        return value
 
 
 class OpenAIChatRequest(BaseModel):
@@ -49,8 +82,43 @@ class OpenAIChatRequest(BaseModel):
     user: str | None = None
 
 
-def _chat_message(role: str, content: str) -> dict[str, str]:
+_MULTIMODAL_STORAGE_PREFIX = "__CLICODING_MULTIMODAL_V1__"
+
+
+def _chat_message(role: str, content: str | list[dict[str, Any]]) -> dict[str, object]:
     return {"role": role, "content": content}
+
+
+def _store_content(content: str | list[dict[str, Any]]) -> str:
+    if isinstance(content, str):
+        return content
+    return _MULTIMODAL_STORAGE_PREFIX + json.dumps(content, ensure_ascii=False)
+
+
+def _restore_content(content: str) -> str | list[dict[str, Any]]:
+    if not content.startswith(_MULTIMODAL_STORAGE_PREFIX):
+        return content
+    try:
+        value = json.loads(content[len(_MULTIMODAL_STORAGE_PREFIX):])
+    except json.JSONDecodeError:
+        return content
+    return value if isinstance(value, list) else content
+
+
+def _content_text(content: str | list[dict[str, Any]]) -> str:
+    if isinstance(content, str):
+        return content
+    return "\n".join(
+        str(part.get("text", ""))
+        for part in content
+        if part.get("type") == "text"
+    )
+
+
+def _has_images(content: str | list[dict[str, Any]]) -> bool:
+    return isinstance(content, list) and any(
+        part.get("type") == "image_url" for part in content
+    )
 
 
 def create_app(
@@ -170,7 +238,7 @@ def create_app(
 
     async def run_turn(
         conversation_id: str,
-        content: str,
+        content: str | list[dict[str, Any]],
         task_type: str,
         system_messages: list[dict[str, str]] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], str, str | None]:
@@ -179,10 +247,10 @@ def create_app(
         lock = conversation_locks.setdefault(conversation_id, asyncio.Lock())
         async with lock:
             user_event = db.append_event(
-                conversation_id, role="user", content=content, producer="user"
+                conversation_id, role="user", content=_store_content(content), producer="user"
             )
             events = [
-                {"role": event["role"], "content": event["content"]}
+                {"role": event["role"], "content": _restore_content(event["content"])}
                 for event in db.list_events(conversation_id)
                 if event["role"] in ("user", "assistant")
             ]
@@ -194,11 +262,18 @@ def create_app(
                 # The public API continues to expose one assistant identity.
                 context_messages = list(system_messages or []) + events[:-1]
                 context = "\n\n".join(
-                    f"{message['role']}: {message['content']}"
+                    f"{message['role']}: {_content_text(message['content'])}"
                     for message in context_messages
                 )
                 try:
-                    result = await multi_model.run(conversation_id, content, context)
+                    result = await multi_model.run(
+                        conversation_id,
+                        _content_text(content) or (
+                            "Analyze the attached image(s)." if _has_images(content) else ""
+                        ),
+                        context,
+                        user_content=content,
+                    )
                 except NoEligibleWorker as exc:
                     raise HTTPException(status_code=503, detail=str(exc)) from exc
                 except Exception as exc:
@@ -210,7 +285,7 @@ def create_app(
                 execution_id = result.execution_id
             else:
                 try:
-                    worker = router.select(task_type)
+                    worker = router.select("vision" if _has_images(content) else task_type)
                 except NoEligibleWorker as exc:
                     raise HTTPException(status_code=503, detail=str(exc)) from exc
 
