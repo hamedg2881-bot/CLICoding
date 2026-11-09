@@ -125,12 +125,29 @@ Health:
 GET /health
 ```
 
-## Opt-in multi-model orchestration\n\nSet `CLICODING_ENABLE_PLANNING=true` to enable planner-backed orchestration on the standard `/v1/chat/completions` endpoint and the internal conversation-turn API. It uses a worker declaring the `planning` capability (or falls back to a `chat` worker), validates the generated task graph, persists the execution and tasks before dispatch, and routes each task to a worker that supports all of its declared capabilities. Multiple successful task results are synthesized by a `chat` worker.\n\n```http\nPOST /api/v1/conversations/{conversation_id}/orchestrated-turns\nContent-Type: application/json\n\n{"content":"Review the code and inspect this design"}\n```\n\nInspect durable execution state with:\n\n```http\nGET /api/v1/conversations/{conversation_id}/executions/{execution_id}\n```\n\nWhen enabled, `/v1/chat/completions` uses the same planner-backed orchestration path; when disabled, it retains deterministic single-worker routing. The OpenAI-compatible response still exposes only the `clicoding` assistant identity and includes the canonical `conversation_id`; `x_clicoding.execution_id` identifies the internal execution. This opt-in implementation is a development slice, not yet safe for LAN exposure.\n\n## Current limitations
+## Opt-in multi-model orchestration
+
+Set `CLICODING_ENABLE_PLANNING=true` to enable planner-backed orchestration on the standard `/v1/chat/completions` endpoint and the internal conversation-turn API. It uses a worker declaring the `planning` capability (or falls back to a `chat` worker), validates the generated task graph, persists the execution and tasks before dispatch, and routes each task to a worker that supports all of its declared capabilities. Multiple successful task results are synthesized by a `chat` worker.
+
+```http
+POST /api/v1/conversations/{conversation_id}/orchestrated-turns
+Content-Type: application/json
+
+{"content":"Review the code and inspect this design"}
+```
+
+Inspect durable execution state with:
+
+```http
+GET /api/v1/conversations/{conversation_id}/executions/{execution_id}
+```
+
+When enabled, `/v1/chat/completions` uses the same planner-backed orchestration path; when disabled, it retains deterministic single-worker routing. The OpenAI-compatible response still exposes only the `clicoding` assistant identity and includes the canonical `conversation_id`; `x_clicoding.execution_id` identifies the internal execution. This remains a development slice. A strong `CLICODING_API_KEY` and internal TLS are required before LAN exposure; user/tenant isolation and quotas remain unimplemented.
+
+## Current limitations
 
 - The OpenAI-compatible text endpoint is implemented, but Open WebUI integration is not yet validated. Its adapter must persist and resend the returned `conversation_id`; do not assume generic clients preserve custom response fields.
-- Task type is currently a deterministic API hint. Automatic semantic classification,
-  request decomposition, dependency graphs, parallel execution, and synthesis are not
-  implemented yet.
+- With planning disabled, task type is a deterministic API hint. With planning enabled, semantic decomposition, validated dependency graphs, parallel execution, and synthesis are available through the planner-backed orchestration path.
 - Worker `max_concurrency` limits are enforced with process-local semaphores across concurrent requests. They are not distributed across multiple service processes.
 - Non-streaming text chat only; image/audio payload transport is not implemented. Tool/function calling is also not implemented.
 - One process is expected. Per-conversation in-process locks do not coordinate multiple
