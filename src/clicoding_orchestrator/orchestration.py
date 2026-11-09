@@ -7,7 +7,7 @@ from .database import Database
 from .executor import PlanExecution, SequentialWaveExecutor
 from .gateway import Completion, ModelGateway, OpenAICompatibleGateway
 from .planner import StructuredPlanner
-from .registry import Worker
+from .registry import Worker, runtime_key
 from .router import CapabilityRouter
 
 
@@ -34,17 +34,23 @@ class MultiModelOrchestrator:
         self.gateway_factory = gateway_factory or self._default_gateway
         # Shared across executions: per-worker limits must apply across conversations,
         # not only within one plan's dependency wave.
+        runtime_limits: dict[tuple[str, str], int] = {}
+        for worker in router.registry.enabled_workers():
+            key = runtime_key(worker)
+            runtime_limits[key] = min(
+                runtime_limits.get(key, worker.max_concurrency),
+                worker.max_concurrency,
+            )
         self._worker_semaphores = {
-            worker.id: asyncio.Semaphore(worker.max_concurrency)
-            for worker in router.registry.enabled_workers()
+            key: asyncio.Semaphore(limit) for key, limit in runtime_limits.items()
         }
 
     async def _complete(
         self, worker: Worker, messages: list[dict[str, str]]
     ) -> Completion:
-        semaphore = self._worker_semaphores.get(worker.id)
+        semaphore = self._worker_semaphores.get(runtime_key(worker))
         if semaphore is None:
-            raise RuntimeError(f"No concurrency slot configured for worker {worker.id!r}")
+            raise RuntimeError(f"No concurrency slot configured for runtime {runtime_key(worker)!r}")
         async with semaphore:
             return await self.gateway_factory(worker).complete(messages)
 
