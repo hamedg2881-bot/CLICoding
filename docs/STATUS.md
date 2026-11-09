@@ -164,3 +164,14 @@ User supplied a fresh command output from host `spark-7ea3`:
 - CI runs for the latest commits are pending. Do not treat these newly added tests as passed until the latest main-branch Actions run reports success.
 - Current limits: no Open WebUI conversation-ID mapping verification, no streaming, no multimodal image transport in the OpenAI endpoint, no task cancellation/retry, no cross-process scheduling locks, and no resource-aware model admission. The orchestrated route is opt-in and still requires deployment configuration plus API security before LAN exposure.
 - No DGX Spark host, model, runtime, container, service, or workstation was changed.
+
+
+### 2026-11-09 — Standard OpenAI endpoint orchestration integration
+- Updated the shared turn pipeline so enabling `CLICODING_ENABLE_PLANNING=true` routes both the internal conversation-turn API and the standard non-streaming `POST /v1/chat/completions` endpoint through the multi-model Orchestrator.
+- The public model alias remains `clicoding`; internal worker IDs remain hidden from the client. The response retains the canonical `conversation_id` and adds `x_clicoding.execution_id` plus an `orchestrated` indicator.
+- Existing canonical conversation events are supplied as prior context on subsequent turns; client-supplied system messages are passed to the planner context. The standard route remains deterministic single-worker when planning is disabled.
+- Added an API regression test covering two OpenAI-compatible turns with the same conversation ID, one public model identity, persisted orchestrator-produced events, and prior-turn context continuity.
+- Added a safe final-synthesis fallback: if the chat synthesis worker fails after task execution, completed worker outputs are returned rather than converting completed work into an HTTP failure.
+- Latest CI for the API integration and synthesis fallback is running; do not mark it verified until the current main-branch run completes successfully.
+- Remaining important gaps: Open WebUI conversation-ID adapter validation, streaming, multimodal image payload transport, idempotency/retry semantics, auth/tenant isolation, cross-process locking, cancellation, and resource-aware scheduling.
+- No DGX Spark host, model, runtime, container, service, or workstation was changed.
