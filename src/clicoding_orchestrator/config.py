@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import math
 import os
 
 from dotenv import load_dotenv
@@ -15,6 +16,16 @@ class Settings:
     enable_planning: bool = False
     api_key: str | None = None
     api_key: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.database_path.strip():
+            raise ValueError("database_path cannot be empty")
+        if not math.isfinite(self.request_timeout_seconds) or self.request_timeout_seconds <= 0:
+            raise ValueError("request_timeout_seconds must be a finite positive number")
+        if self.api_key is not None and (
+            len(self.api_key) < 32 or not self.api_key.isascii() or not self.api_key.strip()
+        ):
+            raise ValueError("api_key must be at least 32 ASCII characters")
 
     @classmethod
     def from_env(cls) -> "Settings":
