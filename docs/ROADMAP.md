@@ -107,10 +107,10 @@ A phase may be marked complete only when its exit gate has reproducible evidence
 
 Deliverables:
 - [x] Initial conversation/event persistence contract with stable conversation identity independent of model (single-process SQLite slice).
-- [x] In-memory task and execution-plan contracts with dependency/cycle validation.\n- [ ] Persistent task and execution-plan storage.\n- [x] Structured LLM Planner component with local schema, graph, and capability allow-list validation (not yet wired to chat API).
+- [x] In-memory task and execution-plan contracts with dependency/cycle validation.\n- [x] Persistent task and execution-plan storage in SQLite.\n- [x] Structured LLM Planner component with local schema, graph, and capability allow-list validation.
 - [ ] Context assembly and multimodal attachment handoff.
 - [x] Configuration-backed capability-based worker selection (deterministic task-type hint).
-- [x] Dependency-wave executor with bounded parallelism, dependency-output handoff, and failure blocking (in-memory only).\n- [ ] Persistent sequential, parallel, and hybrid task execution integrated with the chat API.
+- [x] Dependency-wave executor with bounded parallelism, dependency-output handoff, and failure blocking.\n- [x] Durable sequential/parallel task execution service and opt-in conversation API route.\n- [ ] Integrate orchestration into the standard OpenAI chat route after client and safety tests.
 - [x] Non-streaming transparent worker handoff with shared conversation history.
 - [ ] Unified response streaming.
 - [ ] Bounded retry, partial failure recovery, cancellation, and approval gates.
@@ -119,5 +119,5 @@ Deliverables:
 
 Exit gate: pass the single-model continuity, model handoff, Vision-to-Coder handoff, sequential and parallel workflow, partial failure, cancellation, context integrity, and resource safety tests.
 
-Phase 2 gateway work must expose transport primitives required by this core, but LiteLLM or any other gateway must not become the owner of conversation or task state. The first implementation should be a thin vertical slice, not a large framework adoption. The current code includes a YAML-backed worker registry, deterministic chat/coding/review/vision capability routing, same-conversation handoff, a non-streaming OpenAI-compatible text API, validated execution-plan/dependency graph contracts, a structured LLM Planner with capability allow-list validation, and an in-memory bounded dependency-wave executor. The Planner can request and validate structured plans when explicitly called, but is not yet wired into the chat endpoint or selected through the registry. Task/plan state is not persisted, executor dispatch is not connected to model workers, and multimodal transport, streaming, and resource-aware scheduling remain unimplemented. Open WebUI's ability to preserve the returned conversation ID remains unverified.
+Phase 2 gateway work must expose transport primitives required by this core, but LiteLLM or any other gateway must not become the owner of conversation or task state. The first implementation should be a thin vertical slice, not a large framework adoption. The current code includes a YAML-backed worker registry, deterministic capability routing, same-conversation history, a non-streaming OpenAI-compatible text API, validated execution plans, a structured LLM Planner, SQLite-persisted execution/task state, and a multi-model orchestration service with bounded dependency-wave execution. The service is available through an opt-in conversation route; the standard OpenAI chat endpoint remains on single-worker routing. Open WebUI conversation mapping, streaming, multimodal image transport, cancellation/retry, cross-process locking, and resource-aware scheduling remain unimplemented. Open WebUI's ability to preserve the returned conversation ID remains unverified.
 
