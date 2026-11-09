@@ -107,10 +107,14 @@ A phase may be marked complete only when its exit gate has reproducible evidence
 
 Deliverables:
 - [x] Initial conversation/event persistence contract with stable conversation identity independent of model (single-process SQLite slice).
-- [x] In-memory task and execution-plan contracts with dependency/cycle validation.\n- [x] Persistent task and execution-plan storage in SQLite.\n- [x] Structured LLM Planner component with local schema, graph, and capability allow-list validation.
+- [x] In-memory task and execution-plan contracts with dependency/cycle validation.
+- [x] Persistent task and execution-plan storage in SQLite.
+- [x] Structured LLM Planner component with local schema, graph, and capability allow-list validation.
 - [ ] Context assembly and multimodal attachment handoff.
 - [x] Configuration-backed capability-based worker selection (deterministic task-type hint).
-- [x] Dependency-wave executor with bounded parallelism, dependency-output handoff, and failure blocking.\n- [x] Durable sequential/parallel task execution service and opt-in conversation API route.\n- [x] Integrate opt-in orchestration into the standard OpenAI chat route; Open WebUI mapping and safety/production validation remain pending.
+- [x] Dependency-wave executor with bounded parallelism, dependency-output handoff, and failure blocking.
+- [x] Durable sequential/parallel task execution service and opt-in conversation API route.
+- [x] Integrate opt-in orchestration into the standard OpenAI chat route; Open WebUI mapping and safety/production validation remain pending.
 - [x] Non-streaming transparent worker handoff with shared conversation history.
 - [ ] Unified response streaming.
 - [ ] Bounded retry, partial failure recovery, cancellation, and approval gates.
