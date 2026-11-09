@@ -77,3 +77,46 @@ This file records accepted project-level decisions. Superseded decisions remain 
 - **Decision:** Prefer suitable MoE models; do not use Qwen3.8-27B Dense as a preferred production candidate because the user expects its decode speed to be too low.
 - **Rationale:** The user prioritizes practical inference performance and simultaneous multi-model availability.
 - **Consequence:** Compare MoE candidates using end-to-end coding, tool-use, Vision, latency, and total resident-memory measurements.
+
+## D-012 — One assistant identity and model-independent conversations
+- **Status:** Accepted
+- **Decision:** A conversation has a stable identity and canonical history independent of whichever model handles an individual turn or task. The user interacts with one assistant and should not need to restart or repeat context after model handoffs.
+- **Rationale:** Transparent model switching and continuity are core product requirements.
+- **Consequence:** Conversation Manager and context assembly are separate logical components from the model gateway and model runtimes.
+
+## D-013 — Central Task Orchestrator for complex requests
+- **Status:** Accepted
+- **Decision:** Use a central Orchestrator to own execution plans, task decomposition, dependency graphs, sequential/parallel/hybrid scheduling, worker dispatch, validation, retries, cancellation, approvals, and final synthesis. Models are workers, not workflow owners.
+- **Rationale:** Complex requests may require multiple models and workstation tools, with controlled handoffs and a coherent result.
+- **Consequence:** Persist plans, task states, outputs, and evidence. Do not permit untracked free-form model-to-model delegation.
+
+## D-014 — Capability- and resource-aware routing
+- **Status:** Accepted
+- **Decision:** Select model workers by tested capabilities and modalities, health/readiness, task requirements, and measured resource availability. Do not route solely by model name or use multiple models when one is sufficient.
+- **Rationale:** Model roles and actual capabilities vary; concurrent models share finite unified memory and compute.
+- **Consequence:** Maintain a tested capability catalog and global/per-model concurrency budgets. Queue rather than interrupt in-flight requests.
+
+## D-015 — Shared context with task-specific assembly
+- **Status:** Accepted
+- **Decision:** Preserve a canonical shared conversation/event history, but assemble bounded, task-specific context for each worker. Preserve attachment references, multimodal content, dependency outputs, tool calls/results, user constraints, and approvals.
+- **Rationale:** Sending identical raw history to every model is inefficient and may be incompatible with text-only workers; dropping context breaks continuity.
+- **Consequence:** Vision findings must be available as structured/text output to coding workers; original images remain retrievable for later vision tasks.
+
+## D-016 — Unified user-facing experience
+- **Status:** Accepted
+- **Decision:** Model handoffs and multi-model execution are transparent by default. The user sees one assistant identity, one conversation, and one coherent response stream; internal progress may be shown truthfully.
+- **Rationale:** The user should not have to understand model topology to complete work.
+- **Consequence:** Client integration must preserve conversation identity and streaming across worker boundaries; diagnostics belong in operator views.
+
+## D-017 — Gateway is not the orchestrator
+- **Status:** Accepted
+- **Decision:** LiteLLM may be evaluated as a replaceable OpenAI-compatible gateway, but it is not the Conversation Manager, Task Planner, Orchestrator, tool broker, or resource manager.
+- **Rationale:** Gateway routing/fallback does not by itself provide persistent conversation state or complex multi-worker execution semantics.
+- **Consequence:** Keep stable model-independent contracts above the gateway; choose the smallest implementation stack that passes acceptance tests. LangGraph is not mandatory.
+
+## D-018 — Thin-slice implementation and evidence-based adoption
+- **Status:** Accepted
+- **Decision:** Implement in thin vertical slices, beginning with persistent conversation continuity and a single-model path, then handoff, sequential/parallel orchestration, tools, and recovery. Prefer ready-made components and configuration; custom code is limited to missing orchestration semantics.
+- **Rationale:** Minimize custom code and framework complexity while proving the core behavior early.
+- **Consequence:** No large framework or runtime deployment is selected until a small proof-of-concept and compatibility tests demonstrate need.
+
