@@ -128,3 +128,30 @@ def test_openai_chat_rejects_streaming_and_unknown_model(tmp_path):
 
     assert streaming.status_code == 400
     assert unknown.status_code == 404
+
+
+def test_configured_bearer_key_protects_api_but_not_health(tmp_path):
+    gateway = FakeGateway()
+    database = Database(str(tmp_path / "auth.sqlite3"))
+    app = create_app(
+        settings=Settings(
+            database_path=str(tmp_path / "auth.sqlite3"),
+            api_key="test-only-secret",
+        ),
+        gateway=gateway,
+        database=database,
+    )
+    client = TestClient(app)
+
+    assert client.get("/health").status_code == 200
+    assert client.get("/v1/models").status_code == 401
+    assert client.post(
+        "/v1/chat/completions",
+        json={"model": "clicoding", "messages": [{"role": "user", "content": "Hi"}]},
+    ).status_code == 401
+
+    authorized = client.get(
+        "/v1/models", headers={"Authorization": "Bearer test-only-secret"}
+    )
+    assert authorized.status_code == 200
+    assert "test-only-secret" not in authorized.text
