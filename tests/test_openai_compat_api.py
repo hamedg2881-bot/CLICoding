@@ -155,3 +155,10 @@ def test_configured_bearer_key_protects_api_but_not_health(tmp_path):
     )
     assert authorized.status_code == 200
     assert "test-only-secret-0123456789-abcdef-012345" not in authorized.text
+
+
+def test_settings_rejects_short_inbound_api_key():
+    import pytest
+
+    with pytest.raises(ValueError, match="at least 32"):
+        Settings(api_key="too-short")
