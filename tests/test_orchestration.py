@@ -117,10 +117,16 @@ def test_worker_concurrency_limit_is_shared_across_parallel_executions(tmp_path)
 
         db = Database(str(tmp_path / "worker-concurrency.sqlite3"))
         registry = WorkerRegistry(
-            [Worker(
-                "chat", "http://chat/v1", "chat",
-                frozenset({"chat"}), max_concurrency=1
-            )]
+            [
+                Worker(
+                    "chat-alias", "http://chat/v1", "chat",
+                    frozenset({"chat"}), max_concurrency=1
+                ),
+                Worker(
+                    "planner-alias", "http://chat/v1", "chat",
+                    frozenset({"planning"}), max_concurrency=1
+                ),
+            ]
         )
         active = 0
         maximum_active = 0
@@ -138,10 +144,10 @@ def test_worker_concurrency_limit_is_shared_across_parallel_executions(tmp_path)
             db, CapabilityRouter(registry),
             gateway_factory=lambda worker: SlowGateway(),
         )
-        worker = registry.enabled_workers()[0]
+        chat_worker, planner_worker = registry.enabled_workers()
         await asyncio.gather(
-            orchestrator._complete(worker, [{"role": "user", "content": "one"}]),
-            orchestrator._complete(worker, [{"role": "user", "content": "two"}]),
+            orchestrator._complete(chat_worker, [{"role": "user", "content": "one"}]),
+            orchestrator._complete(planner_worker, [{"role": "user", "content": "two"}]),
         )
         assert maximum_active == 1
 
