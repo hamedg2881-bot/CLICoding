@@ -25,8 +25,7 @@ cp .env.example .env
 uvicorn clicoding_orchestrator.app:create_app --factory --app-dir src --host 127.0.0.1 --port 8090
 ```
 
-The service binds to loopback by default. Do not expose it to the LAN before authentication,
-TLS, tenant isolation, quotas, and request limits are implemented.
+The example command binds to loopback. The optional `CLICODING_API_KEY` setting enables Bearer authentication on every endpoint except `/health`. Before LAN exposure, configure a long random key and internal TLS. This is shared-key authentication only; user/tenant isolation, quotas, and request-rate limits are not implemented.
 
 ## Worker configuration
 
@@ -41,10 +40,7 @@ loader only reads configuration; it does not discover, download, install, load, 
 sleep, or otherwise mutate runtimes. Credentials should come from environment-backed
 secret injection rather than being committed in YAML.
 
-The first deterministic routing contract accepts a task hint of `chat`, `coding`,
-`review`, or `vision`. It selects the enabled worker with the required capability and
-lowest numeric priority (worker ID breaks ties). The hint is a task category, not a model
-name. A semantic planner that infers and decomposes complex requests is a later slice.
+With planning disabled, deterministic routing accepts a task hint of `chat`, `coding`, `review`, or `vision` and selects the enabled worker with the required capability and lowest numeric priority (worker ID breaks ties). With planning enabled, the Planner generates a validated task graph and the Orchestrator dispatches each task to a worker that supports all requested capabilities.
 
 ## OpenAI-compatible client API
 
@@ -135,11 +131,11 @@ GET /health
 - Task type is currently a deterministic API hint. Automatic semantic classification,
   request decomposition, dependency graphs, parallel execution, and synthesis are not
   implemented yet.
-- The YAML `max_concurrency` field is registered but not yet enforced by a global scheduler.
+- Worker `max_concurrency` limits are enforced with process-local semaphores across concurrent requests. They are not distributed across multiple service processes.
 - Non-streaming text chat only; image/audio payload transport is not implemented. Tool/function calling is also not implemented.
 - One process is expected. Per-conversation in-process locks do not coordinate multiple
   service processes.
-- No authentication, user/tenant isolation, quotas, or LAN exposure.
+- Bearer authentication is optional and must be configured with `CLICODING_API_KEY` before LAN exposure. It is one shared key, not user/tenant isolation. TLS, quotas, and request-rate limits are not implemented.
 - Failed upstream requests leave the user event recorded. Idempotency keys and safe client
   retry semantics are still required; regenerate/edit/resend behavior is not yet defined.
 - No tool broker, approval workflow, distributed queue, or resource-aware runtime scheduler.
