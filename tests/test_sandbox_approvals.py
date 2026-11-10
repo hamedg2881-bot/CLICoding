@@ -191,3 +191,20 @@ def test_existing_two_language_database_is_migrated_without_losing_approvals(tmp
     )
     assert approval["language"] == "go"
 
+def test_approval_api_accepts_all_supported_languages(tmp_path):
+    database = Database(str(tmp_path / "all-languages-api.sqlite3"))
+    _, execution = _execution_with_task(database)
+    client = TestClient(create_app(
+        settings=Settings(database_path=str(tmp_path / "all-languages-api.sqlite3")),
+        database=database,
+    ))
+    base = f"/api/v1/executions/{execution['id']}/tasks/implement/sandbox-approvals"
+    for language in (
+        "python", "javascript", "typescript", "go", "rust", "java",
+        "c", "cpp", "csharp", "php", "ruby",
+    ):
+        response = client.post(
+            base, json={"language": language, "source": "// minimal source"}
+        )
+        assert response.status_code == 201, (language, response.text)
+
