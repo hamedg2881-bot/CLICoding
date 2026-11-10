@@ -108,7 +108,7 @@ def test_openai_chat_applies_system_messages_and_imports_initial_history(tmp_pat
     ]
 
 
-def test_openai_chat_rejects_streaming_and_unknown_model(tmp_path):
+def test_openai_chat_supports_sse_and_rejects_unknown_model(tmp_path):
     client, _ = make_client(tmp_path)
     streaming = client.post(
         "/v1/chat/completions",
@@ -126,8 +126,66 @@ def test_openai_chat_rejects_streaming_and_unknown_model(tmp_path):
         },
     )
 
-    assert streaming.status_code == 400
+    assert streaming.status_code == 200
+    assert streaming.headers["content-type"].startswith("text/event-stream")
+    assert '"object":"chat.completion.chunk"' in streaming.text
+    assert '"content":"reply-1"' in streaming.text
+    assert "data: [DONE]" in streaming.text
     assert unknown.status_code == 404
+
+
+def test_openwebui_chat_headers_preserve_session_and_isolate_users(tmp_path):
+    client, _ = make_client(tmp_path)
+    headers = {
+        "X-CLICoding-Chat-ID": "open-webui-chat-123",
+        "X-CLICoding-User-ID": "open-webui-user-a",
+    }
+
+    first = client.post(
+        "/v1/chat/completions",
+        headers=headers,
+        json={
+            "model": "clicoding",
+            "messages": [{"role": "user", "content": "First turn"}],
+        },
+    )
+    second = client.post(
+        "/v1/chat/completions",
+        headers=headers,
+        json={
+            "model": "clicoding",
+            "messages": [{"role": "user", "content": "Second turn"}],
+        },
+    )
+    other_user = client.post(
+        "/v1/chat/completions",
+        headers={
+            "X-CLICoding-Chat-ID": "open-webui-chat-123",
+            "X-CLICoding-User-ID": "open-webui-user-b",
+        },
+        json={
+            "model": "clicoding",
+            "messages": [{"role": "user", "content": "Separate user"}],
+        },
+    )
+
+    assert first.status_code == second.status_code == other_user.status_code == 200
+    first_id = first.json()["conversation_id"]
+    assert second.json()["conversation_id"] == first_id
+    assert other_user.json()["conversation_id"] != first_id
+
+
+def test_openwebui_session_headers_must_be_provided_together(tmp_path):
+    client, _ = make_client(tmp_path)
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"X-CLICoding-Chat-ID": "chat-only"},
+        json={
+            "model": "clicoding",
+            "messages": [{"role": "user", "content": "Hello"}],
+        },
+    )
+    assert response.status_code == 400
 
 
 def test_configured_bearer_key_protects_api_but_not_health(tmp_path):
@@ -251,3 +309,12 @@ def test_parallelism_defaults_to_three_and_rejects_more_than_three():
     assert Settings().max_parallel_tasks == 3
     with pytest.raises(ValueError, match="between 1 and 3"):
         Settings(max_parallel_tasks=4)
+
+
+def test_get_or_create_conversation_is_idempotent(tmp_path):
+    database = Database(str(tmp_path / "stable-conversation.sqlite3"))
+    first = database.get_or_create_conversation("stable-open-webui-session")
+    second = database.get_or_create_conversation("stable-open-webui-session")
+
+    assert first["id"] == second["id"] == "stable-open-webui-session"
+    assert first["created_at"] == second["created_at"]
