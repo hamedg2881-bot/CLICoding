@@ -55,7 +55,7 @@ RUNTIMES = {
         "argv": ["sh", "-lc", "cat > /tmp/main.c && gcc -std=c23 -O0 /tmp/main.c -o /tmp/main && /tmp/main"],
     },
     "cpp": {
-        "image": "gcc:16.2.0-trixie",
+        "image": "gcc:16.2.0-trixie@sha256:b8a42d6804296fbe7a54e17e9d60c3100d9e8dbe7ef88c748cae2ddb00d63ba2",
         "argv": ["sh", "-lc", "cat > /tmp/main.cpp && g++ -std=c++23 -O0 /tmp/main.cpp -o /tmp/main && /tmp/main"],
     },
     "csharp": {
