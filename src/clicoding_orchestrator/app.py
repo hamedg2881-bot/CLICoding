@@ -525,11 +525,23 @@ def create_app(
                 raise RuntimeError("broker returned an invalid response")
             if result.get("status") == "broker_error":
                 raise RuntimeError(result.get("error", "broker execution failed"))
+            if result.get("status") == "rejected":
+                raise HTTPException(status_code=409, detail=result.get("error", "Execution rejected"))
             return result
         except (OSError, asyncio.TimeoutError, RuntimeError, json.JSONDecodeError) as exc:
             raise HTTPException(
                 status_code=503, detail=f"Sandbox broker unavailable or failed: {exc}"
             ) from exc
+
+    @app.get("/api/v1/sandbox-approvals/{approval_id}/result")
+    async def get_sandbox_execution_result(approval_id: str) -> dict[str, Any]:
+        approval = db.get_sandbox_approval(approval_id)
+        if approval is None:
+            raise HTTPException(status_code=404, detail="Sandbox approval not found")
+        result = db.get_sandbox_execution_result(approval_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Sandbox execution result not found")
+        return result
 
     @app.post("/api/v1/sandbox-approvals/{approval_id}/decision")
     async def decide_sandbox_approval(
