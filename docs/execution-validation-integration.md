@@ -103,3 +103,11 @@ Still open: expiry, concurrent requests, broker outage, runner failure and clean
 - The competing request returned HTTP `409`: `approval has already been consumed`.
 - This verifies one-time claim enforcement for concurrent requests to the same approval. It does not establish behavior under broader multi-approval load or host/broker interruption.
 
+## Verified broker-unavailable handling — 2026-11-10
+
+- Created and approved a fresh harmless Python approval for the broker outage test.
+- Temporarily stopped `clicoding-sandbox-broker`, then submitted the execute request through the Orchestrator API.
+- Orchestrator returned HTTP `503`: `Sandbox broker unavailable or failed: [Errno 111] Connection refused`.
+- Restarted the broker immediately after the request; `systemctl is-active` reported `active`.
+- This verifies connection-refused handling and service recovery. The approval was not executed while the broker was unavailable; retry behavior after recovery has not yet been tested.
+
