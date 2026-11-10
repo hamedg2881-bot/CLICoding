@@ -110,6 +110,19 @@ class MultiModelOrchestrator:
                 + "multimodal worker receives the actual image content."
             )
         plan = await planner.create_plan(planning_request, conversation_context)
+
+        # Validate capability combinations against real enabled workers before
+        # persisting or dispatching the plan. A union of capabilities is not enough:
+        # one worker must support every capability required by each individual task.
+        enabled_workers = self.router.registry.enabled_workers()
+        for task in plan.tasks:
+            required = set(task.required_capabilities)
+            if not any(required.issubset(worker.capabilities) for worker in enabled_workers):
+                raise NoEligibleWorker(
+                    f"Task {task.task_id!r} requires {sorted(required)}, but no single "
+                    "enabled worker supports that complete capability set"
+                )
+
         if image_parts and not any(
             "vision" in task.required_capabilities for task in plan.tasks
         ):
@@ -226,8 +239,6 @@ class MultiModelOrchestrator:
                 if result.status != "succeeded"
             ]
             answer = "I could not complete the requested work. " + "; ".join(failed)
-        elif len(successful) == 1:
-            answer = successful[0].split("] ", 1)[1]
         else:
             try:
                 synthesis_worker = self.router.select("chat")
@@ -237,9 +248,13 @@ class MultiModelOrchestrator:
                         {
                             "role": "system",
                             "content": (
-                                "Synthesize worker results into one coherent answer to the "
-                                "user. Resolve overlap, preserve important caveats, and do "
-                                "not invent facts absent from the results."
+                                "You are the final response composer for a high-quality "
+                                "assistant. Answer the user's original request directly and "
+                                "completely using the worker results. Resolve overlap, preserve "
+                                "important caveats, and do not invent facts absent from results. "
+                                "When a worker produced source code, preserve the complete "
+                                "implementation in the final answer; never replace requested "
+                                "code with a summary or omit code blocks. Match the user's language."
                             ),
                         },
                         {
@@ -252,7 +267,7 @@ class MultiModelOrchestrator:
                         },
                     ]
                 )
-                answer = synthesis.content
+                answer = synthesis.content.strip()
             except Exception:
                 # Completed task outputs are still useful if the final chat worker is
                 # unavailable; do not turn a successful execution into an HTTP failure.
@@ -260,6 +275,14 @@ class MultiModelOrchestrator:
                     "The tasks completed, but final synthesis was unavailable.\n\n"
                     + "\n\n".join(successful)
                 )
+
+            # The final composer must not accidentally drop a concrete code artifact.
+            # If it does, fall back to the verified worker deliverables.
+            if (
+                any(self._expects_code_artifact(task.expected_output) for task in plan.tasks)
+                and not self._contains_code_artifact(answer)
+            ):
+                answer = "\n\n".join(successful)
 
         return OrchestrationResult(
             execution_id=execution_id, answer=answer, execution=execution
