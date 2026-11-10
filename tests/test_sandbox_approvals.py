@@ -155,3 +155,39 @@ def test_unknown_sandbox_language_is_rejected(tmp_path):
         database.create_sandbox_approval(
             execution["id"], "implement", "brainfuck", "+++"
         )
+
+def test_existing_two_language_database_is_migrated_without_losing_approvals(tmp_path):
+    path = str(tmp_path / "legacy-approvals.sqlite3")
+    connection = sqlite3.connect(path)
+    connection.execute(
+        """
+        CREATE TABLE sandbox_approvals (
+            id TEXT PRIMARY KEY,
+            execution_id TEXT NOT NULL,
+            task_id TEXT NOT NULL,
+            language TEXT NOT NULL CHECK (language IN ('python', 'javascript')),
+            source TEXT NOT NULL,
+            source_sha256 TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'expired')),
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            decided_at TEXT,
+            FOREIGN KEY (execution_id, task_id)
+                REFERENCES execution_tasks(execution_id, id) ON DELETE CASCADE
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX ix_sandbox_approvals_task "
+        "ON sandbox_approvals(execution_id, task_id, created_at)"
+    )
+    connection.commit()
+    connection.close()
+
+    database = Database(path)
+    _, execution = _execution_with_task(database)
+    approval = database.create_sandbox_approval(
+        execution["id"], "implement", "go", "package main"
+    )
+    assert approval["language"] == "go"
+
