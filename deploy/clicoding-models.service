@@ -1,0 +1,15 @@
+[Unit]
+Description=CLICoding sequential model startup
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/clicoding-models-startup
+RemainAfterExit=yes
+TimeoutStartSec=2700
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
