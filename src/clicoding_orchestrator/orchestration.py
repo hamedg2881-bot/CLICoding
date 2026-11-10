@@ -70,7 +70,7 @@ class MultiModelOrchestrator:
     @staticmethod
     def _contains_code_artifact(output: str) -> bool:
         """Reject prose-only answers when a concrete code artifact was requested."""
-        if re.search(r"```[^\\n]*\\n[\\s\\S]+?```", output):
+        if re.search(r"```[^\n]*\n[\s\S]+?```", output):
             return True
         markers = (
             "def ", "async def ", "class ", "if __name__", "package main",
