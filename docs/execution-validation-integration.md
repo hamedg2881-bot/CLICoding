@@ -95,3 +95,11 @@ Still open: expiry, concurrent requests, broker outage, runner failure and clean
 - API returned HTTP `409`: `Sandbox approval is not approved (status=expired)`.
 - The expired approval was rejected before broker execution; the marker source was not run.
 
+## Verified concurrent execution claim — 2026-11-10
+
+- Created and approved one fresh Python approval for a harmless marker program.
+- Submitted two execute requests concurrently for the same approval.
+- Exactly one request returned HTTP `200`, status `succeeded`, exit code `0`, stdout `CONCURRENT_TEST_OK\n` (221 ms).
+- The competing request returned HTTP `409`: `approval has already been consumed`.
+- This verifies one-time claim enforcement for concurrent requests to the same approval. It does not establish behavior under broader multi-approval load or host/broker interruption.
+
