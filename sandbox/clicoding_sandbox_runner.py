@@ -8,6 +8,7 @@ Orchestrator service account.
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import selectors
@@ -250,8 +251,14 @@ def main() -> int:
         return emit({"status": "runner_error", "error": "Docker CLI not found"}, 2)
     try:
         language, source = read_request()
-        result = run_container(language, source)
-        return emit(result, 0 if result["status"] == "succeeded" else 1)
+        lock_path = "/run/lock/clicoding-sandbox.lock"
+        with open(lock_path, "w", encoding="ascii") as lock_file:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return emit({"status": "busy", "error": "Another sandbox execution is active"}, 1)
+            result = run_container(language, source)
+            return emit(result, 0 if result["status"] == "succeeded" else 1)
     except RequestError as exc:
         return emit({"status": "rejected", "error": str(exc)}, 2)
     except Exception as exc:
