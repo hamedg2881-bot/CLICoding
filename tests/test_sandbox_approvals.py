@@ -132,3 +132,26 @@ def test_approval_api_creates_reads_and_decides(tmp_path):
         json={"decision": "reject"},
     )
     assert duplicate.status_code == 409
+
+@pytest.mark.parametrize(
+    "language",
+    ["python", "javascript", "typescript", "go", "rust", "java",
+     "c", "cpp", "csharp", "php", "ruby"],
+)
+def test_all_supported_sandbox_languages_can_request_approval(tmp_path, language):
+    database = Database(str(tmp_path / f"{language}.sqlite3"))
+    _, execution = _execution_with_task(database)
+    approval = database.create_sandbox_approval(
+        execution["id"], "implement", language, "// source placeholder"
+    )
+    assert approval["language"] == language
+    assert approval["status"] == "pending"
+
+
+def test_unknown_sandbox_language_is_rejected(tmp_path):
+    database = Database(str(tmp_path / "unknown.sqlite3"))
+    _, execution = _execution_with_task(database)
+    with pytest.raises(ValueError, match="unsupported sandbox language"):
+        database.create_sandbox_approval(
+            execution["id"], "implement", "brainfuck", "+++"
+        )
