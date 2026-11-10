@@ -72,7 +72,7 @@ class ChatMessage(BaseModel):
 
 
 class SandboxApprovalCreate(BaseModel):
-    language: Literal["python", "javascript"]
+    language: Literal["python", "javascript", "typescript", "go", "rust", "java", "c", "cpp", "csharp", "php", "ruby"]
     source: str = Field(min_length=1, max_length=131072)
 
 
@@ -515,7 +515,7 @@ def create_app(
                 (json.dumps({"approval_id": approval_id}) + "\n").encode("utf-8")
             )
             await writer.drain()
-            raw = await asyncio.wait_for(reader.readline(), timeout=40)
+            raw = await asyncio.wait_for(reader.readline(), timeout=70)
             writer.close()
             await writer.wait_closed()
             if not raw or len(raw) > 512 * 1024:
