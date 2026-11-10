@@ -111,3 +111,9 @@ Still open: expiry, concurrent requests, broker outage, runner failure and clean
 - Restarted the broker immediately after the request; `systemctl is-active` reported `active`.
 - This verifies connection-refused handling and service recovery. The approval was not executed while the broker was unavailable; retry behavior after recovery has not yet been tested.
 
+## Verified retry after broker recovery — 2026-11-10
+
+- Reused the same approved approval after the broker service had been restarted.
+- Execute API returned HTTP `200`, status `succeeded`, exit code `0`, stdout `BROKER_OUTAGE_TEST\n`, empty stderr, duration 195 ms.
+- This confirms a connection failure before broker claim did not consume the approval; retry after service recovery succeeded exactly once.
+
