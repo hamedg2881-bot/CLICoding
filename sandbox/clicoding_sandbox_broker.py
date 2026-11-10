@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import grp
 import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -20,7 +21,7 @@ DATABASE_PATH = os.getenv("CLICODING_DATABASE_PATH", "")
 RUNNER_PATH = "/usr/local/sbin/clicoding-sandbox-run"
 SOCKET_GROUP = os.getenv("CLICODING_BROKER_GROUP", "clicoding-sandbox")
 MAX_REQUEST_BYTES = 4096
-MAX_RESPONSE_BYTES = 80 * 1024
+MAX_RESPONSE_BYTES = 512 * 1024
 RUNNER_TIMEOUT_SECONDS = 30
 
 
@@ -39,6 +40,8 @@ def database_connection() -> sqlite3.Connection:
 
 def claim_approval(approval_id: str) -> tuple[str, str, str]:
     """Atomically consume an approved immutable source snapshot."""
+    if not isinstance(approval_id, str):
+        raise ValueError("approval_id must be a UUID string")
     try:
         approval_id = str(uuid.UUID(approval_id))
     except (ValueError, AttributeError) as exc:
@@ -76,7 +79,7 @@ def claim_approval(approval_id: str) -> tuple[str, str, str]:
         source = row["source"]
         source_bytes = source.encode("utf-8")
         digest = hashlib.sha256(source_bytes).hexdigest()
-        if not hashlib.compare_digest(digest, row["source_sha256"]):
+        if not hmac.compare_digest(digest, row["source_sha256"]):
             raise ValueError("approved source digest mismatch")
         connection.execute(
             """
