@@ -507,7 +507,7 @@ def create_app(
         try:
             reader, writer = await asyncio.wait_for(
                 asyncio.open_unix_connection(
-                    "/run/clicoding-sandbox/broker.sock", limit=512 * 1024
+                    "/run/clicoding-sandbox/broker.sock", limit=600 * 1024
                 ),
                 timeout=3,
             )
