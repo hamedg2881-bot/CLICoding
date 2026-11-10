@@ -371,12 +371,12 @@ def test_code_artifact_contract_triggers_one_repair_attempt(tmp_path):
                 self.calls += 1
                 if self.worker_id == "fast-reasoning" and self.calls > 1:
                     return Completion(
-                        "Implementation:\\n\\n```python\\n"
-                        "def find_duplicates(nums):\\n"
-                        "    counts = {}\\n"
-                        "    for value in nums:\\n"
-                        "        counts[value] = counts.get(value, 0) + 1\\n"
-                        "    return {key: count for key, count in counts.items() if count > 1}\\n"
+                        "Implementation:\n\n```python\n"
+                        "def find_duplicates(nums):\n"
+                        "    counts = {}\n"
+                        "    for value in nums:\n"
+                        "        counts[value] = counts.get(value, 0) + 1\n"
+                        "    return {key: count for key, count in counts.items() if count > 1}\n"
                         "```",
                         "gpt-oss-20b",
                     )
@@ -389,7 +389,7 @@ def test_code_artifact_contract_triggers_one_repair_attempt(tmp_path):
                                 "task_id": "implement",
                                 "objective": "Write find_duplicates(nums)",
                                 "required_capabilities": ["coding"],
-                                "expected_output": "def find_duplicates(nums):\\n    return {}",
+                                "expected_output": "def find_duplicates(nums):\n    return {}",
                             }
                         ],
                     }
@@ -400,10 +400,10 @@ def test_code_artifact_contract_triggers_one_repair_attempt(tmp_path):
                         "qwen-coder",
                     )
                 return Completion(
-                    "def find_duplicates(nums):\\n"
-                    "    counts = {}\\n"
-                    "    for value in nums:\\n"
-                    "        counts[value] = counts.get(value, 0) + 1\\n"
+                    "def find_duplicates(nums):\n"
+                    "    counts = {}\n"
+                    "    for value in nums:\n"
+                    "        counts[value] = counts.get(value, 0) + 1\n"
                     "    return {key: count for key, count in counts.items() if count > 1}",
                     "qwen-coder",
                 )
