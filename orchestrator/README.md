@@ -82,9 +82,37 @@ the supplied prior text turns on that first request. A generic OpenAI client tha
 unknown response fields will not automatically preserve this mapping; client integration
 must be explicitly tested before connecting Open WebUI.
 
-The API currently rejects `stream=true`, unknown public model aliases, and non-text
-message content. It does not yet support tools/function calls, audio, image payloads,
-regenerate/edit semantics, or idempotency keys.
+The API rejects unknown public model aliases and unsupported message content. It does
+not yet support tools/function calls, audio, regenerate/edit semantics, or idempotency
+keys. When `stream=true`, it emits OpenAI-compatible Server-Sent Events after the
+orchestration has completed. This is buffered SSE compatibility, not token-by-token
+generation; the client receives the answer only after the workers and synthesis finish.
+
+### Open WebUI 0.13.x connection
+
+Create an OpenAI-compatible connection with:
+
+- Base URL: `http://172.18.0.1:8090/v1` (for the documented DGX Docker bridge setup;
+  use the reachable private host address in other deployments).
+- API key: the value of `CLICODING_API_KEY` from the private service environment.
+- Public model: `clicoding` only.
+
+In that connection's custom headers, configure both values exactly as follows:
+
+| Header | Value |
+| --- | --- |
+| `X-CLICoding-Chat-ID` | `{{CHAT_ID}}` |
+| `X-CLICoding-User-ID` | `{{USER_ID}}` |
+
+Open WebUI 0.13.x removes its internal `metadata` object from the JSON body before
+proxying an OpenAI-compatible request. Its custom-header templates can forward the
+chat and user identifiers without changing Open WebUI itself. The Orchestrator derives
+a deterministic, per-user conversation ID from those two values, so subsequent turns
+reuse the same canonical conversation. Requests from generic OpenAI clients may
+continue to use the explicit `conversation_id` response extension.
+
+Do not enable direct worker connections in Open WebUI. It should expose only the
+`clicoding` public alias; worker IDs and model aliases remain internal.
 
 ## Internal conversation API
 
