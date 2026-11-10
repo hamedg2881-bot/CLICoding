@@ -22,7 +22,7 @@ RUNNER_PATH = "/usr/local/sbin/clicoding-sandbox-run"
 SOCKET_GROUP = os.getenv("CLICODING_BROKER_GROUP", "clicoding-sandbox")
 MAX_REQUEST_BYTES = 4096
 MAX_RESPONSE_BYTES = 512 * 1024
-RUNNER_TIMEOUT_SECONDS = 30
+RUNNER_TIMEOUT_SECONDS = 60
 
 
 def now() -> str:
@@ -74,7 +74,7 @@ def claim_approval(approval_id: str) -> tuple[str, str, str]:
             raise ValueError(f"approval is not approved (status={row['status']})")
         if row["expires_at"] <= now():
             raise ValueError("approval has expired")
-        if row["language"] not in {"python", "javascript"}:
+        if row["language"] not in {"python", "javascript", "typescript", "go", "rust", "java", "c", "cpp", "csharp", "php", "ruby"}:
             raise ValueError("unsupported approved language")
         source = row["source"]
         source_bytes = source.encode("utf-8")
