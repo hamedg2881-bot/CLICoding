@@ -162,6 +162,10 @@ def run_container(language: str, source: bytes) -> dict[str, Any]:
                         offset += written
                     except BrokenPipeError:
                         offset = len(source)
+                        selector.unregister(stream)
+                        stream.close()
+                        input_closed = True
+                        continue
                     if offset >= len(source):
                         selector.unregister(stream)
                         stream.close()
