@@ -1,6 +1,6 @@
 # Execution Validation Layer — Integration Design
 
-Status: approval persistence, Unix-socket broker, one end-to-end approved execution, replay rejection, and explicit rejection enforcement are verified on DGX Spark.
+Status: approval persistence, Unix-socket broker, one end-to-end approved execution, replay rejection, explicit rejection enforcement, and source-digest tampering detection are verified on DGX Spark.
 
 ## Trust boundaries
 
@@ -61,9 +61,18 @@ A second POST to the execute endpoint using the already-consumed approval return
 - Created a fresh approval for a harmless Python marker program; API returned HTTP `201`, status `pending`.
 - Explicitly rejected it; decision API returned HTTP `200`, status `rejected`.
 - Attempted execution afterward; API returned HTTP `409` with `Sandbox approval is not approved (status=rejected)`.
-- The runner was not invoked for this rejected approval; the marker program was not executed.
+- The runner was not invoked for that rejected approval; the marker program was not executed.
 
 This verifies that an explicitly rejected approval cannot proceed through the execution API.
+
+## Verified source-digest tampering detection — 2026-11-10
+
+- Created a fresh Python approval and received HTTP `201`; explicitly approved it (HTTP `200`).
+- Modified only the stored `source_sha256` value in the local SQLite database to an invalid 64-character digest, leaving the source unchanged.
+- Attempted execution; API returned HTTP `409` with `approved source digest mismatch`.
+- The broker detected the mismatch before creating an execution claim or invoking the runner. The marker source was not executed.
+
+This test verifies integrity checking against a modified stored digest. It does not test an attacker who can modify both the source and its digest, nor does it protect the database file from privileged host access.
 
 ## Runner scope
 
@@ -71,4 +80,4 @@ Python 3.12 and Node.js 24 only. Manual runner tests cover success, timeout, out
 
 ## Remaining validation
 
-Still open: expiry, digest mismatch/tampering, concurrent requests, broker outage, runner failure and cleanup after broker/host interruption. Security hardening is tracked in `docs/security-hardening-backlog.md`.
+Still open: expiry, concurrent requests, broker outage, runner failure and cleanup after broker/host interruption. Security hardening is tracked in `docs/security-hardening-backlog.md`.
