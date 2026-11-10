@@ -494,6 +494,43 @@ def create_app(
             raise HTTPException(status_code=404, detail="Sandbox approval not found")
         return approval
 
+    @app.post("/api/v1/sandbox-approvals/{approval_id}/execute")
+    async def execute_sandbox_approval(approval_id: str) -> dict[str, Any]:
+        approval = db.get_sandbox_approval(approval_id)
+        if approval is None:
+            raise HTTPException(status_code=404, detail="Sandbox approval not found")
+        if approval["status"] != "approved":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Sandbox approval is not approved (status={approval['status']})",
+            )
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_unix_connection(
+                    "/run/clicoding-sandbox/broker.sock", limit=512 * 1024
+                ),
+                timeout=3,
+            )
+            writer.write(
+                (json.dumps({"approval_id": approval_id}) + "\\n").encode("utf-8")
+            )
+            await writer.drain()
+            raw = await asyncio.wait_for(reader.readline(), timeout=40)
+            writer.close()
+            await writer.wait_closed()
+            if not raw or len(raw) > 512 * 1024:
+                raise RuntimeError("broker returned an empty or oversized response")
+            result = json.loads(raw.decode("utf-8"))
+            if not isinstance(result, dict):
+                raise RuntimeError("broker returned an invalid response")
+            if result.get("status") == "broker_error":
+                raise RuntimeError(result.get("error", "broker execution failed"))
+            return result
+        except (OSError, asyncio.TimeoutError, RuntimeError, json.JSONDecodeError) as exc:
+            raise HTTPException(
+                status_code=503, detail=f"Sandbox broker unavailable or failed: {exc}"
+            ) from exc
+
     @app.post("/api/v1/sandbox-approvals/{approval_id}/decision")
     async def decide_sandbox_approval(
         approval_id: str, request: SandboxApprovalDecision
