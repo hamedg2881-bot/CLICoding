@@ -8,7 +8,7 @@ import uuid
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from .config import Settings
@@ -128,6 +128,23 @@ def _has_images(content: str | list[dict[str, Any]]) -> bool:
     return isinstance(content, list) and any(
         part.get("type") == "image_url" for part in content
     )
+
+
+def _openwebui_conversation_id(request: Request) -> str | None:
+    """Derive a stable, per-user conversation ID from Open WebUI custom headers."""
+    chat_id = request.headers.get("x-clicoding-chat-id", "").strip()
+    user_id = request.headers.get("x-clicoding-user-id", "").strip()
+    if not chat_id and not user_id:
+        return None
+    if not chat_id or not user_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Both X-CLICoding-Chat-ID and X-CLICoding-User-ID are required",
+        )
+    if len(chat_id) > 256 or len(user_id) > 256:
+        raise HTTPException(status_code=400, detail="Open WebUI session identifiers are too long")
+    stable_key = f"clicoding:open-webui:{user_id}:{chat_id}"
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, stable_key))
 
 
 def create_app(
@@ -359,38 +376,39 @@ def create_app(
         )
 
     @app.post("/v1/chat/completions")
-    async def openai_chat_completions(request: OpenAIChatRequest) -> dict[str, Any]:
-        if request.model not in ("clicoding", "assistant", "auto"):
+    async def openai_chat_completions(
+        http_request: Request, chat_request: OpenAIChatRequest
+    ) -> Any:
+        if chat_request.model not in ("clicoding", "assistant", "auto"):
             raise HTTPException(status_code=404, detail="Unknown public model alias")
-        if request.stream:
-            raise HTTPException(
-                status_code=400,
-                detail="Streaming is not supported yet; set stream=false",
-            )
-        if not request.messages or request.messages[-1].role != "user":
+        if not chat_request.messages or chat_request.messages[-1].role != "user":
             raise HTTPException(
                 status_code=400,
                 detail="The final message must be a user message",
             )
 
-        last_user = request.messages[-1].content
+        last_user = chat_request.messages[-1].content
         supplied_system = [
             _chat_message(message.role, message.content)
-            for message in request.messages
+            for message in chat_request.messages
             if message.role == "system"
         ]
 
-        if request.conversation_id:
-            conversation_id = request.conversation_id
+        # Open WebUI drops arbitrary response fields such as conversation_id.
+        # Its configured custom headers preserve chat/user identity on every turn.
+        external_conversation_id = _openwebui_conversation_id(http_request)
+        if chat_request.conversation_id:
+            conversation_id = chat_request.conversation_id
             if not db.conversation_exists(conversation_id):
                 raise HTTPException(status_code=404, detail="Conversation not found")
+        elif external_conversation_id:
+            db.get_or_create_conversation(external_conversation_id)
+            conversation_id = external_conversation_id
         else:
             created = db.create_conversation()
             conversation_id = created["id"]
-            # On the first call, import the client-provided prior turns so a client
-            # that sends full history can bootstrap continuity. The final user turn
-            # is appended by run_turn below.
-            for message in request.messages[:-1]:
+            # Generic OpenAI clients may bootstrap a new conversation with full history.
+            for message in chat_request.messages[:-1]:
                 if message.role in ("user", "assistant"):
                     db.append_event(
                         conversation_id,
@@ -400,14 +418,52 @@ def create_app(
                     )
 
         user_event, assistant_event, answer, execution_id = await run_turn(
-            conversation_id, last_user, request.task_type, supplied_system
+            conversation_id, last_user, chat_request.task_type, supplied_system
         )
 
         response_id = f"chatcmpl-{uuid.uuid4().hex}"
+        created_at = int(time.time())
+        if chat_request.stream:
+            # Buffered SSE compatibility: orchestration completes before the final
+            # answer is emitted. This is protocol streaming, not token-by-token output.
+            async def event_stream():
+                chunks = [
+                    {
+                        "id": response_id,
+                        "object": "chat.completion.chunk",
+                        "created": created_at,
+                        "model": "clicoding",
+                        "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
+                    },
+                    {
+                        "id": response_id,
+                        "object": "chat.completion.chunk",
+                        "created": created_at,
+                        "model": "clicoding",
+                        "choices": [{"index": 0, "delta": {"content": answer}, "finish_reason": None}],
+                    },
+                    {
+                        "id": response_id,
+                        "object": "chat.completion.chunk",
+                        "created": created_at,
+                        "model": "clicoding",
+                        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                    },
+                ]
+                for chunk in chunks:
+                    yield "data: " + json.dumps(chunk, ensure_ascii=False, separators=(",", ":")) + "\n\n"
+                yield "data: [DONE]\n\n"
+
+            return StreamingResponse(
+                event_stream(),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+
         return {
             "id": response_id,
             "object": "chat.completion",
-            "created": int(time.time()),
+            "created": created_at,
             "model": "clicoding",
             "conversation_id": conversation_id,
             "choices": [
@@ -426,7 +482,6 @@ def create_app(
                 "orchestrated": multi_model is not None,
             },
         }
-
 
     @app.post(
         "/api/v1/conversations/{conversation_id}/orchestrated-turns",
