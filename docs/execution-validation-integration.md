@@ -21,6 +21,28 @@ Status: approved direction; implementation not yet connected to the Orchestrator
 7. The Orchestrator persists the runner's structured result: status, exit code, stdout, stderr, duration, limits, and source digest.
 8. A task is execution-validated only when the runner returns `succeeded` and the required acceptance checks pass. Worker claims and printed expected output are never treated as execution evidence.
 
+## Implemented approval persistence/API slice
+
+The Orchestrator now persists approval requests in SQLite in `sandbox_approvals`.
+Each request is bound to an existing succeeded execution task, an allowlisted language,
+the exact UTF-8 source snapshot, and its SHA-256 digest. Requests expire after 15 minutes
+by default (configurable in the repository method between 60 and 3600 seconds).
+
+Local API routes:
+- `POST /api/v1/executions/{execution_id}/tasks/{task_id}/sandbox-approvals`
+  creates a pending request with JSON `{"language":"python","source":"..."}`.
+- `GET /api/v1/executions/{execution_id}/tasks/{task_id}/sandbox-approvals`
+  lists requests for the task.
+- `GET /api/v1/sandbox-approvals/{approval_id}` returns the exact source and digest
+  for human review.
+- `POST /api/v1/sandbox-approvals/{approval_id}/decision` accepts
+  `{"decision":"approve"}` or `{"decision":"reject"}`. A decision is single-use;
+  expired or already-decided requests cannot be changed.
+
+This API only records human decisions. It does not execute code, issue broker tickets,
+or grant the Orchestrator Docker access. Keep the service bound to loopback while no
+authenticated approval UI is available.
+
 ## Broker requirements
 
 - Root-owned systemd service; dedicated Unix socket under `/run/clicoding-sandbox/`.
