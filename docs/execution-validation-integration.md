@@ -1,6 +1,6 @@
 # Execution Validation Layer — Integration Design
 
-Status: approved direction; implementation not yet connected to the Orchestrator.
+Status: approval persistence and Unix-socket broker implemented; rollout remains disabled until host installation and tests pass.
 
 ## Trust boundaries
 
@@ -43,6 +43,16 @@ This API only records human decisions. It does not execute code, issue broker ti
 or grant the Orchestrator Docker access. Keep the service bound to loopback while no
 authenticated approval UI is available.
 
+## Broker implementation slice
+
+Implemented files:
+- `sandbox/clicoding_sandbox_broker.py`
+- `sandbox/clicoding-sandbox-broker.service`
+
+The broker accepts newline-delimited JSON containing exactly `approval_id`. It reads source from the existing `sandbox_approvals` row, checks `approved` status and expiry, verifies SHA-256 with constant-time comparison, and creates a unique `sandbox_execution_claims` row before execution. Duplicate claims are rejected. Results are written to `sandbox_execution_results`. The Orchestrator now has `POST /api/v1/sandbox-approvals/{approval_id}/execute` and `GET /api/v1/sandbox-approvals/{approval_id}/result`; execution returns 503 if the socket is unavailable and 409 if the approval is not approved or has already been consumed.
+
+The broker service is not installed, enabled, or started automatically. It requires a dedicated `clicoding-sandbox` group, a local environment file with the absolute database path, and a verified service-account socket permission setup. Keep it disabled until the operator confirms the Orchestrator service identity and completes the broker smoke tests.
+
 ## Broker requirements
 
 - Root-owned systemd service; dedicated Unix socket under `/run/clicoding-sandbox/`.
@@ -76,12 +86,9 @@ An approval is immutable and bound to one source digest. Replacing source create
 
 ## Rollout sequence
 
-1. Keep the manually invoked runner as-is while the broker and approval records are implemented.
-2. Add persistent approval records and read/approve/reject API routes to the Orchestrator. Approval routes must be local-only until an authenticated UI exists.
-3. Add the privileged Unix-socket broker and one-time ticket verification.
-4. Add Orchestrator integration behind a disabled-by-default configuration flag.
-5. Test approval, rejection, digest mismatch, expiry, replay, timeout, output limit, broker outage, and cleanup.
-6. Enable only after all tests pass. Do not change model services or connect Open WebUI as part of this work.
+1. Install the root-owned broker and systemd unit, but do not enable it until the socket group and Orchestrator service identity are confirmed.
+2. Verify approval, rejection, digest mismatch, expiry, replay, timeout, output limit, broker outage, and cleanup.
+3. Enable the broker only after all tests pass. Do not change model services or connect Open WebUI as part of this work.
 
 ## Current verified prototype limits
 
