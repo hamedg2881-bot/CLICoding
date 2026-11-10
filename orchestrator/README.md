@@ -52,8 +52,8 @@ POST /v1/chat/completions
 ```
 
 The only public model ID is `clicoding`. Internal worker IDs and upstream model aliases
-are not returned by `/v1/models`. The chat endpoint currently supports non-streaming,
-text-only requests with `system`, `user`, and `assistant` messages.
+are not returned by `/v1/models`. The chat endpoint supports non-streaming JSON and buffered Server-Sent Events, with
+`system`, `user`, and `assistant` messages plus base64 inline image content.
 
 Example request:
 
