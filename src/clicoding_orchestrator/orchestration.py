@@ -56,6 +56,18 @@ class MultiModelOrchestrator:
             return await self.gateway_factory(worker).complete(messages)
 
     @staticmethod
+    def _expects_code_artifact(expected_output: str) -> bool:
+        """Return true when the planner's expected output includes source code."""
+        markers = ("def ", "async def ", "class ", "if __name__", "```python", "```py")
+        return any(marker in expected_output for marker in markers)
+
+    @staticmethod
+    def _contains_code_artifact(output: str) -> bool:
+        """Reject prose-only answers when a concrete code artifact was requested."""
+        markers = ("def ", "async def ", "class ", "```python", "```py")
+        return any(marker in output for marker in markers)
+
+    @staticmethod
     def _default_gateway(worker: Worker) -> ModelGateway:
         return OpenAICompatibleGateway(
             base_url=worker.base_url,
@@ -137,11 +149,45 @@ class MultiModelOrchestrator:
             ]
             try:
                 completion = await self._complete(worker, messages)
+                output = completion.content.strip()
+
+                # If the plan contains an explicit source-code example, require
+                # the worker to return an actual implementation, not just prose.
+                if self._expects_code_artifact(task.expected_output) and not self._contains_code_artifact(output):
+                    completion = await self._complete(
+                        worker,
+                        [
+                            {
+                                "role": "system",
+                                "content": (
+                                    "Your previous response omitted the required code artifact. "
+                                    "Return the complete, usable source code now; do not merely "
+                                    "describe the implementation. Include the requested example "
+                                    "and concise explanation when the task asks for them."
+                                ),
+                            },
+                            {
+                                "role": "user",
+                                "content": (
+                                    f"Task:\n{task.objective}\n\n"
+                                    f"Required output example:\n{task.expected_output}\n\n"
+                                    f"Previous incomplete response:\n{output}\n\n"
+                                    "Provide the actual implementation."
+                                ),
+                            },
+                        ],
+                    )
+                    output = completion.content.strip()
+                    if not self._contains_code_artifact(output):
+                        raise ValueError(
+                            "Required code artifact is still missing after one repair attempt"
+                        )
+
                 self.database.update_execution_task(
                     execution_id, task.task_id, "succeeded",
-                    output=completion.content, worker_id=worker.id
+                    output=output, worker_id=worker.id
                 )
-                return completion.content
+                return output
             except Exception as exc:
                 self.database.update_execution_task(
                     execution_id, task.task_id, "failed",
