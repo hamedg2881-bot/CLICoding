@@ -81,3 +81,11 @@ Python 3.12 and Node.js 24 only. Manual runner tests cover success, timeout, out
 ## Remaining validation
 
 Still open: expiry, concurrent requests, broker outage, runner failure and cleanup after broker/host interruption. Security hardening is tracked in `docs/security-hardening-backlog.md`.
+
+## Verified approval expiry transition — 2026-11-10
+
+- Created a pending Python approval record with a 60-second expiry for the existing succeeded task.
+- Advanced its stored `expires_at` timestamp into the past in SQLite to avoid waiting for the TTL.
+- Retrieved the approval through the authenticated API; the API returned status `expired` and the past expiry timestamp.
+- This verifies lazy expiry transition on retrieval. It does not yet verify that the execute endpoint rejects an expired approval; that remains a separate check.
+
