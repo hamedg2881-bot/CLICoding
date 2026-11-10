@@ -89,3 +89,9 @@ Still open: expiry, concurrent requests, broker outage, runner failure and clean
 - Retrieved the approval through the authenticated API; the API returned status `expired` and the past expiry timestamp.
 - This verifies lazy expiry transition on retrieval. It does not yet verify that the execute endpoint rejects an expired approval; that remains a separate check.
 
+## Verified expired-approval execution rejection — 2026-11-10
+
+- Attempted execution through the authenticated API using the approval whose expiry had been moved into the past.
+- API returned HTTP `409`: `Sandbox approval is not approved (status=expired)`.
+- The expired approval was rejected before broker execution; the marker source was not run.
+
