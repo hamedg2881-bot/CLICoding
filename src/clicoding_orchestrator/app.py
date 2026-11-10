@@ -515,7 +515,7 @@ def create_app(
                 (json.dumps({"approval_id": approval_id}) + "\n").encode("utf-8")
             )
             await writer.drain()
-            raw = await asyncio.wait_for(reader.readline(), timeout=70)
+            raw = await asyncio.wait_for(reader.readline(), timeout=90)
             writer.close()
             await writer.wait_closed()
             if not raw or len(raw) > 512 * 1024:
