@@ -9,7 +9,7 @@ from .executor import PlanExecution, SequentialWaveExecutor
 from .gateway import Completion, ModelGateway, OpenAICompatibleGateway
 from .planner import StructuredPlanner
 from .registry import Worker, runtime_key
-from .router import CapabilityRouter
+from .router import CapabilityRouter, NoEligibleWorker
 
 
 @dataclass(frozen=True)
