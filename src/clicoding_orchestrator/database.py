@@ -443,3 +443,25 @@ class Database:
         if expired:
             raise ValueError("approval has expired")
         return self.get_sandbox_approval(approval_id)
+
+    def get_sandbox_execution_result(self, approval_id: str) -> dict[str, Any] | None:
+        """Read the structured result persisted by the privileged broker."""
+        import json
+
+        with self.session() as connection:
+            try:
+                row = connection.execute(
+                    """
+                    SELECT approval_id, source_sha256, status, result_json, created_at
+                    FROM sandbox_execution_results WHERE approval_id = ?
+                    """,
+                    (approval_id,),
+                ).fetchone()
+            except sqlite3.OperationalError:
+                # The broker creates this table on its first accepted execution.
+                return None
+        if row is None:
+            return None
+        result = dict(row)
+        result["result"] = json.loads(result.pop("result_json"))
+        return result
