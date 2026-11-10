@@ -117,3 +117,10 @@ Still open: expiry, concurrent requests, broker outage, runner failure and clean
 - Execute API returned HTTP `200`, status `succeeded`, exit code `0`, stdout `BROKER_OUTAGE_TEST\n`, empty stderr, duration 195 ms.
 - This confirms a connection failure before broker claim did not consume the approval; retry after service recovery succeeded exactly once.
 
+## Verified runner application failure and container cleanup — 2026-11-10
+
+- Executed an explicitly approved Python test that raises `RuntimeError("INTENTIONAL_FAILURE_TEST")`.
+- Runner returned `status=failed`, exit code `1`, empty stdout, and the expected traceback on stderr (218 ms). The broker/API returned and persisted the structured failure result with the approval ID and source SHA-256.
+- Immediately inspected all Docker containers carrying the unique `clicoding.execution` label using `docker ps -a --filter label=clicoding.execution`.
+- The command returned no rows, confirming no labeled sandbox container remained after this normal application failure.
+- This verifies cleanup after an ordinary non-zero application exit. Timeout/output-limit cleanup is implemented separately; abrupt host or Docker-daemon interruption remains outside this test.
