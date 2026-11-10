@@ -109,7 +109,7 @@ class Database:
                     id TEXT PRIMARY KEY,
                     execution_id TEXT NOT NULL,
                     task_id TEXT NOT NULL,
-                    language TEXT NOT NULL CHECK (language IN ('python', 'javascript')),
+                    language TEXT NOT NULL CHECK (language IN ('python', 'javascript', 'typescript', 'go', 'rust', 'java', 'c', 'cpp', 'csharp', 'php', 'ruby')),
                     source TEXT NOT NULL,
                     source_sha256 TEXT NOT NULL,
                     status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'expired')),
@@ -124,6 +124,66 @@ class Database:
                     ON sandbox_approvals(execution_id, task_id, created_at);
                 """
             )
+        self._migrate_sandbox_approval_languages()
+
+    def _migrate_sandbox_approval_languages(self) -> None:
+        """Expand the SQLite language CHECK without losing existing approvals/results."""
+        languages = (
+            "'python', 'javascript', 'typescript', 'go', 'rust', 'java', "
+            "'c', 'cpp', 'csharp', 'php', 'ruby'"
+        )
+        connection = self.connect()
+        try:
+            row = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='sandbox_approvals'"
+            ).fetchone()
+            if row is None or all(name in (row["sql"] or "") for name in (
+                "'typescript'", "'csharp'", "'cpp'", "'ruby'"
+            )):
+                return
+            connection.execute("PRAGMA foreign_keys = OFF")
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                f"""
+                CREATE TABLE sandbox_approvals_new (
+                    id TEXT PRIMARY KEY,
+                    execution_id TEXT NOT NULL,
+                    task_id TEXT NOT NULL,
+                    language TEXT NOT NULL CHECK (language IN ({languages})),
+                    source TEXT NOT NULL,
+                    source_sha256 TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'expired')),
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    decided_at TEXT,
+                    FOREIGN KEY (execution_id, task_id)
+                        REFERENCES execution_tasks(execution_id, id) ON DELETE CASCADE
+                )
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO sandbox_approvals_new
+                    (id, execution_id, task_id, language, source, source_sha256,
+                     status, created_at, expires_at, decided_at)
+                SELECT id, execution_id, task_id, language, source, source_sha256,
+                       status, created_at, expires_at, decided_at
+                FROM sandbox_approvals
+                """
+            )
+            connection.execute("DROP TABLE sandbox_approvals")
+            connection.execute("ALTER TABLE sandbox_approvals_new RENAME TO sandbox_approvals")
+            connection.execute(
+                "CREATE INDEX ix_sandbox_approvals_task "
+                "ON sandbox_approvals(execution_id, task_id, created_at)"
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.close()
 
     def create_conversation(self) -> dict[str, str]:
         conversation_id = str(uuid.uuid4())
@@ -333,7 +393,7 @@ class Database:
         ttl_seconds: int = 900,
     ) -> dict[str, Any]:
         """Create a pending approval bound to an immutable source snapshot."""
-        if language not in {"python", "javascript"}:
+        if language not in {"python", "javascript", "typescript", "go", "rust", "java", "c", "cpp", "csharp", "php", "ruby"}:
             raise ValueError("unsupported sandbox language")
         if not isinstance(source, str) or not source.strip():
             raise ValueError("source must be a non-empty string")
