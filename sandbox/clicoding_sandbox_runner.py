@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""Narrow, root-owned CLICoding sandbox launcher.
-
-This is a manually invoked first slice. It accepts only Python and Node.js source,
-uses pinned local images, and never accepts Docker arguments, mounts, or commands
-from the caller. It requires root so the Docker socket is not exposed to the
-Orchestrator service account.
-"""
+"""Root-owned, allowlisted multi-language CLICoding sandbox launcher."""
 from __future__ import annotations
 
 import fcntl
@@ -23,12 +17,14 @@ from typing import Any
 DOCKER = "/usr/bin/docker"
 MAX_REQUEST_BYTES = 128 * 1024
 MAX_OUTPUT_BYTES = 64 * 1024
-TIME_LIMIT_SECONDS = 10
-MEMORY_LIMIT = "256m"
+TIME_LIMIT_SECONDS = 30
+MEMORY_LIMIT = "512m"
 CPU_LIMIT = "1"
 PID_LIMIT = "32"
 USER_ID = "65532:65532"
 
+# Commands are fixed by this table. User input is supplied only on stdin and is
+# never interpolated into a shell command, image name, flag, or filesystem path.
 RUNTIMES = {
     "python": {
         "image": "python:3.12-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df",
@@ -38,6 +34,42 @@ RUNTIMES = {
         "image": "node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9",
         "argv": ["node", "--input-type=commonjs", "-"],
     },
+    "typescript": {
+        "image": "clicoding-typescript:7.0.2",
+        "argv": ["sh", "-lc", "cat > /tmp/main.ts && tsc --target ES2022 --module commonjs --strict --skipLibCheck --outDir /tmp/out /tmp/main.ts && node /tmp/out/main.js"],
+    },
+    "go": {
+        "image": "golang:1.27.3-bookworm",
+        "argv": ["sh", "-lc", "cat > /tmp/main.go && GOCACHE=/tmp/go-cache GOMODCACHE=/tmp/go-mod-cache GOPROXY=off GOTOOLCHAIN=local go run /tmp/main.go"],
+    },
+    "rust": {
+        "image": "rust:1.99.1-bookworm",
+        "argv": ["sh", "-lc", "cat > /tmp/main.rs && rustc /tmp/main.rs -o /tmp/main && /tmp/main"],
+    },
+    "java": {
+        "image": "eclipse-temurin:25.0.5_8-jdk-ubi10-minimal",
+        "argv": ["sh", "-lc", "cat > /tmp/Main.java && javac -d /tmp /tmp/Main.java && java -cp /tmp Main"],
+    },
+    "c": {
+        "image": "gcc:16.2.0-trixie",
+        "argv": ["sh", "-lc", "cat > /tmp/main.c && gcc -std=c23 -O0 /tmp/main.c -o /tmp/main && /tmp/main"],
+    },
+    "cpp": {
+        "image": "gcc:16.2.0-trixie",
+        "argv": ["sh", "-lc", "cat > /tmp/main.cpp && g++ -std=c++23 -O0 /tmp/main.cpp -o /tmp/main && /tmp/main"],
+    },
+    "csharp": {
+        "image": "mcr.microsoft.com/dotnet/sdk:10.0.402",
+        "argv": ["sh", "-lc", "mkdir -p /tmp/app && cat > /tmp/app/Program.cs && printf '%s\\n' '<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup></Project>' > /tmp/app/app.csproj && printf '%s\\n' '<configuration><packageSources><clear /></packageSources></configuration>' > /tmp/app/NuGet.Config && dotnet restore /tmp/app/app.csproj --configfile /tmp/app/NuGet.Config --ignore-failed-sources && dotnet build /tmp/app/app.csproj --no-restore -o /tmp/app/out && dotnet /tmp/app/out/app.dll"],
+    },
+    "php": {
+        "image": "php:8.5.12-cli-trixie",
+        "argv": ["php", "-d", "opcache.enable_cli=0", "-"],
+    },
+    "ruby": {
+        "image": "ruby:4.0.9-slim-trixie",
+        "argv": ["ruby", "-"],
+    },
 }
 
 
@@ -46,7 +78,7 @@ class RequestError(Exception):
 
 
 def emit(value: dict[str, Any], status: int = 0) -> int:
-    sys.stdout.write(json.dumps(value, ensure_ascii=False) + "\n")
+    sys.stdout.write(json.dumps(value, ensure_ascii=False) + "\\n")
     sys.stdout.flush()
     return status
 
@@ -64,7 +96,7 @@ def read_request() -> tuple[str, bytes]:
     language = request.get("language")
     code = request.get("code")
     if not isinstance(language, str) or language not in RUNTIMES:
-        raise RequestError("Unsupported language; allowed: python, javascript")
+        raise RequestError("Unsupported language; allowed: " + ", ".join(RUNTIMES))
     if not isinstance(code, str) or not code.strip():
         raise RequestError("code must be a non-empty string")
     try:
@@ -77,15 +109,9 @@ def read_request() -> tuple[str, bytes]:
 
 
 def cleanup_container(cid_file: str, execution_id: str) -> None:
-    """Best-effort cleanup by cidfile and a unique Docker label.
-
-    The label lookup covers the race where the daemon creates a container
-    but the killed Docker CLI has not written its cidfile yet.
-    """
     deadline = time.monotonic() + 2
     while not Path(cid_file).exists() and time.monotonic() < deadline:
         time.sleep(0.05)
-
     container_ids: set[str] = set()
     try:
         container_id = Path(cid_file).read_text(encoding="ascii").strip()
@@ -93,37 +119,21 @@ def cleanup_container(cid_file: str, execution_id: str) -> None:
             container_ids.add(container_id)
     except OSError:
         pass
-
     try:
         listed = subprocess.run(
-            [
-                DOCKER, "ps", "-aq",
-                "--filter", f"label=clicoding.execution={execution_id}",
-            ],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            timeout=4,
-            check=False,
+            [DOCKER, "ps", "-aq", "--filter", f"label=clicoding.execution={execution_id}"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            text=True, timeout=4, check=False,
         )
         if listed.returncode == 0:
-            container_ids.update(
-                line.strip() for line in listed.stdout.splitlines() if line.strip()
-            )
+            container_ids.update(x.strip() for x in listed.stdout.splitlines() if x.strip())
     except (OSError, subprocess.TimeoutExpired):
         pass
-
     for container_id in container_ids:
         try:
-            subprocess.run(
-                [DOCKER, "rm", "--force", container_id],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=4,
-                check=False,
-            )
+            subprocess.run([DOCKER, "rm", "--force", container_id], stdin=subprocess.DEVNULL,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=4, check=False)
         except (OSError, subprocess.TimeoutExpired):
             pass
 
@@ -134,76 +144,51 @@ def run_container(language: str, source: bytes) -> dict[str, Any]:
     cid_fd, cid_file = tempfile.mkstemp(prefix="runner-", dir="/run/clicoding-sandbox")
     os.close(cid_fd)
     os.unlink(cid_file)
-
     command = [
-        DOCKER, "run", "--rm", "-i", "--pull=never",
-        "--cidfile", cid_file,
-        "--label", f"clicoding.execution={execution_id}",
-        "--network=none",
-        "--read-only",
-        "--user", USER_ID,
-        "--cap-drop=ALL",
-        "--security-opt", "no-new-privileges:true",
-        "--pids-limit", PID_LIMIT,
-        "--memory", MEMORY_LIMIT,
-        "--memory-swap", MEMORY_LIMIT,
-        "--cpus", CPU_LIMIT,
+        DOCKER, "run", "--rm", "-i", "--pull=never", "--cidfile", cid_file,
+        "--label", f"clicoding.execution={execution_id}", "--network=none",
+        "--read-only", "--user", USER_ID, "--cap-drop=ALL",
+        "--security-opt", "no-new-privileges:true", "--pids-limit", PID_LIMIT,
+        "--memory", MEMORY_LIMIT, "--memory-swap", MEMORY_LIMIT, "--cpus", CPU_LIMIT,
         "--ulimit", "nofile=64:64",
-        "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=16m,uid=65532,gid=65532",
-        "--workdir", "/tmp",
-        "--env", "HOME=/tmp",
-        runtime["image"],
-        *runtime["argv"],
+        "--tmpfs", "/tmp:rw,exec,nosuid,nodev,size=128m,uid=65532,gid=65532",
+        "--workdir", "/tmp", "--env", "HOME=/tmp", "--env", "TMPDIR=/tmp",
+        "--env", "DOTNET_CLI_HOME=/tmp", "--env", "DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1",
+        "--env", "DOTNET_CLI_TELEMETRY_OPTOUT=1", "--env", "NUGET_PACKAGES=/tmp/nuget",
+        "--env", "DOTNET_GCHeapHardLimit=0x10000000",
+        "--env", "JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=50 -XX:InitialRAMPercentage=10",
+        runtime["image"], *runtime["argv"],
     ]
-
     started = time.monotonic()
     deadline = started + TIME_LIMIT_SECONDS
-    process = subprocess.Popen(
-        command,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        bufsize=0,
-        close_fds=True,
-    )
-    assert process.stdin is not None
-    assert process.stdout is not None
-    assert process.stderr is not None
-
+    process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, bufsize=0, close_fds=True)
+    assert process.stdin is not None and process.stdout is not None and process.stderr is not None
     selector = selectors.DefaultSelector()
-    os.set_blocking(process.stdin.fileno(), False)
-    os.set_blocking(process.stdout.fileno(), False)
-    os.set_blocking(process.stderr.fileno(), False)
-    selector.register(process.stdin, selectors.EVENT_WRITE, "stdin")
-    selector.register(process.stdout, selectors.EVENT_READ, "stdout")
-    selector.register(process.stderr, selectors.EVENT_READ, "stderr")
-
+    for stream, event, name in (
+        (process.stdin, selectors.EVENT_WRITE, "stdin"),
+        (process.stdout, selectors.EVENT_READ, "stdout"),
+        (process.stderr, selectors.EVENT_READ, "stderr"),
+    ):
+        os.set_blocking(stream.fileno(), False)
+        selector.register(stream, event, name)
     offset = 0
     captured = {"stdout": bytearray(), "stderr": bytearray()}
-    timed_out = False
-    output_limited = False
-    input_closed = False
-
+    timed_out = output_limited = input_closed = False
     try:
         while selector.get_map():
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 timed_out = True
                 break
-            events = selector.select(min(0.1, remaining))
-            for key, _ in events:
-                stream_name = key.data
+            for key, _ in selector.select(min(0.1, remaining)):
                 stream = key.fileobj
-                if stream_name == "stdin":
+                if key.data == "stdin":
                     try:
                         written = os.write(stream.fileno(), source[offset:offset + 8192])
                         offset += written
                     except BrokenPipeError:
                         offset = len(source)
-                        selector.unregister(stream)
-                        stream.close()
-                        input_closed = True
-                        continue
                     if offset >= len(source):
                         selector.unregister(stream)
                         stream.close()
@@ -217,7 +202,7 @@ def run_container(language: str, source: bytes) -> dict[str, Any]:
                     total = len(captured["stdout"]) + len(captured["stderr"])
                     available = MAX_OUTPUT_BYTES - total
                     if available > 0:
-                        captured[stream_name].extend(chunk[:available])
+                        captured[key.data].extend(chunk[:available])
                     if len(chunk) > available:
                         output_limited = True
                         break
@@ -227,7 +212,6 @@ def run_container(language: str, source: bytes) -> dict[str, Any]:
                 break
     finally:
         selector.close()
-
     if timed_out or output_limited:
         process.kill()
         try:
@@ -243,36 +227,19 @@ def run_container(language: str, source: bytes) -> dict[str, Any]:
             process.kill()
             process.wait(timeout=3)
             cleanup_container(cid_file, execution_id)
-
     try:
-        duration_ms = int((time.monotonic() - started) * 1000)
-        stdout = bytes(captured["stdout"]).decode("utf-8", errors="replace")
-        stderr = bytes(captured["stderr"]).decode("utf-8", errors="replace")
         exit_code = process.returncode
-        if timed_out:
-            status = "timeout"
-        elif output_limited:
-            status = "output_limit"
-        elif exit_code == 0:
-            status = "succeeded"
-        elif exit_code in (125, 126, 127):
-            status = "runtime_error"
-        else:
-            status = "failed"
+        status = ("timeout" if timed_out else "output_limit" if output_limited else
+                  "succeeded" if exit_code == 0 else
+                  "runtime_error" if exit_code in (125, 126, 127) else "failed")
         return {
-            "status": status,
-            "language": language,
-            "exit_code": exit_code,
-            "stdout": stdout,
-            "stderr": stderr,
-            "duration_ms": duration_ms,
-            "limits": {
-                "wall_seconds": TIME_LIMIT_SECONDS,
-                "memory": MEMORY_LIMIT,
-                "cpus": CPU_LIMIT,
-                "pids": int(PID_LIMIT),
-                "output_bytes": MAX_OUTPUT_BYTES,
-            },
+            "status": status, "language": language, "exit_code": exit_code,
+            "stdout": bytes(captured["stdout"]).decode("utf-8", errors="replace"),
+            "stderr": bytes(captured["stderr"]).decode("utf-8", errors="replace"),
+            "duration_ms": int((time.monotonic() - started) * 1000),
+            "limits": {"wall_seconds": TIME_LIMIT_SECONDS, "memory": MEMORY_LIMIT,
+                       "cpus": CPU_LIMIT, "pids": int(PID_LIMIT),
+                       "output_bytes": MAX_OUTPUT_BYTES},
         }
     finally:
         try:
@@ -289,8 +256,7 @@ def main() -> int:
         return emit({"status": "runner_error", "error": "Docker CLI not found"}, 2)
     try:
         language, source = read_request()
-        lock_path = "/run/lock/clicoding-sandbox.lock"
-        with open(lock_path, "w", encoding="ascii") as lock_file:
+        with open("/run/lock/clicoding-sandbox.lock", "w", encoding="ascii") as lock_file:
             try:
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
@@ -300,10 +266,7 @@ def main() -> int:
     except RequestError as exc:
         return emit({"status": "rejected", "error": str(exc)}, 2)
     except Exception as exc:
-        return emit(
-            {"status": "runner_error", "error": f"{type(exc).__name__}: {exc}"},
-            3,
-        )
+        return emit({"status": "runner_error", "error": f"{type(exc).__name__}: {exc}"}, 3)
 
 
 if __name__ == "__main__":
