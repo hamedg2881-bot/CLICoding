@@ -224,6 +224,8 @@ def main() -> int:
     except KeyError:
         print(f"required socket group does not exist: {SOCKET_GROUP}", file=sys.stderr)
         return 2
+    os.chown(socket_path.parent, 0, group_id)
+    os.chmod(socket_path.parent, 0o750)
     server = UnixServer(str(socket_path), Handler)
     os.chown(socket_path, 0, group_id)
     os.chmod(socket_path, 0o660)
