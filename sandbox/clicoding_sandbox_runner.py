@@ -78,7 +78,7 @@ class RequestError(Exception):
 
 
 def emit(value: dict[str, Any], status: int = 0) -> int:
-    sys.stdout.write(json.dumps(value, ensure_ascii=False) + "\\n")
+    sys.stdout.write(json.dumps(value, ensure_ascii=False) + "\n")
     sys.stdout.flush()
     return status
 
