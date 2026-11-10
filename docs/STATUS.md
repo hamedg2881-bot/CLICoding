@@ -1,9 +1,9 @@
 # Project Status
 
-**Last updated:** 2026-11-09  
+**Last updated:** 2026-11-10  
 **Canonical repository:** https://github.com/hamedg2881-bot/CLICoding  
 **Current phase:** Phase 2A — conversation and multi-model orchestration core  
-**Overall state:** Conversation persistence, capability routing, structured planning, durable multi-model execution, optional Bearer authentication, and the non-streaming OpenAI-compatible API are implemented. Three-model MoE identities and concurrent-residency direction are selected. Multimodal transport, global three-way parallelism, Open WebUI integration, and DGX deployment validation remain open.
+**Overall state:** Conversation persistence, capability routing, structured planning, durable multi-model execution, base64 image transport, and configurable three-way parallelism are implemented and covered by 44 passing CI tests. GPT-OSS-20B, Qwen3-Coder-Next, and an experimental Qwen3-VL-2B Vision runtime have each passed real endpoint smoke tests; GPT-OSS and Coder have also passed a concurrent request test. Real image inference, Orchestrator-to-live-runtime integration, Open WebUI conversation mapping/streaming, and sustained three-way load/headroom validation remain open.
 
 ## Confirmed requirements
 - Internet is unavailable during development; internal LAN is available.
@@ -264,3 +264,14 @@ User supplied a fresh command output from host `spark-7ea3`:
 - The actual image payload is included only in the multimodal worker request; the Coder worker receives text/context rather than raw image bytes.
 - GitHub Actions run [42607106297](https://github.com/hamedg2881-bot/CLICoding/actions/runs/42607106297) passed on commit `52dc2ef68fa9413601f01c109de8f702aa4f4a80`: **44 passed**, one existing Starlette/httpx deprecation warning.
 - Latest workflow also validates the read-only DGX preflight shell script with `bash -n` and parses the example worker YAML.
+
+
+### 2026-11-10 — DGX three-runtime live smoke-test update
+- Recorded the live DGX state in [docs/DGX_LIVE_VALIDATION_2026-11-10.md](DGX_LIVE_VALIDATION_2026-11-10.md).
+- Confirmed live host endpoints: GPT-OSS-20B at port 8003 (vLLM 0.28.0, context 8K), Qwen3-Coder-Next at port 8004 (vLLM 0.24.0, context 8K), and Qwen3-VL-2B at port 8005 (vLLM 0.28.0, context 4K).
+- GPT-OSS and Coder passed independent real text requests and a concurrent request test. Qwen3-VL-2B loaded successfully and passed a text-only API smoke test.
+- Qwen3-VL-2B is an evaluation candidate only; it does not replace the selected Qwen3.6-35B-A3B target model without a separate explicit selection decision.
+- At the latest recorded snapshot, all three runtimes were resident; available RAM was about 17 GiB and swap use about 4.5 GiB. This is not yet a sustained-load safety guarantee.
+- No real Vision image inference has been run yet. Persian/English OCR, screenshot/UI interpretation, coordinate grounding, and error analysis remain the immediate validation gate.
+- Current context caps are deliberately conservative: GPT-OSS 8K, Coder 8K, Vision 4K. Do not increase them until KV-cache and concurrent-load measurements support it.
+- No model files, containers, or images were deleted; Flash assets/runtime remain outside this experiment and untouched.
