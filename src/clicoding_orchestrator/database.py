@@ -195,6 +195,25 @@ class Database:
             )
         return {"id": conversation_id, "created_at": now, "updated_at": now}
 
+    def get_or_create_conversation(self, conversation_id: str) -> dict[str, str]:
+        """Return a conversation with a caller-derived stable ID, creating it once."""
+        if not conversation_id or len(conversation_id) > 128:
+            raise ValueError("conversation_id must contain 1 to 128 characters")
+        now = utc_now()
+        with self.session() as connection:
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO conversations (id, created_at, updated_at)
+                VALUES (?, ?, ?)
+                """,
+                (conversation_id, now, now),
+            )
+            row = connection.execute(
+                "SELECT id, created_at, updated_at FROM conversations WHERE id = ?",
+                (conversation_id,),
+            ).fetchone()
+        return dict(row)
+
     def conversation_exists(self, conversation_id: str) -> bool:
         with self.session() as connection:
             row = connection.execute(
