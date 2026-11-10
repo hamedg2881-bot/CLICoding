@@ -66,11 +66,9 @@ The broker service is not installed, enabled, or started automatically. It requi
 
 ## Approval state machine
 
-`pending -> approved -> consumed`
+Approval record: `pending -> approved`, `pending -> rejected`, or `pending -> expired`.
 
-`pending -> rejected`
-
-`pending -> expired`
+Execution claim (separate table): `running -> succeeded|failed|timeout|output_limit|runtime_error`. The unique `approval_id` primary key makes the approval one-shot even though the immutable approval record remains `approved` for audit.
 
 An approval is immutable and bound to one source digest. Replacing source creates a new pending approval; it never edits an approved request in place.
 
