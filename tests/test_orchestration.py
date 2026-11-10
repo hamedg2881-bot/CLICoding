@@ -369,6 +369,17 @@ def test_code_artifact_contract_triggers_one_repair_attempt(tmp_path):
 
             async def complete(self, messages):
                 self.calls += 1
+                if self.worker_id == "fast-reasoning" and self.calls > 1:
+                    return Completion(
+                        "Implementation:\\n\\n```python\\n"
+                        "def find_duplicates(nums):\\n"
+                        "    counts = {}\\n"
+                        "    for value in nums:\\n"
+                        "        counts[value] = counts.get(value, 0) + 1\\n"
+                        "    return {key: count for key, count in counts.items() if count > 1}\\n"
+                        "```",
+                        "gpt-oss-20b",
+                    )
                 if self.worker_id == "fast-reasoning":
                     plan = {
                         "goal": "Implement duplicate finder",
