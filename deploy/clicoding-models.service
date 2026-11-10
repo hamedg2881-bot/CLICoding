@@ -8,7 +8,7 @@ Requires=docker.service
 Type=oneshot
 ExecStart=/usr/local/sbin/clicoding-models-startup
 RemainAfterExit=yes
-TimeoutStartSec=2700
+TimeoutStartSec=3000
 TimeoutStopSec=30
 
 [Install]
