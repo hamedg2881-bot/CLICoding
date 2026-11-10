@@ -54,6 +54,7 @@ The response is one JSON object with `status`, `exit_code`, `stdout`,
 - Non-root container user, all Linux capabilities dropped, no-new-privileges,
   Docker's default seccomp and AppArmor profiles, PID/memory/CPU/time/output limits.
 - Request and source are limited to 128 KiB; combined output is limited to 64 KiB.
+- A host-side lock permits only one active sandbox execution at a time.
 - The runner accepts only `python` and `javascript`.
 - Runtime images must already exist locally; `--pull=never` is enforced.
 - This is defense-in-depth, not a claim of perfect isolation from kernel or
