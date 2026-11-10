@@ -22,7 +22,7 @@ RUNNER_PATH = "/usr/local/sbin/clicoding-sandbox-run"
 SOCKET_GROUP = os.getenv("CLICODING_BROKER_GROUP", "clicoding-sandbox")
 MAX_REQUEST_BYTES = 4096
 MAX_RESPONSE_BYTES = 512 * 1024
-RUNNER_TIMEOUT_SECONDS = 60
+RUNNER_TIMEOUT_SECONDS = 75
 
 
 def now() -> str:
