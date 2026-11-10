@@ -1,17 +1,27 @@
-# CLICoding Sandbox Runner (first slice)
+# CLICoding Sandbox Runner
 
-This first slice is a manually invoked, root-owned launcher for Python and
-JavaScript source. It is intentionally not connected to the Orchestrator yet.
-A human explicitly invokes it with `sudo`; model output is never executed
-automatically.
+The root-owned runner supports eleven single-file languages. Execution is
+available only through an immutable, human-approved source snapshot and the
+privileged Unix-socket broker; model output is never executed automatically.
 
 ## Supported runtimes
 
-- Python 3.12 slim Bookworm, pinned by the image digest used during initial setup.
-- Node.js 24 slim Bookworm, pinned by the image digest used during initial setup.
+| API language | Runtime/compiler image | Execution mode |
+|---|---|---|
+| python | Python 3.12.16 | Interpreter |
+| javascript | Node.js 24.22.2 | Interpreter |
+| typescript | TypeScript 7.0.2 + Node.js 24 | Compile then run |
+| go | Go 1.27.3 | `go run` (standard library only) |
+| rust | Rust 1.99.1 | `rustc` then run |
+| java | Eclipse Temurin JDK 25.0.5 | `javac` then run `Main` |
+| c | GCC 16.2.0 | C23 compile then run |
+| cpp | G++ 16.2.0 | C++23 compile then run |
+| csharp | .NET SDK 10.0.402 | Offline SDK build then run |
+| php | PHP 8.5.12 CLI | Interpreter |
+| ruby | Ruby 4.0.9 | Interpreter |
 
-TypeScript is not enabled yet. It needs a separately approved compiler/runtime
-image and should be added only after the JavaScript runner has passed its tests.
+All images are Linux ARM64 and must already exist locally. TypeScript uses the
+separately built local image `clicoding-typescript:7.0.2`.
 
 ## Install on DGX Spark
 
@@ -55,19 +65,18 @@ The response is one JSON object with `status`, `exit_code`, `stdout`,
   Docker's default seccomp and AppArmor profiles, PID/memory/CPU/time/output limits.
 - Request and source are limited to 128 KiB; combined output is limited to 64 KiB.
 - A host-side lock permits only one active sandbox execution at a time.
-- The runner accepts only `python` and `javascript`.
+- The runner accepts only the eleven language identifiers in the table above.
 - Runtime images must already exist locally; `--pull=never` is enforced.
 - This is defense-in-depth, not a claim of perfect isolation from kernel or
   container-runtime vulnerabilities.
 
-## Not implemented yet
+## Current scope limitations
 
-- No Orchestrator API integration or automatic execution.
-- No human-approval workflow UI; manual `sudo` invocation is the approval gate
-  for this initial experiment.
-- No multi-file projects, external packages, build systems, or independent test
-  harness.
-- No TypeScript, Go, Rust, Java, C/C++, C#, PHP, or Ruby runtime.
+- Single-file source only; Java source must declare `public class Main`.
+- Go, Rust, TypeScript, C/C++, Java, and C# compile in the isolated container.
+- No external package downloads, network access, GPU, host mounts, or multi-file projects.
+- No independent test harness or package restore from external registries.
+- Human approval remains mandatory for the exact source digest.
 
 ## Approved-execution broker (second slice)
 
