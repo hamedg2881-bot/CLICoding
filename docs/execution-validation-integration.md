@@ -1,98 +1,65 @@
 # Execution Validation Layer — Integration Design
 
-Status: approval persistence, Unix-socket broker, and one end-to-end approved execution smoke test are implemented and verified on DGX Spark.
+Status: approval persistence, Unix-socket broker, one end-to-end approved execution, and replay rejection are verified on DGX Spark.
 
 ## Trust boundaries
 
 1. Model workers are untrusted code producers. Their output is never executed directly.
-2. The Orchestrator remains the owner of conversations, executions, task state, approval state, and validation results.
+2. The Orchestrator owns conversations, executions, task state, approvals, and validation results.
 3. The Orchestrator service account must not join the Docker group and must never receive `/var/run/docker.sock`.
-4. The root-owned `clicoding-sandbox-run` is a narrow execution primitive. It accepts only the fixed Python/JavaScript runtime allowlist and fixed resource/security flags.
+4. The root-owned `clicoding-sandbox-run` is a narrow execution primitive with fixed Python/JavaScript runtimes and fixed security/resource flags.
 5. A separate privileged broker is the only component permitted to invoke the runner. It exposes a local Unix-domain socket, not a network listener.
 
-## Required approval flow
+## Approval and execution flow
 
 1. A coding task completes and its output is persisted.
-2. A candidate code artifact is selected and its allowlisted language determined. Extraction is not execution.
-3. An approval request stores execution ID, task ID, language, exact source snapshot, SHA-256 digest, creation time, expiry, and `pending` status.
-4. The user reviews the exact source and explicitly approves or rejects that exact digest. Any code change requires a new approval.
-5. The Orchestrator asks the broker to execute by approval ID only after the approval is approved.
-6. The broker reads the immutable source snapshot from SQLite, verifies approved status, expiry and SHA-256, and creates a unique execution claim before invoking the fixed runner. It accepts no Docker arguments, image names, mounts, environment overrides, or arbitrary commands.
-7. The Orchestrator persists the runner's structured result: status, exit code, stdout, stderr, duration, limits, and source digest.
-8. A task is execution-validated only when the runner returns `succeeded` and the required acceptance checks pass. Worker claims and printed expected output are never execution evidence.
+2. A candidate artifact and allowlisted language are selected; extraction is not execution.
+3. An approval stores execution/task IDs, language, exact source snapshot, SHA-256, creation/expiry times and pending status.
+4. The user reviews the exact source and explicitly approves or rejects that digest. Any source change requires a new approval.
+5. The Orchestrator asks the broker to execute by approval ID only after approval.
+6. The broker checks approved status, expiry and SHA-256, creates a unique execution claim, and invokes the fixed runner. It accepts no caller-supplied Docker arguments, images, mounts, environment overrides or commands.
+7. The Orchestrator persists status, exit code, stdout, stderr, duration, limits and source digest.
+8. Only runner success plus required acceptance checks counts as execution validation. Worker claims and printed expected output are not evidence.
 
-## Implemented approval persistence/API
+## Implemented API
 
-The Orchestrator persists approval requests in SQLite in `sandbox_approvals`.
-Each request is bound to an existing succeeded execution task, an allowlisted language,
-the exact UTF-8 source snapshot, and its SHA-256 digest. Requests expire after 15 minutes
-by default (configurable between 60 and 3600 seconds).
+SQLite table: `sandbox_approvals`. Requests are bound to an existing succeeded task and exact UTF-8 source. Default expiry is 15 minutes (configurable 60–3600 seconds).
 
-Local API routes:
-- `POST /api/v1/executions/{execution_id}/tasks/{task_id}/sandbox-approvals`
-  creates a pending request with JSON `{"language":"python","source":"..."}`.
-- `GET /api/v1/executions/{execution_id}/tasks/{task_id}/sandbox-approvals`
-  lists requests for the task.
-- `GET /api/v1/sandbox-approvals/{approval_id}` returns the exact source and digest
-  for human review.
-- `POST /api/v1/sandbox-approvals/{approval_id}/decision` accepts
-  `{"decision":"approve"}` or `{"decision":"reject"}`.
-- `POST /api/v1/sandbox-approvals/{approval_id}/execute` requests broker execution.
-- `GET /api/v1/sandbox-approvals/{approval_id}/result` retrieves the persisted result.
+- `POST /api/v1/executions/{execution_id}/tasks/{task_id}/sandbox-approvals`: create pending approval.
+- `GET /api/v1/executions/{execution_id}/tasks/{task_id}/sandbox-approvals`: list task approvals.
+- `GET /api/v1/sandbox-approvals/{approval_id}`: retrieve exact source and digest.
+- `POST /api/v1/sandbox-approvals/{approval_id}/decision`: approve or reject.
+- `POST /api/v1/sandbox-approvals/{approval_id}/execute`: request broker execution.
+- `GET /api/v1/sandbox-approvals/{approval_id}/result`: retrieve persisted result.
 
-The API is protected by the configured bearer key and the service is bound to loopback.
+The API uses bearer authentication and the Orchestrator binds to loopback.
 
-## Broker implementation and deployment
+## Broker deployment
 
-Implemented files:
-- `sandbox/clicoding_sandbox_broker.py`
-- `sandbox/clicoding-sandbox-broker.service`
+Files: `sandbox/clicoding_sandbox_broker.py`, `sandbox/clicoding-sandbox-broker.service`.
 
-The broker accepts newline-delimited JSON containing exactly `approval_id`. It reads source
-from the existing `sandbox_approvals` row, checks approved status and expiry, verifies
-SHA-256 with constant-time comparison, and creates a unique `sandbox_execution_claims`
-row before execution. Duplicate claims are rejected. Results are written to
-`sandbox_execution_results`.
+The root-owned broker reads source from SQLite, validates approval/expiry/digest, claims each approval once, runs the fixed runner and persists results. Socket: `/run/clicoding-sandbox/broker.sock`, root:`clicoding-sandbox`, mode `0660`. Orchestrator is in the dedicated socket group and has no Docker socket access.
 
-The broker is installed and running on the DGX Spark as a root-owned systemd service.
-Its Unix socket is `/run/clicoding-sandbox/broker.sock`, owned by root and the dedicated
-`clicoding-sandbox` group, with mode `0660`. The Orchestrator service account is a member
-of that group. The Orchestrator has no Docker socket access.
+## Verified end-to-end execution — 2026-11-10
 
-## Verified end-to-end smoke test — 2026-11-10
+- Execution: `b94f4b9e-314b-41b2-a12d-0c9211004c50`, task `t1`.
+- Approval: `0326a3c5-a2aa-42a9-bc98-98b5e091a27f`.
+- Language: Python.
+- Source SHA-256: `601a4ed1cfc985e0d98113f69137ccde12b3bad41f98a01b5a4ad02d68c34eda`.
+- User reviewed the exact pending source and explicitly approved it.
+- Result persisted: `succeeded`, exit code `0`, stdout `{2: 2, 3: 3}\n`, empty stderr, 255 ms.
+- Limits: 10-second wall time, 256 MiB memory, 1 CPU, 32 PIDs, 65536 output bytes.
 
-Execution/task:
-- Execution ID: `b94f4b9e-314b-41b2-a12d-0c9211004c50`
-- Task ID: `t1`
-- Approval ID: `0326a3c5-a2aa-42a9-bc98-98b5e091a27f`
-- Language: Python
-- Source SHA-256: `601a4ed1cfc985e0d98113f69137ccde12b3bad41f98a01b5a4ad02d68c34eda`
+This proves the functional happy path for this sample only. It is not a security audit and does not prove resistance to malicious code, container escape, kernel/runtime vulnerabilities or all failure modes.
 
-The exact source was retrieved and reviewed while the approval was pending. The user then
-explicitly approved it. The broker executed that immutable source snapshot through the
-sandbox runner. The API returned and SQLite persisted:
+## Verified replay protection — 2026-11-10
 
-- status: `succeeded`
-- exit_code: `0`
-- stdout: `{2: 2, 3: 3}\n`
-- stderr: empty
-- duration_ms: `255`
-- limits: wall time 10 seconds, memory 256 MiB, CPU 1, PIDs 32, output 65536 bytes.
+A second POST to the execute endpoint using the already-consumed approval returned HTTP `409` with `approval has already been consumed`. The broker rejected the replay; no second execution was started.
 
-This verifies the functional happy path from worker-produced artifact through human
-approval, broker, sandbox, and persisted result. It does **not** prove resistance to
-malicious code, container escape, kernel/runtime vulnerabilities, or all failure modes.
-Do not treat this smoke test as a security audit or production-hardening sign-off.
+## Runner scope
 
-## Runner behavior and current scope
-
-The standalone runner supports Python 3.12 and Node.js 24 only. It has been manually tested
-for successful execution, timeout, output limiting, unsupported-language rejection,
-malformed-JSON rejection, non-root rejection, and temporary-container cleanup. It is now
-invoked by the broker for the approved execution path.
+Python 3.12 and Node.js 24 only. Manual runner tests cover success, timeout, output limit, unsupported language, malformed JSON, non-root rejection and temporary-container cleanup. The broker now invokes this runner for approved requests.
 
 ## Remaining validation
 
-Still to be tested end-to-end: rejection path, expiry, digest mismatch/tampering, replay,
-concurrent requests, broker outage, runner failure, and cleanup after broker/host interruption.
-Security hardening is tracked separately in `docs/security-hardening-backlog.md`.
+Still open: rejection path, expiry, digest mismatch/tampering, concurrent requests, broker outage, runner failure and cleanup after broker/host interruption. Security hardening is tracked in `docs/security-hardening-backlog.md`.
