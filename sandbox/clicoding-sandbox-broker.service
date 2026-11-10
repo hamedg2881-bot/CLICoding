@@ -8,7 +8,6 @@ Type=simple
 RuntimeDirectory=clicoding-sandbox
 RuntimeDirectoryMode=0750
 RuntimeDirectoryPreserve=yes
-RuntimeDirectoryGroup=clicoding-sandbox
 User=root
 Group=root
 EnvironmentFile=/etc/clicoding-sandbox/broker.env
