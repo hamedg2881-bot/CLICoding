@@ -309,3 +309,12 @@ def test_parallelism_defaults_to_three_and_rejects_more_than_three():
     assert Settings().max_parallel_tasks == 3
     with pytest.raises(ValueError, match="between 1 and 3"):
         Settings(max_parallel_tasks=4)
+
+
+def test_get_or_create_conversation_is_idempotent(tmp_path):
+    database = Database(str(tmp_path / "stable-conversation.sqlite3"))
+    first = database.get_or_create_conversation("stable-open-webui-session")
+    second = database.get_or_create_conversation("stable-open-webui-session")
+
+    assert first["id"] == second["id"] == "stable-open-webui-session"
+    assert first["created_at"] == second["created_at"]
