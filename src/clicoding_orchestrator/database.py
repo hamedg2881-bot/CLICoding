@@ -413,6 +413,7 @@ class Database:
             raise ValueError("decision must be approve or reject")
         now = utc_now()
         target = "approved" if decision == "approve" else "rejected"
+        expired = False
         with self.session() as connection:
             row = connection.execute(
                 "SELECT status, expires_at FROM sandbox_approvals WHERE id = ?",
@@ -427,15 +428,18 @@ class Database:
                     "UPDATE sandbox_approvals SET status = 'expired' WHERE id = ? AND status = 'pending'",
                     (approval_id,),
                 )
-                raise ValueError("approval has expired")
-            cursor = connection.execute(
-                """
-                UPDATE sandbox_approvals
-                SET status = ?, decided_at = ?
-                WHERE id = ? AND status = 'pending' AND expires_at > ?
-                """,
-                (target, now, approval_id, now),
-            )
-            if cursor.rowcount != 1:
-                raise ValueError("approval state changed; fetch it and try again")
+                expired = True
+            else:
+                cursor = connection.execute(
+                    """
+                    UPDATE sandbox_approvals
+                    SET status = ?, decided_at = ?
+                    WHERE id = ? AND status = 'pending' AND expires_at > ?
+                    """,
+                    (target, now, approval_id, now),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("approval state changed; fetch it and try again")
+        if expired:
+            raise ValueError("approval has expired")
         return self.get_sandbox_approval(approval_id)
