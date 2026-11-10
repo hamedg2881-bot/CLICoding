@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import hashlib
 from pathlib import Path
 import sqlite3
 import uuid
@@ -103,6 +104,24 @@ class Database:
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY (execution_id, id)
                 );
+
+                CREATE TABLE IF NOT EXISTS sandbox_approvals (
+                    id TEXT PRIMARY KEY,
+                    execution_id TEXT NOT NULL,
+                    task_id TEXT NOT NULL,
+                    language TEXT NOT NULL CHECK (language IN ('python', 'javascript')),
+                    source TEXT NOT NULL,
+                    source_sha256 TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'expired')),
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    decided_at TEXT,
+                    FOREIGN KEY (execution_id, task_id)
+                        REFERENCES execution_tasks(execution_id, id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS ix_sandbox_approvals_task
+                    ON sandbox_approvals(execution_id, task_id, created_at);
                 """
             )
 
@@ -307,3 +326,116 @@ class Database:
             task["depends_on"] = json.loads(task.pop("dependencies_json"))
             result["tasks"].append(task)
         return result
+
+
+    def create_sandbox_approval(
+        self, execution_id: str, task_id: str, language: str, source: str,
+        ttl_seconds: int = 900,
+    ) -> dict[str, Any]:
+        """Create a pending approval bound to an immutable source snapshot."""
+        if language not in {"python", "javascript"}:
+            raise ValueError("unsupported sandbox language")
+        if not isinstance(source, str) or not source.strip():
+            raise ValueError("source must be a non-empty string")
+        source_bytes = source.encode("utf-8")
+        if len(source_bytes) > 128 * 1024:
+            raise ValueError("source exceeds 131072 bytes")
+        if ttl_seconds < 60 or ttl_seconds > 3600:
+            raise ValueError("approval TTL must be between 60 and 3600 seconds")
+        now = datetime.now(timezone.utc)
+        created_at = now.isoformat()
+        expires_at = (now + timedelta(seconds=ttl_seconds)).isoformat()
+        approval_id = str(uuid.uuid4())
+        digest = hashlib.sha256(source_bytes).hexdigest()
+        with self.session() as connection:
+            task = connection.execute(
+                "SELECT status FROM execution_tasks WHERE execution_id = ? AND id = ?",
+                (execution_id, task_id),
+            ).fetchone()
+            if task is None:
+                raise ValueError("execution task does not exist")
+            if task["status"] != "succeeded":
+                raise ValueError("only a succeeded task can request sandbox approval")
+            connection.execute(
+                """
+                INSERT INTO sandbox_approvals
+                    (id, execution_id, task_id, language, source, source_sha256,
+                     status, created_at, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+                """,
+                (approval_id, execution_id, task_id, language, source, digest,
+                 created_at, expires_at),
+            )
+        return self.get_sandbox_approval(approval_id)
+
+    def get_sandbox_approval(self, approval_id: str) -> dict[str, Any] | None:
+        with self.session() as connection:
+            row = connection.execute(
+                """
+                SELECT id, execution_id, task_id, language, source, source_sha256,
+                       status, created_at, expires_at, decided_at
+                FROM sandbox_approvals WHERE id = ?
+                """,
+                (approval_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            result = dict(row)
+            if result["status"] == "pending" and result["expires_at"] <= utc_now():
+                connection.execute(
+                    "UPDATE sandbox_approvals SET status = 'expired' WHERE id = ? AND status = 'pending'",
+                    (approval_id,),
+                )
+                result["status"] = "expired"
+        return result
+
+    def list_sandbox_approvals(
+        self, execution_id: str, task_id: str
+    ) -> list[dict[str, Any]]:
+        with self.session() as connection:
+            rows = connection.execute(
+                """
+                SELECT id FROM sandbox_approvals
+                WHERE execution_id = ? AND task_id = ?
+                ORDER BY created_at DESC
+                """,
+                (execution_id, task_id),
+            ).fetchall()
+        return [
+            approval for row in rows
+            if (approval := self.get_sandbox_approval(row["id"])) is not None
+        ]
+
+    def decide_sandbox_approval(
+        self, approval_id: str, decision: str
+    ) -> dict[str, Any] | None:
+        if decision not in {"approve", "reject"}:
+            raise ValueError("decision must be approve or reject")
+        now = utc_now()
+        target = "approved" if decision == "approve" else "rejected"
+        with self.session() as connection:
+            row = connection.execute(
+                "SELECT status, expires_at FROM sandbox_approvals WHERE id = ?",
+                (approval_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            if row["status"] != "pending":
+                raise ValueError(f"approval is not pending (status={row['status']})")
+            if row["expires_at"] <= now:
+                connection.execute(
+                    "UPDATE sandbox_approvals SET status = 'expired' WHERE id = ? AND status = 'pending'",
+                    (approval_id,),
+                )
+                raise ValueError("approval has expired")
+            cursor = connection.execute(
+                """
+                UPDATE sandbox_approvals
+                SET status = ?, decided_at = ?
+                WHERE id = ? AND status = 'pending' AND expires_at > ?
+                """,
+                (target, now, approval_id, now),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("approval state changed; fetch it and try again")
+        return self.get_sandbox_approval(approval_id)
