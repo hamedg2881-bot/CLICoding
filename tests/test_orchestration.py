@@ -430,3 +430,96 @@ def test_code_artifact_contract_triggers_one_repair_attempt(tmp_path):
 
     asyncio.run(scenario())
 
+
+
+def test_full_original_request_and_acceptance_criteria_reach_workers_and_synthesis(tmp_path):
+    async def scenario():
+        db = Database(str(tmp_path / "full-request-contract.sqlite3"))
+        conversation = db.create_conversation()
+        registry = WorkerRegistry(
+            [
+                Worker(
+                    "fast-reasoning", "http://fast/v1", "gpt-oss-20b",
+                    frozenset({"chat", "planning"}), priority=1,
+                ),
+                Worker(
+                    "coding-primary", "http://coder/v1", "qwen-coder",
+                    frozenset({"coding"}),
+                ),
+            ]
+        )
+        original_request = (
+            "Write find_duplicates(nums), return total occurrence counts for duplicates; "
+            "for [1,2,2,3,3,3,4] the exact result must be {2: 2, 3: 3}. "
+            "Include runnable code, exact output, and a Persian explanation."
+        )
+        captured = {}
+
+        class ContractGateway:
+            def __init__(self, worker_id):
+                self.worker_id = worker_id
+                self.calls = 0
+
+            async def complete(self, messages):
+                self.calls += 1
+                if self.worker_id == "fast-reasoning" and self.calls == 1:
+                    plan = {
+                        "goal": "Implement a duplicate finder",
+                        "acceptance_criteria": [
+                            "Return total occurrence counts",
+                            "Include exact example output {2: 2, 3: 3}",
+                            "Include runnable code and Persian explanation",
+                        ],
+                        "tasks": [
+                            {
+                                "task_id": "implement",
+                                "objective": "Write the function only",
+                                "required_capabilities": ["coding"],
+                                "expected_output": "def find_duplicates(nums):\n    return {}",
+                            }
+                        ],
+                    }
+                    return Completion(json.dumps(plan), "gpt-oss-20b")
+                if self.worker_id == "coding-primary":
+                    captured["worker_message"] = messages[-1]["content"]
+                    return Completion(
+                        "def find_duplicates(nums):\n"
+                        "    counts = {}\n"
+                        "    for value in nums:\n"
+                        "        counts[value] = counts.get(value, 0) + 1\n"
+                        "    return {value: count for value, count in counts.items() if count > 1}\n\n"
+                        "خروجی: {2: 2, 3: 3}\n\n"
+                        "این تابع تعداد کل رخداد هر عدد تکراری را برمی‌گرداند.",
+                        "qwen-coder",
+                    )
+                captured["synthesis_message"] = messages[-1]["content"]
+                return Completion(
+                    "def find_duplicates(nums):\n"
+                    "    counts = {}\n"
+                    "    for value in nums:\n"
+                    "        counts[value] = counts.get(value, 0) + 1\n"
+                    "    return {value: count for value, count in counts.items() if count > 1}\n\n"
+                    "خروجی دقیق: {2: 2, 3: 3}\n\n"
+                    "این تابع تعداد کل رخداد هر عدد تکراری را برمی‌گرداند.",
+                    "gpt-oss-20b",
+                )
+
+        gateways = {}
+
+        def gateway_factory(worker):
+            gateways.setdefault(worker.id, ContractGateway(worker.id))
+            return gateways[worker.id]
+
+        orchestrator = MultiModelOrchestrator(
+            db, CapabilityRouter(registry), gateway_factory=gateway_factory
+        )
+        result = await orchestrator.run(conversation["id"], original_request)
+
+        assert result.execution.succeeded
+        assert original_request in captured["worker_message"]
+        assert "Return total occurrence counts" in captured["worker_message"]
+        assert original_request in captured["synthesis_message"]
+        assert "{2: 2, 3: 3}" in result.answer
+        assert "def find_duplicates" in result.answer
+
+    asyncio.run(scenario())
