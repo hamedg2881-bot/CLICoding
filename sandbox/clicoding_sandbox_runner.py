@@ -34,7 +34,7 @@ RUNTIMES = {
         "argv": ["python", "-I", "-B", "-"],
     },
     "javascript": {
-        "image": "node:24-bookworm-slim@sha256:01d566e8d94d8c619591b01f1d74babfccd3c6992a3dffa9ed5ab39e11cf6c70e9",
+        "image": "node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9",
         "argv": ["node", "--input-type=commonjs", "-"],
     },
 }
