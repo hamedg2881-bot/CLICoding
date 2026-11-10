@@ -284,6 +284,7 @@ def run_container(language: str, source: bytes) -> dict[str, Any]:
 def main() -> int:
     if os.geteuid() != 0:
         return emit({"status": "rejected", "error": "Run this tool with sudo"}, 2)
+    Path("/run/clicoding-sandbox").mkdir(mode=0o750, parents=True, exist_ok=True)
     if not Path(DOCKER).is_file():
         return emit({"status": "runner_error", "error": "Docker CLI not found"}, 2)
     try:
