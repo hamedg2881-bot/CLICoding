@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -62,27 +63,61 @@ def read_request() -> tuple[str, bytes]:
         raise RequestError("Request must be a JSON object")
     language = request.get("language")
     code = request.get("code")
-    if language not in RUNTIMES:
+    if not isinstance(language, str) or language not in RUNTIMES:
         raise RequestError("Unsupported language; allowed: python, javascript")
     if not isinstance(code, str) or not code.strip():
         raise RequestError("code must be a non-empty string")
-    encoded = code.encode("utf-8")
+    try:
+        encoded = code.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise RequestError("code must contain valid UTF-8 text") from exc
     if len(encoded) > MAX_REQUEST_BYTES:
         raise RequestError(f"Source exceeds {MAX_REQUEST_BYTES} bytes")
     return language, encoded
 
 
-def cleanup_container(cid_file: str) -> None:
+def cleanup_container(cid_file: str, execution_id: str) -> None:
+    """Best-effort cleanup by cidfile and a unique Docker label.
+
+    The label lookup covers the race where the daemon creates a container
+    but the killed Docker CLI has not written its cidfile yet.
+    """
+    deadline = time.monotonic() + 2
+    while not Path(cid_file).exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+
+    container_ids: set[str] = set()
     try:
         container_id = Path(cid_file).read_text(encoding="ascii").strip()
+        if container_id:
+            container_ids.add(container_id)
     except OSError:
-        return
-    if not container_id:
-        return
-    for action in ("kill", "rm"):
+        pass
+
+    try:
+        listed = subprocess.run(
+            [
+                DOCKER, "ps", "-aq",
+                "--filter", f"label=clicoding.execution={execution_id}",
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=4,
+            check=False,
+        )
+        if listed.returncode == 0:
+            container_ids.update(
+                line.strip() for line in listed.stdout.splitlines() if line.strip()
+            )
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+    for container_id in container_ids:
         try:
             subprocess.run(
-                [DOCKER, action, container_id],
+                [DOCKER, "rm", "--force", container_id],
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -95,6 +130,7 @@ def cleanup_container(cid_file: str) -> None:
 
 def run_container(language: str, source: bytes) -> dict[str, Any]:
     runtime = RUNTIMES[language]
+    execution_id = uuid.uuid4().hex
     cid_fd, cid_file = tempfile.mkstemp(prefix="clicoding-sandbox-", dir="/run")
     os.close(cid_fd)
     os.unlink(cid_file)
@@ -102,6 +138,7 @@ def run_container(language: str, source: bytes) -> dict[str, Any]:
     command = [
         DOCKER, "run", "--rm", "-i", "--pull=never",
         "--cidfile", cid_file,
+        "--label", f"clicoding.execution={execution_id}",
         "--network=none",
         "--read-only",
         "--user", USER_ID,
@@ -197,7 +234,7 @@ def run_container(language: str, source: bytes) -> dict[str, Any]:
             process.wait(timeout=3)
         except subprocess.TimeoutExpired:
             pass
-        cleanup_container(cid_file)
+        cleanup_container(cid_file, execution_id)
     else:
         try:
             process.wait(timeout=max(0.1, deadline - time.monotonic()))
@@ -205,7 +242,7 @@ def run_container(language: str, source: bytes) -> dict[str, Any]:
             timed_out = True
             process.kill()
             process.wait(timeout=3)
-            cleanup_container(cid_file)
+            cleanup_container(cid_file, execution_id)
 
     try:
         duration_ms = int((time.monotonic() - started) * 1000)
