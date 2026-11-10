@@ -17,7 +17,7 @@ from typing import Any
 DOCKER = "/usr/bin/docker"
 MAX_REQUEST_BYTES = 128 * 1024
 MAX_OUTPUT_BYTES = 64 * 1024
-TIME_LIMIT_SECONDS = 30
+TIME_LIMIT_SECONDS = 60
 MEMORY_LIMIT = "512m"
 CPU_LIMIT = "1"
 PID_LIMIT = "32"
@@ -39,19 +39,19 @@ RUNTIMES = {
         "argv": ["sh", "-lc", "cat > /tmp/main.ts && tsc --target ES2022 --module commonjs --strict --skipLibCheck --outDir /tmp/out /tmp/main.ts && node /tmp/out/main.js"],
     },
     "go": {
-        "image": "golang:1.27.3-bookworm",
+        "image": "golang:1.27.3-bookworm@sha256:dc0963f32053e4bc451d24d87e3892d42d01021b61f093e98eb95c0352bb84b0",
         "argv": ["sh", "-lc", "cat > /tmp/main.go && GOCACHE=/tmp/go-cache GOMODCACHE=/tmp/go-mod-cache GOPROXY=off GOTOOLCHAIN=local go run /tmp/main.go"],
     },
     "rust": {
-        "image": "rust:1.99.1-bookworm",
+        "image": "rust:1.99.1-bookworm@sha256:e6f2cff35d0f309acf8433b4f05878ed77092602c5065cc81801177da0bb3a9c",
         "argv": ["sh", "-lc", "cat > /tmp/main.rs && rustc /tmp/main.rs -o /tmp/main && /tmp/main"],
     },
     "java": {
-        "image": "eclipse-temurin:25.0.5_8-jdk-ubi10-minimal",
+        "image": "eclipse-temurin:25.0.5_8-jdk-ubi10-minimal@sha256:6d870f0c9a54ea090e1ed8396a4926f183b1d379934248b0d335567282417517",
         "argv": ["sh", "-lc", "cat > /tmp/Main.java && javac -d /tmp /tmp/Main.java && java -cp /tmp Main"],
     },
     "c": {
-        "image": "gcc:16.2.0-trixie",
+        "image": "gcc:16.2.0-trixie@sha256:b8a42d6804296fbe7a54e17e9d60c3100d9e8dbe7ef88c748cae2ddb00d63ba2",
         "argv": ["sh", "-lc", "cat > /tmp/main.c && gcc -std=c23 -O0 /tmp/main.c -o /tmp/main && /tmp/main"],
     },
     "cpp": {
@@ -59,15 +59,15 @@ RUNTIMES = {
         "argv": ["sh", "-lc", "cat > /tmp/main.cpp && g++ -std=c++23 -O0 /tmp/main.cpp -o /tmp/main && /tmp/main"],
     },
     "csharp": {
-        "image": "mcr.microsoft.com/dotnet/sdk:10.0.402",
+        "image": "mcr.microsoft.com/dotnet/sdk:10.0.402@sha256:747cbade5bfd918a175ac32f8f1d931edec2c7d0d5397a3de72eaef1ac1f66d2",
         "argv": ["sh", "-lc", "mkdir -p /tmp/app && cat > /tmp/app/Program.cs && printf '%s\\n' '<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup></Project>' > /tmp/app/app.csproj && printf '%s\\n' '<configuration><packageSources><clear /></packageSources></configuration>' > /tmp/app/NuGet.Config && dotnet restore /tmp/app/app.csproj --configfile /tmp/app/NuGet.Config --ignore-failed-sources && dotnet build /tmp/app/app.csproj --no-restore -o /tmp/app/out && dotnet /tmp/app/out/app.dll"],
     },
     "php": {
-        "image": "php:8.5.12-cli-trixie",
+        "image": "php:8.5.12-cli-trixie@sha256:50956f094e90a716d43bea28087d447555ad80510e386ab8c9c10d8c70d781a9",
         "argv": ["php", "-d", "opcache.enable_cli=0", "-"],
     },
     "ruby": {
-        "image": "ruby:4.0.9-slim-trixie",
+        "image": "ruby:4.0.9-slim-trixie@sha256:d8cb2c0714bdaba0f318af897a01d2dbde3cfa8e62d47e99cea55feb13c0e90d",
         "argv": ["ruby", "-"],
     },
 }
