@@ -523,3 +523,14 @@ def test_full_original_request_and_acceptance_criteria_reach_workers_and_synthes
         assert "def find_duplicates" in result.answer
 
     asyncio.run(scenario())
+
+def test_code_artifact_detection_accepts_fenced_blocks_for_all_languages():
+    languages = ("python", "javascript", "typescript", "go", "rust", "java",
+                 "c", "cpp", "csharp", "php", "ruby")
+    for language in languages:
+        output = f"```{language}\n// implementation\n```"
+        assert MultiModelOrchestrator._expects_code_artifact(
+            f"Return a {language} source code block"
+        )
+        assert MultiModelOrchestrator._contains_code_artifact(output)
+
