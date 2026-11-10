@@ -71,6 +71,15 @@ class ChatMessage(BaseModel):
         return value
 
 
+class SandboxApprovalCreate(BaseModel):
+    language: Literal["python", "javascript"]
+    source: str = Field(min_length=1, max_length=131072)
+
+
+class SandboxApprovalDecision(BaseModel):
+    decision: Literal["approve", "reject"]
+
+
 class OpenAIChatRequest(BaseModel):
     model: str = "clicoding"
     messages: list[ChatMessage] = Field(min_length=1, max_length=500)
@@ -448,5 +457,53 @@ def create_app(
         if execution is None or execution["conversation_id"] != conversation_id:
             raise HTTPException(status_code=404, detail="Execution not found")
         return execution
+
+    @app.post(
+        "/api/v1/executions/{execution_id}/tasks/{task_id}/sandbox-approvals",
+        status_code=201,
+    )
+    async def create_sandbox_approval(
+        execution_id: str, task_id: str, request: SandboxApprovalCreate
+    ) -> dict[str, Any]:
+        try:
+            return db.create_sandbox_approval(
+                execution_id, task_id, request.language, request.source
+            )
+        except ValueError as exc:
+            message = str(exc)
+            status = 404 if "does not exist" in message else 409
+            raise HTTPException(status_code=status, detail=message) from exc
+
+    @app.get(
+        "/api/v1/executions/{execution_id}/tasks/{task_id}/sandbox-approvals"
+    )
+    async def list_sandbox_approvals(
+        execution_id: str, task_id: str
+    ) -> dict[str, Any]:
+        execution = db.get_execution(execution_id)
+        if execution is None:
+            raise HTTPException(status_code=404, detail="Execution not found")
+        if not any(task["task_id"] == task_id for task in execution["tasks"]):
+            raise HTTPException(status_code=404, detail="Execution task not found")
+        return {"approvals": db.list_sandbox_approvals(execution_id, task_id)}
+
+    @app.get("/api/v1/sandbox-approvals/{approval_id}")
+    async def get_sandbox_approval(approval_id: str) -> dict[str, Any]:
+        approval = db.get_sandbox_approval(approval_id)
+        if approval is None:
+            raise HTTPException(status_code=404, detail="Sandbox approval not found")
+        return approval
+
+    @app.post("/api/v1/sandbox-approvals/{approval_id}/decision")
+    async def decide_sandbox_approval(
+        approval_id: str, request: SandboxApprovalDecision
+    ) -> dict[str, Any]:
+        try:
+            approval = db.decide_sandbox_approval(approval_id, request.decision)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if approval is None:
+            raise HTTPException(status_code=404, detail="Sandbox approval not found")
+        return approval
 
     return app
