@@ -343,3 +343,79 @@ def test_orchestrator_forwards_image_bytes_only_to_multimodal_worker(tmp_path):
         assert image_uri not in seen["coding-primary"]
 
     asyncio.run(scenario())
+
+
+def test_code_artifact_contract_triggers_one_repair_attempt(tmp_path):
+    async def scenario():
+        db = Database(str(tmp_path / "artifact-repair.sqlite3"))
+        conversation = db.create_conversation()
+        registry = WorkerRegistry(
+            [
+                Worker(
+                    "fast-reasoning", "http://fast/v1", "gpt-oss-20b",
+                    frozenset({"chat", "planning"}), priority=1,
+                ),
+                Worker(
+                    "coding-primary", "http://coder/v1", "qwen-coder",
+                    frozenset({"coding"}),
+                ),
+            ]
+        )
+
+        class RepairGateway:
+            def __init__(self, worker_id):
+                self.worker_id = worker_id
+                self.calls = 0
+
+            async def complete(self, messages):
+                self.calls += 1
+                if self.worker_id == "fast-reasoning":
+                    plan = {
+                        "goal": "Implement duplicate finder",
+                        "acceptance_criteria": ["Return complete Python source code"],
+                        "tasks": [
+                            {
+                                "task_id": "implement",
+                                "objective": "Write find_duplicates(nums)",
+                                "required_capabilities": ["coding"],
+                                "expected_output": "def find_duplicates(nums):\\n    return {}",
+                            }
+                        ],
+                    }
+                    return Completion(json.dumps(plan), "gpt-oss-20b")
+                if self.calls == 1:
+                    return Completion(
+                        "The function counts values and returns duplicates.",
+                        "qwen-coder",
+                    )
+                return Completion(
+                    "def find_duplicates(nums):\\n"
+                    "    counts = {}\\n"
+                    "    for value in nums:\\n"
+                    "        counts[value] = counts.get(value, 0) + 1\\n"
+                    "    return {key: count for key, count in counts.items() if count > 1}",
+                    "qwen-coder",
+                )
+
+        gateways = {}
+
+        def gateway_factory(worker):
+            gateways.setdefault(worker.id, RepairGateway(worker.id))
+            return gateways[worker.id]
+
+        orchestrator = MultiModelOrchestrator(
+            db, CapabilityRouter(registry), gateway_factory=gateway_factory
+        )
+        result = await orchestrator.run(
+            conversation["id"], "Write a Python duplicate finder"
+        )
+
+        assert result.execution.succeeded
+        assert "def find_duplicates" in result.answer
+        assert gateways["coding-primary"].calls == 2
+        saved = db.get_execution(result.execution_id)
+        assert saved["tasks"][0]["status"] == "succeeded"
+        assert "def find_duplicates" in saved["tasks"][0]["output"]
+
+    asyncio.run(scenario())
+
