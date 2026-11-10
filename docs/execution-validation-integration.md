@@ -1,6 +1,6 @@
 # Execution Validation Layer — Integration Design
 
-Status: approval persistence, Unix-socket broker, one end-to-end approved execution, and replay rejection are verified on DGX Spark.
+Status: approval persistence, Unix-socket broker, one end-to-end approved execution, replay rejection, and explicit rejection enforcement are verified on DGX Spark.
 
 ## Trust boundaries
 
@@ -56,10 +56,19 @@ This proves the functional happy path for this sample only. It is not a security
 
 A second POST to the execute endpoint using the already-consumed approval returned HTTP `409` with `approval has already been consumed`. The broker rejected the replay; no second execution was started.
 
+## Verified rejection enforcement — 2026-11-10
+
+- Created a fresh approval for a harmless Python marker program; API returned HTTP `201`, status `pending`.
+- Explicitly rejected it; decision API returned HTTP `200`, status `rejected`.
+- Attempted execution afterward; API returned HTTP `409` with `Sandbox approval is not approved (status=rejected)`.
+- The runner was not invoked for this rejected approval; the marker program was not executed.
+
+This verifies that an explicitly rejected approval cannot proceed through the execution API.
+
 ## Runner scope
 
 Python 3.12 and Node.js 24 only. Manual runner tests cover success, timeout, output limit, unsupported language, malformed JSON, non-root rejection and temporary-container cleanup. The broker now invokes this runner for approved requests.
 
 ## Remaining validation
 
-Still open: rejection path, expiry, digest mismatch/tampering, concurrent requests, broker outage, runner failure and cleanup after broker/host interruption. Security hardening is tracked in `docs/security-hardening-backlog.md`.
+Still open: expiry, digest mismatch/tampering, concurrent requests, broker outage, runner failure and cleanup after broker/host interruption. Security hardening is tracked in `docs/security-hardening-backlog.md`.
