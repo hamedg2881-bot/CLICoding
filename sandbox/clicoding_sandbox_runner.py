@@ -131,7 +131,7 @@ def cleanup_container(cid_file: str, execution_id: str) -> None:
 def run_container(language: str, source: bytes) -> dict[str, Any]:
     runtime = RUNTIMES[language]
     execution_id = uuid.uuid4().hex
-    cid_fd, cid_file = tempfile.mkstemp(prefix="clicoding-sandbox-", dir="/run")
+    cid_fd, cid_file = tempfile.mkstemp(prefix="runner-", dir="/run/clicoding-sandbox")
     os.close(cid_fd)
     os.unlink(cid_file)
 
