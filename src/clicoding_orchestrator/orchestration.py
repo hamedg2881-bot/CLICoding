@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -58,13 +59,24 @@ class MultiModelOrchestrator:
     @staticmethod
     def _expects_code_artifact(expected_output: str) -> bool:
         """Return true when the planner's expected output includes source code."""
-        markers = ("def ", "async def ", "class ", "if __name__", "```python", "```py")
+        markers = (
+            "def ", "async def ", "class ", "if __name__", "```",
+            "source code", "source file", "program source", "implementation code",
+            "package main", "fn main", "public class", "#include", "using System",
+            "<?php", "console.log", "func main",
+        )
         return any(marker in expected_output for marker in markers)
 
     @staticmethod
     def _contains_code_artifact(output: str) -> bool:
         """Reject prose-only answers when a concrete code artifact was requested."""
-        markers = ("def ", "async def ", "class ", "```python", "```py")
+        if re.search(r"```[^\\n]*\\n[\\s\\S]+?```", output):
+            return True
+        markers = (
+            "def ", "async def ", "class ", "if __name__", "package main",
+            "fn main", "public class", "#include", "using System", "<?php",
+            "console.log", "func main", "int main(", "puts ", "echo ",
+        )
         return any(marker in output for marker in markers)
 
     @staticmethod
