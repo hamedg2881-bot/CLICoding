@@ -18,9 +18,10 @@
 
 ## Infrastructure decision and evidence status
 - **User-confirmed target AI server:** NVIDIA DGX Spark.
-- Previously observed environment details associated with the user's DGX Spark: GB10 platform, approximately 128 GB unified memory, NVIDIA driver 580.178.04, CUDA 13.0. These are historical context, not yet re-verified for this project's Phase 1 baseline.
-- Host allocation (dedicated/shared), current OS/kernel, CPU, memory availability, storage, active GPU workloads, runtime versions, model inventory, and LAN configuration remain unverified.
-- No installation, configuration change, model download, service restart, or other server mutation has been performed for CLICoding.
+- Confirmed DGX Spark platform: GB10, approximately 121 GiB usable unified memory, NVIDIA driver 580.178.04, CUDA 13.0.
+- A live three-runtime experiment is now recorded in `docs/DGX_LIVE_VALIDATION_2026-11-10.md`, including the verified model endpoints, runtime versions, conservative context caps, and latest memory snapshot.
+- Host OS/kernel, CPU details, dedicated/shared allocation policy, LAN/DNS/TLS configuration, and sustained peak-memory behavior remain to be verified.
+- Repository documentation updates do not modify the DGX host. The currently running model experiments were separately user-authorized; no model files, containers, or images were deleted.
 
 ## Phase 0 checklist
 - [x] README project charter.
