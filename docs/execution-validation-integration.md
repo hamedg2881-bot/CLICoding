@@ -7,7 +7,7 @@ Status: approval persistence, Unix-socket broker, one end-to-end approved execut
 1. Model workers are untrusted code producers. Their output is never executed directly.
 2. The Orchestrator owns conversations, executions, task state, approvals, and validation results.
 3. The Orchestrator service account must not join the Docker group and must never receive `/var/run/docker.sock`.
-4. The root-owned `clicoding-sandbox-run` is a narrow execution primitive with fixed Python/JavaScript runtimes and fixed security/resource flags.
+4. The root-owned `clicoding-sandbox-run` is a narrow execution primitive with eleven fixed ARM64 language runtimes/compilers and fixed security/resource flags.
 5. A separate privileged broker is the only component permitted to invoke the runner. It exposes a local Unix-domain socket, not a network listener.
 
 ## Approval and execution flow
@@ -76,7 +76,7 @@ This test verifies integrity checking against a modified stored digest. It does 
 
 ## Runner scope
 
-Python 3.12 and Node.js 24 only. Manual runner tests cover success, timeout, output limit, unsupported language, malformed JSON, non-root rejection and temporary-container cleanup. The broker now invokes this runner for approved requests.
+Runner now has pinned Python 3.12, Node.js 24, TypeScript 7.0.2, Go 1.27.3, Rust 1.99.1, Java 25.0.5, GCC/G++ 16.2.0, .NET 10.0.402, PHP 8.5.12, and Ruby 4.0.9 runtimes. All eleven are ARM64 images; TypeScript is a separately built local image. The runner compiles supported compiled languages inside the isolated container and uses fixed command templates. Package downloads, external registries, network, multi-file projects, and arbitrary build commands remain disabled.
 
 ## Remaining validation
 
@@ -124,3 +124,11 @@ Still open: expiry, concurrent requests, broker outage, runner failure and clean
 - Immediately inspected all Docker containers carrying the unique `clicoding.execution` label using `docker ps -a --filter label=clicoding.execution`.
 - The command returned no rows, confirming no labeled sandbox container remained after this normal application failure.
 - This verifies cleanup after an ordinary non-zero application exit. Timeout/output-limit cleanup is implemented separately; abrupt host or Docker-daemon interruption remains outside this test.
+
+## Multi-language runtime expansion (2026-11-10)
+
+- Verified all eleven runtime/compiler images on Linux ARM64 using `docker image inspect` and isolated `docker run --network=none` checks.
+- Built and verified the TypeScript 7.0.2 compiler image; a strict no-emit TypeScript compile passed.
+- Expanded the runner, broker allowlist, API request schema, SQLite approval constraint/migration, and approval tests to the same canonical language identifiers: `python`, `javascript`, `typescript`, `go`, `rust`, `java`, `c`, `cpp`, `csharp`, `php`, and `ruby`.
+- Compiled languages use a bounded writable/executable tmpfs inside the isolated container; no host mount is introduced. Network remains disabled and images are local-only (`--pull=never`).
+- Full end-to-end runner tests for each language are pending deployment of this coordinated repository update to the DGX.
