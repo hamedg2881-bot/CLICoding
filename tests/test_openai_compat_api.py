@@ -1152,3 +1152,50 @@ def test_failed_regeneration_preserves_the_previous_assistant_answer(tmp_path):
     events = database.list_events(conversation_id)
     assert [event["role"] for event in events] == ["user", "assistant"]
     assert events[-1]["content"] == "original answer"
+
+
+def test_openwebui_regeneration_is_detected_from_exact_submitted_history(tmp_path):
+    client, gateway = make_client(tmp_path)
+    headers = {
+        "X-CLICoding-Chat-ID": "openwebui-chat-1",
+        "X-CLICoding-User-ID": "openwebui-user-1",
+    }
+    first = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "CDS_AI",
+            "messages": [{"role": "user", "content": "Repeat this question"}],
+        },
+        headers=headers,
+    )
+    assert first.status_code == 200
+    second = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "CDS_AI",
+            "messages": [{"role": "user", "content": "Repeat this question"}],
+        },
+        headers=headers,
+    )
+    assert second.status_code == 200
+    assert second.json()["choices"][0]["message"]["content"] == "answer-2"
+    assert gateway.calls[1] == [{"role": "user", "content": "Repeat this question"}]
+
+    third = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "CDS_AI",
+            "messages": [
+                {"role": "user", "content": "Repeat this question"},
+                {"role": "assistant", "content": "answer-2"},
+                {"role": "user", "content": "Repeat this question"},
+            ],
+        },
+        headers=headers,
+    )
+    assert third.status_code == 200
+    assert gateway.calls[2] == [
+        {"role": "user", "content": "Repeat this question"},
+        {"role": "assistant", "content": "answer-2"},
+        {"role": "user", "content": "Repeat this question"},
+    ]
