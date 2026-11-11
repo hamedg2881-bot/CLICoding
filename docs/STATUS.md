@@ -305,3 +305,14 @@ User supplied a fresh command output from host `spark-7ea3`:
 - Latest code CI run 43012613955 passed: 75 tests passed, 1 warning.
 - Added docs/IDE_TOOL_PROTOCOL.md specifying the workstation-side tool host, typed call/result contract, workspace scope, idempotency, approval, cancellation, and evidence requirements.
 - The tool-call round-trip and workstation agent are design targets only at this point; no execution API has been enabled.
+
+## 2026-11-11 — CDS_AI identity and conversation-first foundation
+
+- User confirmed the public assistant name is **CDS_AI**. The canonical GitHub repository remains `hamedg2881-bot/CLICoding`; product identity and source-repository identity are intentionally separate.
+- The OpenAI-compatible API now advertises `CDS_AI` as its public model ID and returns that identity in completion responses. Legacy request aliases `clicoding`, `assistant`, and `auto` remain accepted for migration compatibility. Existing environment-variable names, database paths, and service identifiers are intentionally unchanged.
+- Added `docs/PRODUCT_IDENTITY.md` and updated README/package/API metadata.
+- Integrated the bounded planner-output repair from the separate planner-recovery PR into the conversation-first branch. Invalid JSON/schema output gets one repair attempt; persistent invalid output still fails closed.
+- Direct ordinary chat remains Planner-independent and uses true upstream SSE delta streaming. Specialist streaming remains buffered until the task graph completes; it is not token streaming.
+- GitHub Actions run **43013958446** on head `80a3366890e68688b81edc2d4cd40f02c1922370`: **76 passed, 1 warning**.
+- No source files have been transferred to DGX Spark; no host services, model runtimes, or worker configurations have been changed.
+- Remaining release blockers include structured tool-call round-tripping and a workstation tool host, per-user authorization/ownership enforcement, context budgeting and compaction, explicit cancellation/retry/regeneration, attachment lifecycle hardening, reference IDE adapter, and Open WebUI/IDE end-to-end acceptance.
