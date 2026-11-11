@@ -74,3 +74,8 @@ A release is not complete until tests cover:
 - tool-call round-trip, invalid arguments, denied tools, approval, duplicate call IDs, and tool failure;
 - multimodal capability and attachment validation;
 - Open WebUI and at least one reference IDE end-to-end.
+
+
+## Shared assistant policy
+
+The implementation applies one internal CDS_AI system policy to all conversation paths after client-provided system messages. It defines the stable assistant identity, same-language response behavior, Persian RTL preservation, honest action reporting, untrusted file/tool-result handling, and registered-tool-only execution. Client system prompts may add task context but cannot override the core CDS_AI policy.
