@@ -175,7 +175,7 @@ class MultiModelOrchestrator:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": current},
             ],
-            context_window_tokens=worker.context_window_tokens,
+            context_window_tokens=effective_window,
             reserved_output_tokens=worker.max_output_tokens,
         )
         return current
@@ -287,7 +287,7 @@ class MultiModelOrchestrator:
                 conversation_context,
                 reserved_input_tokens=estimate_message_tokens(
                     {"role": "user", "content": fixed_task_context}
-                ),
+                ) + 256,
             )
             user_task_text = (
                 fixed_task_context
