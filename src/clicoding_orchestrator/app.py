@@ -82,7 +82,7 @@ class SandboxApprovalDecision(BaseModel):
 
 
 class OpenAIChatRequest(BaseModel):
-    model: str = "clicoding"
+    model: str = "CDS_AI"
     messages: list[ChatMessage] = Field(min_length=1, max_length=500)
     conversation_id: str | None = None
     task_type: Literal["chat", "coding", "review", "vision"] = "chat"
@@ -200,7 +200,7 @@ def create_app(
     }
 
     app = FastAPI(
-        title="CLICoding Orchestrator",
+        title="CDS_AI Assistant",
         version="0.3.0",
         description=(
             "OpenAI-compatible single-assistant API with persistent conversations "
@@ -242,10 +242,10 @@ def create_app(
             "object": "list",
             "data": [
                 {
-                    "id": "clicoding",
+                    "id": "CDS_AI",
                     "object": "model",
                     "created": int(time.time()),
-                    "owned_by": "clicoding",
+                    "owned_by": "CDS_AI",
                 }
             ],
         }
@@ -400,7 +400,7 @@ def create_app(
                 "id": response_id,
                 "object": "chat.completion.chunk",
                 "created": created_at,
-                "model": "clicoding",
+                "model": "CDS_AI",
                 "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
             }
             yield "data: " + json.dumps(role_chunk, ensure_ascii=False, separators=(",", ":")) + "\n\n"
@@ -419,7 +419,7 @@ def create_app(
                                 "id": response_id,
                                 "object": "chat.completion.chunk",
                                 "created": created_at,
-                                "model": "clicoding",
+                                "model": "CDS_AI",
                                 "choices": [{"index": 0, "delta": {"content": piece}, "finish_reason": None}],
                             }
                             yield "data: " + json.dumps(chunk, ensure_ascii=False, separators=(",", ":")) + "\n\n"
@@ -430,7 +430,7 @@ def create_app(
                             "id": response_id,
                             "object": "chat.completion.chunk",
                             "created": created_at,
-                            "model": "clicoding",
+                            "model": "CDS_AI",
                             "choices": [{"index": 0, "delta": {"content": completion.content}, "finish_reason": None}],
                         }
                         yield "data: " + json.dumps(chunk, ensure_ascii=False, separators=(",", ":")) + "\n\n"
@@ -442,7 +442,7 @@ def create_app(
                     "id": response_id,
                     "object": "chat.completion.chunk",
                     "created": created_at,
-                    "model": "clicoding",
+                    "model": "CDS_AI",
                     "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
                 }
                 yield "data: " + json.dumps(final_chunk, ensure_ascii=False, separators=(",", ":")) + "\n\n"
@@ -481,7 +481,7 @@ def create_app(
     async def openai_chat_completions(
         http_request: Request, chat_request: OpenAIChatRequest
     ) -> Any:
-        if chat_request.model not in ("clicoding", "assistant", "auto"):
+        if chat_request.model not in ("CDS_AI", "cds_ai", "clicoding", "assistant", "auto"):
             raise HTTPException(status_code=404, detail="Unknown public model alias")
         if not chat_request.messages or chat_request.messages[-1].role != "user":
             raise HTTPException(
@@ -560,21 +560,21 @@ def create_app(
                         "id": response_id,
                         "object": "chat.completion.chunk",
                         "created": created_at,
-                        "model": "clicoding",
+                        "model": "CDS_AI",
                         "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
                     },
                     {
                         "id": response_id,
                         "object": "chat.completion.chunk",
                         "created": created_at,
-                        "model": "clicoding",
+                        "model": "CDS_AI",
                         "choices": [{"index": 0, "delta": {"content": answer}, "finish_reason": None}],
                     },
                     {
                         "id": response_id,
                         "object": "chat.completion.chunk",
                         "created": created_at,
-                        "model": "clicoding",
+                        "model": "CDS_AI",
                         "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
                     },
                 ]
@@ -592,7 +592,7 @@ def create_app(
             "id": response_id,
             "object": "chat.completion",
             "created": created_at,
-            "model": "clicoding",
+            "model": "CDS_AI",
             "conversation_id": conversation_id,
             "choices": [
                 {
