@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import pytest
@@ -44,8 +45,7 @@ class FakeAsyncClient:
         return FakeStreamContext(self.response)
 
 
-@pytest.mark.asyncio
-async def test_openai_gateway_parses_upstream_sse_deltas(monkeypatch):
+def test_openai_gateway_parses_upstream_sse_deltas(monkeypatch):
     response = FakeResponse(
         [
             ": keep-alive",
@@ -66,7 +66,10 @@ async def test_openai_gateway_parses_upstream_sse_deltas(monkeypatch):
     gateway = OpenAICompatibleGateway("http://model/v1", "served-model")
     messages = [{"role": "user", "content": "Greet me"}]
 
-    deltas = [piece async for piece in gateway.stream(messages)]
+    async def collect():
+        return [piece async for piece in gateway.stream(messages)]
+
+    deltas = asyncio.run(collect())
 
     assert deltas == ["Good", " morning"]
     method, url, request = clients[0].request
@@ -76,8 +79,7 @@ async def test_openai_gateway_parses_upstream_sse_deltas(monkeypatch):
     assert request["json"]["messages"] == messages
 
 
-@pytest.mark.asyncio
-async def test_openai_gateway_rejects_incomplete_sse_stream(monkeypatch):
+def test_openai_gateway_rejects_incomplete_sse_stream(monkeypatch):
     response = FakeResponse(
         ['data: ' + json.dumps({"choices": [{"delta": {"content": "partial"}}]})]
     )
