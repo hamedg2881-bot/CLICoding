@@ -353,3 +353,14 @@ def test_conversation_owner_migration_keeps_legacy_records_in_shared_namespace(t
     assert not database.conversation_exists("legacy-conversation", owner_id="alice")
     with pytest.raises(PermissionError):
         database.get_or_create_conversation("legacy-conversation", owner_id="alice")
+
+
+def test_database_only_deletes_the_current_tail_event(tmp_path):
+    database = Database(str(tmp_path / "delete-tail.sqlite3"))
+    conversation_id = database.create_conversation()["id"]
+    database.append_event(conversation_id, "user", "question", "user")
+    assistant = database.append_event(conversation_id, "assistant", "answer", "chat")
+    database.delete_last_event(conversation_id, assistant["id"])
+    assert [event["role"] for event in database.list_events(conversation_id)] == ["user"]
+    with pytest.raises(ValueError, match="current conversation tail"):
+        database.delete_last_event(conversation_id, assistant["id"])
