@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import json
+import logging
 import time
 import uuid
 from typing import Any, Literal
@@ -89,6 +90,9 @@ class OpenAIChatRequest(BaseModel):
     temperature: float | None = None
     max_tokens: int | None = Field(default=None, gt=0)
     user: str | None = None
+
+
+logger = logging.getLogger(__name__)
 
 
 _MULTIMODAL_STORAGE_PREFIX = "__CLICODING_MULTIMODAL_V1__"
@@ -320,6 +324,13 @@ def create_app(
                 except NoEligibleWorker as exc:
                     raise HTTPException(status_code=503, detail=str(exc)) from exc
                 except Exception as exc:
+                    # Keep the public response generic, but retain the server-side
+                    # traceback so upstream/planner failures can be diagnosed.
+                    # Do not log request content, prompts, or credentials.
+                    logger.exception(
+                        "Multi-model orchestration failed (conversation_id=%s)",
+                        conversation_id,
+                    )
                     raise HTTPException(
                         status_code=502, detail="Multi-model orchestration failed"
                     ) from exc
