@@ -8,7 +8,7 @@
 
 ## Current release candidate — 2026-11-11
 - PR #12, branch `feature/cds-ai-identity-isolation`, head `16dc243fc3cb668e1e00dedb2c4ec4f6abd4f168`.
-- CI: [run 43020242287](https://github.com/hamedg2881-bot/CLICoding/actions/runs/43020242287) — **119 passed, 1 warning**.
+- CI: [run 43021678254](https://github.com/hamedg2881-bot/CLICoding/actions/runs/43021678254) — **127 passed, 1 warning**.
 - Product/API identity: `CDS_AI`; legacy CLICoding service, environment and database names remain unchanged for compatibility.
 - Authentication: per-user bearer tokens and optional trusted Open WebUI identity-header mode. Trusted-header mode is safe only behind the documented private proxy boundary.
 - Tool execution: model output is only a request; allow-listed workstation tools enforce workspace scope, approval and idempotency. No arbitrary shell tool is exposed.
@@ -27,7 +27,7 @@ See [RELEASE_GATES.md](RELEASE_GATES.md). Source CI does not replace live DGX, p
 - Public product identity: `CDS_AI`; repository and legacy environment/database identifiers remain `CLICoding` for compatibility.
 - Authentication: per-user bearer tokens and optional trusted Open WebUI identity-header mode are implemented. Trusted-header mode is safe only behind the documented private proxy boundary.
 - Tool execution: the model only proposes calls; the reference tool host executes approved, allow-listed operations on the workstation. No arbitrary shell tool is exposed.
-- Context: admission control rejects overflow rather than silently truncating. Automatic summarization/compaction is not implemented.
+- Context: conservative admission plus model-assisted compaction for direct chat/tool turns. Versioned summaries are stored separately; original events remain intact, recent three user turns are retained, and common credential patterns are redacted. Specialist orchestration compaction, tokenizer-specific accounting and summary invalidation on edit/regenerate still need integration.
 - Streaming: direct chat and tool-call deltas stream upstream; specialist execution emits a buffered final answer as SSE. A specialist SSE delimiter defect was found and patched with a regression test.
 - Runtime config example now reflects recorded worker ports 8003/8004/8005. Exact served aliases and capability support must still be checked against live runtime endpoints before enabling workers.
 - No source candidate has been copied to DGX; no DGX file, service, model, container, or runtime has been changed by this work.
