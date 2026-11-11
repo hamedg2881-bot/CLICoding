@@ -67,7 +67,9 @@ def test_openai_gateway_parses_upstream_sse_deltas(monkeypatch):
     messages = [{"role": "user", "content": "Greet me"}]
 
     async def collect():
-        return [piece async for piece in gateway.stream(messages)]
+        return [piece async for piece in gateway.stream(
+            messages, options={"temperature": 0.3, "max_tokens": 128}
+        )]
 
     deltas = asyncio.run(collect())
 
@@ -77,6 +79,8 @@ def test_openai_gateway_parses_upstream_sse_deltas(monkeypatch):
     assert url == "http://model/v1/chat/completions"
     assert request["json"]["stream"] is True
     assert request["json"]["messages"] == messages
+    assert request["json"]["temperature"] == 0.3
+    assert request["json"]["max_tokens"] == 128
 
 
 def test_openai_gateway_rejects_incomplete_sse_stream(monkeypatch):
@@ -172,3 +176,31 @@ def test_openai_gateway_forwards_tools_and_parses_tool_call_response(monkeypatch
     assert request["json"]["tools"] == tools
     assert request["json"]["tool_choice"] == "auto"
     assert request["json"]["parallel_tool_calls"] is False
+
+
+def test_openai_gateway_forwards_generation_options_on_non_streaming_requests(monkeypatch):
+    response = FakeJSONResponse({
+        "model": "served-model",
+        "choices": [{
+            "message": {"role": "assistant", "content": "hello"},
+            "finish_reason": "stop",
+        }],
+    })
+    clients = []
+
+    def make_client(**kwargs):
+        client = FakeCompleteClient(response, **kwargs)
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr("clicoding_orchestrator.gateway.httpx.AsyncClient", make_client)
+    gateway = OpenAICompatibleGateway("http://model/v1", "served-model")
+    completion = asyncio.run(gateway.complete(
+        [{"role": "user", "content": "Hi"}],
+        options={"temperature": 0.2, "max_tokens": 64, "top_p": 0.8},
+    ))
+    assert completion.content == "hello"
+    payload = clients[0].request[1]["json"]
+    assert payload["temperature"] == 0.2
+    assert payload["max_tokens"] == 64
+    assert payload["top_p"] == 0.8
