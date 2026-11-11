@@ -972,7 +972,12 @@ def create_app(
         existing_events = db.list_events(conversation_id)
         if last_message.role == "tool":
             try:
-                validate_tool_result(existing_events, last_message.tool_call_id, last_message.name)
+                validate_tool_result(
+                    existing_events,
+                    last_message.tool_call_id,
+                    last_message.name,
+                    last_message.content,
+                )
             except ToolProtocolError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
         else:
