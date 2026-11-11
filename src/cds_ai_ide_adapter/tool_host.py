@@ -541,7 +541,7 @@ class WorkspaceToolHost:
             command = ["git", "diff", "--no-ext-diff", "--no-color", "--"]
             if arguments.get("path"):
                 path = self._safe_path(arguments["path"])
-                command.append(str(path))
+                command.append(path.relative_to(self.root).as_posix())
             return self._run_fixed_command(
                 command, name, "Read Git diff", require_approval=False
             )
@@ -552,7 +552,7 @@ class WorkspaceToolHost:
                 path = self._safe_path(project, must_exist=True)
                 if not path.is_file() or path.suffix.lower() not in {".sln", ".slnx", ".csproj"}:
                     raise ValueError("project must be a .sln, .slnx, or .csproj file")
-                command.append(path.relative_to(self.root).as_posix())
+                command.append(str(path))
             command.append("--no-restore")
             return self._run_fixed_command(
                 command,
