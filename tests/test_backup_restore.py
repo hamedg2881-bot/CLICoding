@@ -71,8 +71,7 @@ def test_restore_refuses_to_overwrite_without_explicit_flag(tmp_path):
 def test_backup_verification_rejects_unreferenced_files(tmp_path):
     database, attachments, _, _ = make_source(tmp_path)
     backup = create_backup(database, attachments, tmp_path / "backups")
-    extra = backup / "attachments" / "orphan" / "unreferenced.bin"
-    extra.parent.mkdir(parents=True)
+    extra = backup / "attachments" / "unreferenced.bin"
     extra.write_bytes(b"not in the database snapshot")
     with pytest.raises(BackupError, match="unreferenced attachment"):
         verify_backup(backup)
