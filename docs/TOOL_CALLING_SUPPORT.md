@@ -1,6 +1,6 @@
 # CDS_AI tool-calling transport contract
 
-**Status:** Implemented API transport slice; workstation execution remains a separate release gate.
+**Status:** API transport and Python workstation reference execution are implemented in the source candidate; live model/runtime and packaged IDE validation remain release gates.
 
 ## Supported round-trip
 
@@ -30,9 +30,9 @@ The validator supports object, array, string, integer, number, and boolean types
 - One tool call per assistant turn; parallel tool calls are disabled.
 - OpenAI-compatible API streaming now forwards incremental `delta.tool_calls` SSE fragments and persists the validated assembled call only after the stream completes. Tool-call streams still allow only one function call per assistant turn.
 - The workstation Python reference client still uses buffered HTTP tool rounds; Open WebUI and other SSE clients can receive streamed tool-call deltas.
-- Approval and execution are responsibilities of the future workstation-side tool host; no tool result should be submitted until its local policy has allowed the action.
+- Approval and execution are enforced by the Python workstation reference tool host; no tool result should be submitted until its local policy has allowed the action.
 - The model's live tool-call compatibility remains unverified on the DGX runtime.
 
 ## Release gates
 
-Before enabling this in production, add a reference workstation adapter and tests for path traversal, symlinks, workspace isolation, approval denial, duplicate/idempotent requests, result-size limits, timeout/cancel, malicious model arguments, and actual model/runtime tool-call behavior.
+Before enabling this in production, complete live model/runtime tool-call validation, packaged IDE approval UI, process sandboxing, audit export, cancellation, result redaction, Windows/macOS/Linux integration tests, and a full offline sample-project acceptance run. Existing Python reference tests cover a subset of path traversal, symlink, workspace isolation, approval denial, idempotency and fixed-command behavior; do not treat that subset as OS-level sandbox proof.

@@ -1,6 +1,6 @@
 # Chat Experience and Interaction Contract
 
-**Status:** Target contract for the Conversation-First implementation  
+**Status:** Product acceptance contract; implementation is partial and release-gated  
 **Date:** 2026-11-11
 
 ## Product objective
@@ -59,8 +59,8 @@ The first public adapter remains OpenAI Chat Completions compatible for common c
 
 ## Implementation status (2026-11-11)
 
-- Implemented: conversation-first direct chat routing; explicit specialist routing; persistent conversation history; Open WebUI identity mapping; actual upstream SSE token streaming for direct chat; completed-turn persistence only after successful stream completion.
-- Not yet implemented: client-visible cancellation endpoint/state; tool-call round-trip and safe workstation tool broker; context-window budgeting/compaction; regeneration/edit lineage; richer multimodal attachment storage; IDE reference adapter; specialist progress events.
+- Implemented in the current source candidate: conversation-first direct chat routing; explicit specialist routing; persistent conversation history; Open WebUI identity mapping; actual upstream SSE token streaming for direct chat; validated function-tool request/response flow; incremental tool-call SSE; workstation reference tool host; conservative context admission; per-user ownership isolation; exact retry idempotency.
+- Still open: automatic context compaction and lineage; user-visible stop/cancel, regenerate and edit/resubmit; typed attachment storage/retention; packaged IDE UI; browser/screenshot workflow; specialist progress events; live DGX model/runtime validation.
 - Streaming specialist executions currently emit a final-answer SSE sequence after execution completes. They are not token-streamed and must not be described as such.
 
 ## Release gates

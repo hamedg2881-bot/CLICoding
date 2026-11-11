@@ -172,3 +172,33 @@ The tool-call and IDE-side execution boundary is specified in docs/IDE_TOOL_PROT
 - The DGX remains an inference/orchestration host and must not mount developer workspaces.
 - Next implementation: OpenAI tool-call message round-trip, typed tool definitions/results, and a reference local tool host with allow-list and approval gates.
 - No arbitrary shell tool is exposed; tools are introduced one at a time with schemas, policy, audit, idempotency, and tests.
+
+
+## CDS_AI source completion and release gates — 2026-11-11
+
+The user-facing assistant identity is **CDS_AI**. The consolidated source candidate is tracked in PR #12. Earlier PRs #6–#11 are historical implementation slices and must not be treated as independent release artifacts.
+
+### Implemented in the current source candidate
+- [x] Conversation-first routing: ordinary chat bypasses Planner.
+- [x] Direct chat upstream SSE and disconnect cleanup.
+- [x] OpenAI function tool-call request/response round-trip with schema validation.
+- [x] Incremental tool-call SSE deltas and exact pending-call correlation.
+- [x] Workstation reference tool host with workspace scoping, approval, idempotency and fixed commands.
+- [x] Conservative context admission and output reservation; overflow is explicit.
+- [x] Per-user bearer-token ownership isolation and optional trusted-header mode.
+- [x] Retry idempotency for interrupted user turns and exact duplicate tool results.
+- [x] Product/API identity `CDS_AI`.
+- [x] Specialist final-answer SSE framing regression coverage.
+
+### Still required before the product can be called complete
+1. Conversation lifecycle: user-visible stop/cancel, retry, regenerate, edit/resubmit, turn lineage and concurrency semantics.
+2. Context lifecycle: model-specific tokenizers, automatic safe compaction, summary lineage, context inspection and recovery.
+3. Attachments: typed attachment IDs, bounded storage/retention, MIME sniffing, decoding, access control and image lifecycle.
+4. IDE integration: packaged reference editor integration, approval UI, diff review/apply, local build/test evidence and a second adapter compatibility check.
+5. Engineering loop: browser/Playwright execution, screenshot capture, vision-based visual validation, bounded repair and rollback.
+6. Security/operations: rate limits, token rotation/revocation, audit export, process sandboxing, result redaction, multi-process conversation locking and load tests.
+7. Live runtime: verify exact model aliases, tool-call parser behavior, vision behavior, context limits, timeout/cancellation and resource headroom on DGX.
+8. Offline release: pinned dependency artifacts, clean workstation install, public-internet-blocked end-to-end test, backup/restore and rollback.
+9. Client acceptance: Open WebUI plus at least one packaged IDE client, multi-user isolation and long-running conversation acceptance.
+
+Use `docs/RELEASE_GATES.md` as the single release checklist. A source test passing does not imply a live model capability or deployment gate has passed.

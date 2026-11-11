@@ -1,25 +1,29 @@
-# Copy to workers.yaml only after verifying the served model aliases and runtime ports.
-# This example never starts, stops, or reconfigures runtimes.
-# Ports match the currently recorded DGX Spark worker topology.
-# Keep concurrency at one until sustained load and unified-memory headroom are measured.
-# Do not add tool_calling until the exact model/runtime/parser passes live tests.
+# Copy to workers.yaml and replace the endpoint/model aliases with verified values.
+# This registers three physical model runtimes. It never starts/stops or changes them.
+#
+# All three models are intended to remain loaded simultaneously on DGX Spark.
+# Configure each runtime's own memory/KV budget in its serving configuration.
+# Keep one request per runtime initially; increase only after load testing.
+# The model field must be the exact OpenAI-compatible served alias.
 
 workers:
-  # GPT-OSS-20B — primary chat, reasoning and planning worker.
+  # GPT-OSS-20B MXFP4 — fast reasoning, planning, chat and synthesis.
   - id: fast-reasoning
-    base_url: http://127.0.0.1:8003/v1
+    base_url: http://127.0.0.1:8002/v1
     model: gpt-oss-20b
     capabilities: [chat, planning]
     enabled: false
     priority: 10
     max_concurrency: 1
+    # Conservative fallback limits; set these to verified runtime values.
     context_window_tokens: 16384
     max_output_tokens: 2048
-    timeout_seconds: 180
+    timeout_seconds: 120
+    # api_key_env: CLICODING_FAST_API_KEY
 
-  # Qwen3-Coder-Next — coding and code-review specialist.
+  # Qwen3-Coder-Next NVFP4 — coding and code review.
   - id: coding-primary
-    base_url: http://127.0.0.1:8004/v1
+    base_url: http://127.0.0.1:8000/v1
     model: qwen3-coder-next
     capabilities: [coding, review]
     enabled: false
@@ -28,15 +32,17 @@ workers:
     context_window_tokens: 16384
     max_output_tokens: 2048
     timeout_seconds: 240
+    # api_key_env: CLICODING_CODER_API_KEY
 
-  # Qwen3-VL-2B — experimental vision worker; enable only after live image tests.
+  # Qwen3.6-35B-A3B NVFP4 — general multimodal, image understanding and vision.
   - id: multimodal-primary
-    base_url: http://127.0.0.1:8005/v1
-    model: qwen3-vl-2b
-    capabilities: [vision]
+    base_url: http://127.0.0.1:8001/v1
+    model: qwen3.6-35b-a3b
+    capabilities: [chat, vision]
     enabled: false
     priority: 10
     max_concurrency: 1
-    context_window_tokens: 8192
-    max_output_tokens: 1024
+    context_window_tokens: 16384
+    max_output_tokens: 2048
     timeout_seconds: 180
+    # api_key_env: CLICODING_VISION_API_KEY

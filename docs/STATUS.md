@@ -1,9 +1,24 @@
 # Project Status
 
-**Last updated:** 2026-11-10  
+**Last updated:** 2026-11-11  
 **Canonical repository:** https://github.com/hamedg2881-bot/CLICoding  
-**Current phase:** Phase 2A — conversation and multi-model orchestration core  
-**Overall state:** Conversation persistence, capability routing, structured planning, durable multi-model execution, base64 image transport, and configurable three-way parallelism are implemented and covered by 44 passing CI tests. GPT-OSS-20B, Qwen3-Coder-Next, and an experimental Qwen3-VL-2B Vision runtime have each passed real endpoint smoke tests; GPT-OSS and Coder have also passed a concurrent request test. Real image inference, Orchestrator-to-live-runtime integration, Open WebUI conversation mapping/streaming, and sustained three-way load/headroom validation remain open.
+**Product / public assistant ID:** CDS_AI  
+**Current phase:** CDS_AI release hardening (source-only)  
+**Overall state:** The consolidated source candidate implements conversation-first routing, direct-chat SSE, validated streamed function-tool calls, a workstation-side reference tool host, conservative context admission, retry idempotency, and per-user conversation ownership. The last completed CI run before the latest patch was 117 passed, 1 warning; the specialist SSE framing fix and matching regression test are awaiting a fresh run. This is not deployment approval: automatic context compaction, user-facing stop/cancel and edit/regenerate lineage, typed attachment lifecycle, packaged IDE integration, live model/runtime capability validation, offline end-to-end acceptance, and rollback evidence remain open.
+
+## Current release candidate — 2026-11-11
+- Consolidated source candidate: PR #12, branch `feature/cds-ai-identity-isolation`, head `116fdf94ea4a6c532566ab163860d6565c3ca43c`.
+- Previous CI baseline: [run 43019014111](https://github.com/hamedg2881-bot/CLICoding/actions/runs/43019014111) — **117 passed, 1 warning**. A new regression test now covers valid SSE framing for specialist final answers; rerun is pending.
+- Public product identity: `CDS_AI`; repository and legacy environment/database identifiers remain `CLICoding` for compatibility.
+- Authentication: per-user bearer tokens and optional trusted Open WebUI identity-header mode are implemented. Trusted-header mode is safe only behind the documented private proxy boundary.
+- Tool execution: the model only proposes calls; the reference tool host executes approved, allow-listed operations on the workstation. No arbitrary shell tool is exposed.
+- Context: admission control rejects overflow rather than silently truncating. Automatic summarization/compaction is not implemented.
+- Streaming: direct chat and tool-call deltas stream upstream; specialist execution emits a buffered final answer as SSE. A specialist SSE delimiter defect was found and patched with a regression test.
+- Runtime config example now reflects recorded worker ports 8003/8004/8005. Exact served aliases and capability support must still be checked against live runtime endpoints before enabling workers.
+- No source candidate has been copied to DGX; no DGX file, service, model, container, or runtime has been changed by this work.
+
+## Release gates
+See [RELEASE_GATES.md](RELEASE_GATES.md). Do not transfer or deploy until all source/CI gates pass. Hardware-specific gates must be executed on DGX after source completion and before service restart; they cannot be claimed from GitHub CI alone.
 
 ## Confirmed requirements
 - Internet is unavailable during development; internal LAN is available.

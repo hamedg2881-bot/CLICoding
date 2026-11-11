@@ -1,6 +1,6 @@
 # CDS_AI workstation adapter reference
 
-**Status:** Initial Python reference adapter implemented; editor-specific UI integrations remain future work.
+**Status:** Python workstation reference adapter and async tool-loop client implemented; packaged editor integrations remain a release gate.
 
 ## Trust boundary
 
@@ -71,3 +71,10 @@ The example deliberately defaults approval to denial. Do not hard-code API keys;
 ## Acceptance gates
 
 Before production use, add platform-specific IDE approval UI, signed/trusted adapter identity, workspace registration, Windows/macOS/Linux integration tests, process sandboxing, audit export, cancellation, result redaction, and a full offline end-to-end sample project workflow.
+
+
+## Release status update — 2026-11-11
+
+The current source candidate includes the adapter, validated CDS_AI tool-call transport, per-user conversation ownership and exact retry idempotency. The adapter still performs buffered tool rounds; the OpenAI-compatible API can stream tool-call deltas to capable clients. There is not yet a packaged VS Code/Visual Studio/Rider/JetBrains extension or IDE approval/diff UI.
+
+Do not enable the `tool_calling` capability on a production worker until the exact DGX served model, runtime and parser have passed live tool-call tests. The adapter's local security tests do not replace OS-level process sandboxing or workstation end-to-end acceptance.
