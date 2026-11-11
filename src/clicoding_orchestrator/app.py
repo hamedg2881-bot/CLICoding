@@ -499,9 +499,6 @@ def create_app(
         """Stream a direct-chat turn and persist its assistant event only on success."""
         lock = conversation_locks.setdefault(conversation_id, asyncio.Lock())
         async with lock:
-            db.append_event(
-                conversation_id, role="user", content=_store_content(content), producer="user"
-            )
             events = []
             for event in db.list_events(conversation_id):
                 if event["role"] not in ("user", "assistant", "tool"):
@@ -512,7 +509,30 @@ def create_app(
                     if event["role"] == "assistant" and event["metadata"].get("tool_calls"):
                         item["content"] = None
                 events.append(item)
-            history = list(system_messages) + events
+            history = list(system_messages) + events + [
+                {"role": "user", "content": content}
+            ]
+            try:
+                ensure_context_budget(
+                    history,
+                    context_window_tokens=worker.context_window_tokens,
+                    reserved_output_tokens=(
+                        generation_options.get("max_tokens", worker.max_output_tokens)
+                        if generation_options else worker.max_output_tokens
+                    ),
+                )
+            except ContextBudgetExceeded as exc:
+                yield "data: " + json.dumps({
+                    "error": {"message": str(exc), "type": "context_length_exceeded"}
+                }, ensure_ascii=False) + "\\n\\n"
+                yield "data: [DONE]\\n\\n"
+                return
+            db.append_event(
+                conversation_id, role="user", content=_store_content(content), producer="user"
+            )
+            history = list(system_messages) + events + [
+                {"role": "user", "content": content}
+            ]
             role_chunk = {
                 "id": response_id,
                 "object": "chat.completion.chunk",
