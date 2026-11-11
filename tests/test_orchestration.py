@@ -546,3 +546,44 @@ def test_code_artifact_detection_accepts_fenced_blocks_for_all_languages():
         )
         assert MultiModelOrchestrator._contains_code_artifact(output)
 
+
+
+def test_specialist_context_compaction_is_worker_budgeted(tmp_path):
+    async def scenario():
+        db = Database(str(tmp_path / "specialist-context.sqlite3"))
+        registry = WorkerRegistry([
+            Worker(
+                "small-coder", "http://coder/v1", "small-coder",
+                frozenset({"coding"}), context_window_tokens=2048,
+                max_output_tokens=256,
+            )
+        ])
+        calls = []
+
+        class SummarizingGateway:
+            async def complete(self, messages):
+                calls.append(messages)
+                return Completion("Compact factual continuity summary.", "small-coder")
+
+        orchestrator = MultiModelOrchestrator(
+            db,
+            CapabilityRouter(registry),
+            gateway_factory=lambda worker: SummarizingGateway(),
+        )
+        worker = registry.enabled_workers()[0]
+        long_context = "\n".join(
+            f"Conversation fact {index}: preserve the exact project decision and value."
+            for index in range(200)
+        )
+        compacted = await orchestrator._compact_context_for_worker(
+            worker, long_context, reserved_input_tokens=256
+        )
+
+        assert compacted == "Compact factual continuity summary."
+        assert len(calls) > 1
+        assert all(
+            "untrusted data" in message[0]["content"]
+            for message in calls
+        )
+
+    asyncio.run(scenario())
