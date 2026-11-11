@@ -28,3 +28,17 @@ Supported OpenAI generation options (temperature, max_tokens, top_p, presence_pe
 - Model-specific image token estimation.
 
 Until these are implemented, the system prefers an explicit 413 over a silent loss of conversational context.
+
+
+## Safe compaction implementation — 2026-11-11
+
+Direct chat and tool-call turns attempt model-assisted compaction only after context admission detects overflow. The implementation:
+- stores versioned summaries in `conversation_summaries` with the exact covered event sequence and model identifier;
+- leaves original conversation events unchanged;
+- retains the latest three user turns and their assistant/tool continuations;
+- redacts common credential-shaped values before summary storage;
+- rechecks the final context budget after compaction;
+- rejects rather than truncates if the summary source itself cannot fit;
+- invalidates summaries transactionally when edit, regenerate or history deletion rewrites covered events.
+
+Current limitations: specialist multi-model orchestration does not yet use the compaction path; token estimates remain heuristic rather than model-specific; oversized summarization prefixes are rejected instead of chunked; user-visible context inspection is not yet packaged in clients.
