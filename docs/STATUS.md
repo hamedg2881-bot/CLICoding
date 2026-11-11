@@ -13,7 +13,8 @@
 - Streaming: direct chat and tool-call deltas stream; specialist output remains buffered before SSE. SSE framing regression tests cover specialist and operation-error paths.
 - Workstation execution: approved, allow-listed reference tool host; no arbitrary shell tool.
 - Worker example uses recorded ports 8003/8004/8005 and leaves all workers disabled. Served aliases and tool-call capability require live verification.
-- Remaining source gates include typed attachments, packaged IDE UI, browser/screenshot visual validation, specialist progress, OS-level process sandboxing, rate limiting, audit export, multi-process locking and cross-platform acceptance.
+- Attachments: conversation-scoped PNG/JPEG/GIF/WebP upload, bounded size, MIME sniffing, SHA-256 integrity, private local storage, owner-scoped fetch/delete, and attachment-reference resolution into model vision payloads. Automatic expiry/retention and storage backup/restore policy remain open.
+- Remaining source gates include packaged IDE UI, browser/screenshot visual validation, specialist progress, OS-level process sandboxing, rate limiting, audit export, multi-process locking and cross-platform acceptance.
 - No DGX host files, services, model runtimes or containers have been changed.
 
 ## Confirmed requirements
