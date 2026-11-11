@@ -604,6 +604,27 @@ def create_app(
             )
             return input_event, assistant_event, answer, execution_id
 
+    async def run_registered_turn(
+        conversation_id: str,
+        *args: Any,
+        **kwargs: Any,
+    ):
+        active = active_turns.get(conversation_id)
+        if active is not None and not active.done():
+            raise HTTPException(status_code=409, detail="A turn is already active for this conversation")
+        task = asyncio.create_task(run_turn(conversation_id, *args, **kwargs))
+        active_turns[conversation_id] = task
+        try:
+            return await task
+        except asyncio.CancelledError:
+            current_task = asyncio.current_task()
+            if current_task is not None and current_task.cancelling():
+                raise
+            raise HTTPException(status_code=409, detail="The assistant turn was cancelled")
+        finally:
+            if active_turns.get(conversation_id) is task:
+                active_turns.pop(conversation_id, None)
+
     async def _stream_direct_turn_impl(
         conversation_id: str,
         content: str | list[dict[str, Any]],
@@ -905,7 +926,7 @@ def create_app(
     ) -> TurnResponse:
         if not _owns_conversation(http_request, conversation_id):
             raise HTTPException(status_code=404, detail="Conversation not found")
-        user_event, assistant_event, answer, execution_id = await run_turn(
+        user_event, assistant_event, answer, execution_id = await run_registered_turn(
             conversation_id, turn_request.content, turn_request.task_type
         )
         return TurnResponse(
@@ -1120,27 +1141,13 @@ def create_app(
                 "tool_call_id": last_message.tool_call_id,
                 **({"name": last_message.name} if last_message.name else {}),
             }
-        active = active_turns.get(conversation_id)
-        if active is not None and not active.done():
-            raise HTTPException(status_code=409, detail="A turn is already active for this conversation")
-        turn_task = asyncio.create_task(run_turn(
+        input_event, assistant_event, answer, execution_id = await run_registered_turn(
             conversation_id, last_user or "", chat_request.task_type, supplied_system,
             force_orchestration=is_specialist and not tool_definitions,
             input_role=last_message.role, input_metadata=input_metadata,
             tool_definitions=tool_definitions or None, tool_choice=chat_request.tool_choice,
             generation_options=generation_options,
-        ))
-        active_turns[conversation_id] = turn_task
-        try:
-            input_event, assistant_event, answer, execution_id = await turn_task
-        except asyncio.CancelledError:
-            current_task = asyncio.current_task()
-            if current_task is not None and current_task.cancelling():
-                raise
-            raise HTTPException(status_code=409, detail="The assistant turn was cancelled")
-        finally:
-            if active_turns.get(conversation_id) is turn_task:
-                active_turns.pop(conversation_id, None)
+        )
 
         if chat_request.stream:
             # Specialist execution emits a final-answer SSE stream after the task
@@ -1222,7 +1229,7 @@ def create_app(
             raise HTTPException(
                 status_code=503, detail="Multi-model planning is disabled"
             )
-        user_event, assistant_event, answer, execution_id = await run_turn(
+        user_event, assistant_event, answer, execution_id = await run_registered_turn(
             conversation_id, turn_request.content, turn_request.task_type,
             force_orchestration=True,
         )

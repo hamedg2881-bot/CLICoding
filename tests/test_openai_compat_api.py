@@ -1067,3 +1067,53 @@ def test_cancel_endpoint_stops_an_active_non_streaming_turn(tmp_path):
     assert gateway.cancelled.is_set()
     events = database.list_events(conversation_id)
     assert [event["role"] for event in events] == ["user"]
+
+
+
+def test_cancel_endpoint_stops_an_active_conversation_api_turn(tmp_path):
+    class BlockingGateway:
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.cancelled = asyncio.Event()
+
+        async def complete(self, messages, *, tools=None, tool_choice=None, options=None):
+            self.started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                self.cancelled.set()
+                raise
+
+    gateway = BlockingGateway()
+    database = Database(str(tmp_path / "cancel-api-turn.sqlite3"))
+    conversation_id = database.create_conversation()["id"]
+    app = create_app(
+        settings=Settings(database_path=str(tmp_path / "cancel-api-turn.sqlite3")),
+        gateway=gateway,
+        database=database,
+        registry=WorkerRegistry([
+            Worker("chat", "http://chat/v1", "chat-model", frozenset({"chat"}))
+        ]),
+    )
+
+    async def exercise_cancel():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            turn = asyncio.create_task(client.post(
+                f"/api/v1/conversations/{conversation_id}/turns",
+                json={"content": "Please wait", "task_type": "chat"},
+            ))
+            await asyncio.wait_for(gateway.started.wait(), timeout=3)
+            cancelled = await client.post(
+                f"/api/v1/conversations/{conversation_id}/cancel"
+            )
+            assert cancelled.status_code == 200
+            assert cancelled.json() == {"cancelled": True}
+            response = await asyncio.wait_for(turn, timeout=3)
+            assert response.status_code == 409
+
+    asyncio.run(exercise_cancel())
+    assert gateway.cancelled.is_set()
+    assert [event["role"] for event in database.list_events(conversation_id)] == ["user"]
