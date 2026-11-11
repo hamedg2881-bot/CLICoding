@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 import json
-from typing import Protocol
+from typing import Any, Protocol
 
 import httpx
 
@@ -12,10 +12,18 @@ import httpx
 class Completion:
     content: str
     model: str
+    tool_calls: list[dict[str, Any]] | None = None
+    finish_reason: str = "stop"
 
 
 class ModelGateway(Protocol):
-    async def complete(self, messages: list[dict[str, object]]) -> Completion: ...
+    async def complete(
+        self,
+        messages: list[dict[str, object]],
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
+    ) -> Completion: ...
 
     def stream(self, messages: list[dict[str, object]]) -> AsyncIterator[str]: ...
 
@@ -45,8 +53,23 @@ class OpenAICompatibleGateway:
             headers["Authorization"] = f"Bearer {self.api_key}"
         return headers
 
-    async def complete(self, messages: list[dict[str, object]]) -> Completion:
-        payload = {"model": self.model, "messages": messages, "stream": False}
+    async def complete(
+        self,
+        messages: list[dict[str, object]],
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
+    ) -> Completion:
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "stream": False,
+        }
+        if tools is not None:
+            payload["tools"] = tools
+            payload["parallel_tool_calls"] = False
+        if tool_choice is not None:
+            payload["tool_choice"] = tool_choice
         try:
             async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
                 response = await client.post(self.url, json=payload, headers=self._headers())
@@ -56,15 +79,27 @@ class OpenAICompatibleGateway:
             raise GatewayError(f"Upstream model request failed: {exc}") from exc
 
         try:
-            message = data["choices"][0]["message"]
-            content = message["content"]
+            choice = data["choices"][0]
+            message = choice["message"]
+            content = message.get("content")
+            raw_tool_calls = message.get("tool_calls")
             returned_model = str(data.get("model") or self.model)
-        except (KeyError, IndexError, TypeError) as exc:
+            finish_reason = str(choice.get("finish_reason") or "stop")
+        except (KeyError, IndexError, AttributeError, TypeError) as exc:
             raise GatewayError("Upstream returned an invalid chat-completion response") from exc
 
-        if not isinstance(content, str):
-            raise GatewayError("The first slice supports text-only assistant responses")
-        return Completion(content=content, model=returned_model)
+        if content is not None and not isinstance(content, str):
+            raise GatewayError("Upstream returned a non-text assistant content value")
+        if raw_tool_calls is not None and not isinstance(raw_tool_calls, list):
+            raise GatewayError("Upstream returned invalid tool_calls")
+        if content is None and not raw_tool_calls:
+            raise GatewayError("Upstream returned neither assistant content nor tool calls")
+        return Completion(
+            content=content or "",
+            model=returned_model,
+            tool_calls=raw_tool_calls,
+            finish_reason=finish_reason,
+        )
 
     async def stream(self, messages: list[dict[str, object]]) -> AsyncIterator[str]:
         """Yield actual assistant text deltas from an upstream OpenAI SSE stream."""
