@@ -1013,7 +1013,7 @@ def test_failed_tool_continuation_retry_reuses_the_exact_tool_result(tmp_path):
 
 def test_openai_api_regenerates_only_the_latest_matching_turn(tmp_path):
     client, gateway = make_client(tmp_path)
-    database = Database(str(tmp_path / "conversations.sqlite3"))
+    database = Database(str(tmp_path / "openai.sqlite3"))
     conversation_id = database.create_conversation()["id"]
     request = {
         "model": "CDS_AI",
@@ -1040,7 +1040,7 @@ def test_openai_api_regenerates_only_the_latest_matching_turn(tmp_path):
 
 def test_openai_api_rejects_regeneration_for_nonmatching_latest_input(tmp_path):
     client, _ = make_client(tmp_path)
-    database = Database(str(tmp_path / "conversations.sqlite3"))
+    database = Database(str(tmp_path / "openai.sqlite3"))
     conversation_id = database.create_conversation()["id"]
     first = client.post(
         "/v1/chat/completions",
