@@ -327,6 +327,82 @@ class Database:
             "created_at": now,
         }
 
+    def replace_events_from(
+        self,
+        conversation_id: str,
+        event_id: str,
+        replacement_events: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Atomically replace a target event and all later events."""
+        prepared = []
+        for event in replacement_events:
+            role = event.get("role")
+            content = event.get("content")
+            if role not in {"user", "assistant", "tool"} or not isinstance(content, str):
+                raise ValueError("replacement events require supported roles and text content")
+            metadata = event.get("metadata")
+            metadata_json = (
+                json.dumps(metadata, ensure_ascii=False, separators=(",", ":"))
+                if metadata is not None else None
+            )
+            prepared.append((
+                str(uuid.uuid4()),
+                role,
+                content,
+                event.get("producer"),
+                metadata,
+                metadata_json,
+            ))
+
+        now = utc_now()
+        result = []
+        with self.session() as connection:
+            target = connection.execute(
+                "SELECT sequence FROM conversation_events WHERE conversation_id = ? AND id = ?",
+                (conversation_id, event_id),
+            ).fetchone()
+            if target is None:
+                raise ValueError("target event does not exist in this conversation")
+            connection.execute(
+                "DELETE FROM conversation_events WHERE conversation_id = ? AND sequence >= ?",
+                (conversation_id, target["sequence"]),
+            )
+            row = connection.execute(
+                "SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence "
+                "FROM conversation_events WHERE conversation_id = ?",
+                (conversation_id,),
+            ).fetchone()
+            sequence = int(row["next_sequence"])
+            for new_id, role, content, producer, metadata, metadata_json in prepared:
+                connection.execute(
+                    """
+                    INSERT INTO conversation_events
+                        (id, conversation_id, sequence, role, content, producer,
+                         metadata_json, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        new_id, conversation_id, sequence, role, content,
+                        producer, metadata_json, now,
+                    ),
+                )
+                result.append({
+                    "id": new_id,
+                    "conversation_id": conversation_id,
+                    "sequence": sequence,
+                    "role": role,
+                    "content": content,
+                    "producer": producer,
+                    "metadata": metadata,
+                    "created_at": now,
+                })
+                sequence += 1
+            connection.execute(
+                "UPDATE conversations SET updated_at = ? WHERE id = ?",
+                (now, conversation_id),
+            )
+        return result
+
     def delete_events_from(self, conversation_id: str, event_id: str) -> int:
         """Delete a target event and every later event in one transaction."""
         with self.session() as connection:
