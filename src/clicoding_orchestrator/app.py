@@ -670,42 +670,6 @@ def create_app(
         response_id = f"chatcmpl-{uuid.uuid4().hex}"
         created_at = int(time.time())
         is_specialist = chat_request.task_type != "chat" or _has_images(last_user)
-        if chat_request.stream and not is_specialist:
-            try:
-                stream_worker = router.select("chat")
-            except NoEligibleWorker as exc:
-                raise HTTPException(status_code=503, detail=str(exc)) from exc
-            stream_gateway = gateway or OpenAICompatibleGateway(
-                base_url=stream_worker.base_url,
-                model=stream_worker.model,
-                api_key=stream_worker.api_key,
-                timeout_seconds=stream_worker.timeout_seconds,
-            )
-            return StreamingResponse(
-                stream_direct_turn(
-                    conversation_id, last_user, supplied_system, stream_worker,
-                    stream_gateway, response_id, created_at,
-                    generation_options,
-                ),
-                media_type="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "X-Accel-Buffering": "no",
-                    "Connection": "keep-alive",
-                },
-            )
-
-        if tool_definitions:
-            try:
-                router.select_capabilities({"tool_calling"})
-            except NoEligibleWorker as exc:
-                raise HTTPException(status_code=503, detail=str(exc)) from exc
-        input_metadata = None
-        if last_message.role == "tool":
-            input_metadata = {
-                "tool_call_id": last_message.tool_call_id,
-                **({"name": last_message.name} if last_message.name else {}),
-            }
         generation_options = {
             key: value for key, value in {
                 "temperature": chat_request.temperature,
@@ -721,6 +685,73 @@ def create_app(
                 status_code=400,
                 detail="generation options are currently supported on direct chat and tool-call turns",
             )
+
+        stream_worker = None
+        if not (is_specialist and not tool_definitions):
+            required = (
+                {"tool_calling"} if tool_definitions
+                else ({"vision"} if _has_images(last_user) else {chat_request.task_type})
+            )
+            try:
+                stream_worker = router.select_capabilities(required)
+            except NoEligibleWorker as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+            if (
+                chat_request.max_tokens is not None
+                and chat_request.max_tokens > stream_worker.max_output_tokens
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail="max_tokens exceeds the selected worker output limit",
+                )
+
+        if chat_request.stream and not is_specialist:
+            assert stream_worker is not None
+            stream_events = []
+            for event in existing_events:
+                if event["role"] not in ("user", "assistant", "tool"):
+                    continue
+                item = {"role": event["role"], "content": _restore_content(event["content"])}
+                if event.get("metadata"):
+                    item.update(event["metadata"])
+                    if event["role"] == "assistant" and event["metadata"].get("tool_calls"):
+                        item["content"] = None
+                stream_events.append(item)
+            try:
+                ensure_context_budget(
+                    supplied_system + stream_events + [{"role": "user", "content": last_user}],
+                    context_window_tokens=stream_worker.context_window_tokens,
+                    reserved_output_tokens=(
+                        chat_request.max_tokens or stream_worker.max_output_tokens
+                    ),
+                )
+            except ContextBudgetExceeded as exc:
+                raise HTTPException(status_code=413, detail=str(exc)) from exc
+            stream_gateway = gateway or OpenAICompatibleGateway(
+                base_url=stream_worker.base_url,
+                model=stream_worker.model,
+                api_key=stream_worker.api_key,
+                timeout_seconds=stream_worker.timeout_seconds,
+            )
+            return StreamingResponse(
+                stream_direct_turn(
+                    conversation_id, last_user, supplied_system, stream_worker,
+                    stream_gateway, response_id, created_at, generation_options,
+                ),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
+                    "Connection": "keep-alive",
+                },
+            )
+
+        input_metadata = None
+        if last_message.role == "tool":
+            input_metadata = {
+                "tool_call_id": last_message.tool_call_id,
+                **({"name": last_message.name} if last_message.name else {}),
+            }
         input_event, assistant_event, answer, execution_id = await run_turn(
             conversation_id, last_user or "", chat_request.task_type, supplied_system,
             force_orchestration=is_specialist and not tool_definitions,
