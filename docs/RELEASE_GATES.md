@@ -19,7 +19,8 @@
 ## Remaining source gates
 - [ ] Client Stop controls and cancellation propagation to external workstation processes; current active-turn registry is process-local.
 - [ ] Regenerate/edit/resubmit semantics and event lineage (being implemented in a parallel PR; not yet consolidated here).
-- [ ] Automatic context compaction, summary lineage and user-visible context inspection.
+- [x] Versioned model-assisted context summaries for direct chat/tool turns; original events remain intact, the latest three user turns are preserved, and common credential patterns are redacted.
+- [ ] Specialist-orchestration compaction, summary invalidation on edit/regenerate, tokenizer-specific accounting and user-visible context inspection.
 - [ ] Typed attachment records, bounded binary storage, MIME sniffing, retention and access checks.
 - [ ] Packaged IDE integration with approval and diff/apply UX.
 - [ ] Browser/Playwright/screenshot workflow and vision-based UI validation.
@@ -47,4 +48,4 @@ The sample worker registry uses recorded ports 8003/8004/8005 but keeps every wo
 - [ ] Record exact commit, archive hash, deployed files, test results and rollback point.
 
 ## Current CI evidence
-PR #12 commit `16dc243fc3cb668e1e00dedb2c4ec4f6abd4f168` passed run 43020242287: **119 passed, 1 warning**. The warning is a Starlette/httpx TestClient deprecation notice. This is source-only evidence, not live DGX or editor acceptance.
+PR #12 commit `8761ea32ba7f42168f237d0973fb9637b303809d` passed run 43021678254: **127 passed, 1 warning**. The warning is a Starlette/httpx TestClient deprecation notice. This is source-only evidence, not live DGX or editor acceptance.
