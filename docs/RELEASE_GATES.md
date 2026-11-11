@@ -22,7 +22,8 @@
 
 ## Remaining source capabilities
 - [ ] Specialist multi-model context compaction and specialist progress events.
-- [ ] Typed attachment records, bounded binary storage, MIME sniffing, retention and access control.
+- [x] Typed, conversation-scoped image attachment records, bounded binary upload, MIME sniffing, SHA-256 integrity checks, private storage and authenticated retrieval/deletion.
+- [ ] Automatic attachment retention/expiry, storage backup/restore policy and image decoding/content validation.
 - [ ] Packaged IDE integration with workspace selection, approval, diff review/apply and Stop controls.
 - [ ] Browser/Playwright/screenshot workflow and vision-based UI validation.
 - [ ] Multi-call/parallel tool semantics, only after exact runtime capability verification.
