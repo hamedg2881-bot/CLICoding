@@ -287,7 +287,7 @@ def create_app(
         # Health remains available to local service monitors. User tokens provide
         # isolated conversation namespaces; a global key is an admin/service key.
         request.state.principal_id = "shared"
-        request.state.is_admin = False
+        request.state.is_admin = not (config.api_key or config.user_api_keys)
         if request.url.path != "/health" and (config.api_key or config.user_api_keys):
             supplied = request.headers.get("authorization", "")
             scheme, separator, token = supplied.partition(" ")
