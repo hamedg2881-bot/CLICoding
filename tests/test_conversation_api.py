@@ -464,3 +464,62 @@ def test_replacing_or_deleting_history_invalidates_covered_summaries(tmp_path):
     tail = database.list_events(conversation_id)[-1]
     database.delete_last_event(conversation_id, tail["id"])
     assert database.get_latest_summary(conversation_id)["through_sequence"] == 2
+
+
+def test_cancel_from_second_app_instance_reaches_active_turn(tmp_path):
+    import asyncio
+    import httpx
+
+    async def scenario():
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        class SlowGateway:
+            async def complete(self, messages):
+                started.set()
+                try:
+                    await asyncio.sleep(30)
+                except asyncio.CancelledError:
+                    cancelled.set()
+                    raise
+
+        database_path = str(tmp_path / "shared-apps.sqlite3")
+        first_database = Database(database_path)
+        second_database = Database(database_path)
+        conversation_id = first_database.create_conversation()["id"]
+        settings = Settings(database_path=database_path)
+        first_app = create_app(
+            settings=settings, gateway=SlowGateway(), database=first_database
+        )
+        second_app = create_app(
+            settings=settings, gateway=FakeGateway(), database=second_database
+        )
+        first_transport = httpx.ASGITransport(app=first_app)
+        second_transport = httpx.ASGITransport(app=second_app)
+
+        async with (
+            httpx.AsyncClient(transport=first_transport, base_url="http://first") as first,
+            httpx.AsyncClient(transport=second_transport, base_url="http://second") as second,
+        ):
+            turn = asyncio.create_task(first.post(
+                f"/api/v1/conversations/{conversation_id}/turns",
+                json={"content": "A deliberately slow request"},
+            ))
+            await asyncio.wait_for(started.wait(), timeout=3)
+            cancellation = await second.post(
+                f"/api/v1/conversations/{conversation_id}/cancel"
+            )
+            assert cancellation.status_code == 200
+            assert cancellation.json() == {"cancelled": True}
+            response = await asyncio.wait_for(turn, timeout=3)
+            assert response.status_code == 409
+            assert cancelled.is_set()
+
+        assert second_database.acquire_conversation_turn(
+            conversation_id, "post-cancel-verification"
+        )
+        assert second_database.release_conversation_turn(
+            conversation_id, "post-cancel-verification"
+        )
+
+    asyncio.run(scenario())
