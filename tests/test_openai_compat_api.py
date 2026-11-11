@@ -5,6 +5,7 @@ from clicoding_orchestrator.app import create_app
 from clicoding_orchestrator.config import Settings
 from clicoding_orchestrator.database import Database
 from clicoding_orchestrator.gateway import Completion, GatewayError
+from clicoding_orchestrator.policy import CDS_AI_SYSTEM_PROMPT
 from clicoding_orchestrator.registry import Worker, WorkerRegistry
 
 
@@ -80,6 +81,7 @@ def test_openai_chat_returns_conversation_id_and_preserves_handoff_context(tmp_p
     assert second.status_code == 200
     assert second.json()["conversation_id"] == conversation_id
     assert gateway.calls[1] == [
+        {"role": "system", "content": CDS_AI_SYSTEM_PROMPT},
         {"role": "user", "content": "Hello"},
         {"role": "assistant", "content": "reply-1"},
         {"role": "user", "content": "Continue this"},
@@ -106,6 +108,7 @@ def test_openai_chat_applies_system_messages_and_imports_initial_history(tmp_pat
         {"role": "user", "content": "Earlier question"},
         {"role": "assistant", "content": "Earlier answer"},
         {"role": "user", "content": "Current question"},
+        {"role": "system", "content": CDS_AI_SYSTEM_PROMPT},
     ]
 
 
@@ -261,7 +264,7 @@ def test_openai_image_payload_is_forwarded_to_vision_worker_and_persisted(tmp_pa
     )
 
     assert response.status_code == 200
-    assert gateway.calls[0][-1]["content"] == content
+    assert gateway.calls[0][-2]["content"] == content
     conversation_id = response.json()["conversation_id"]
     saved = database.list_events(conversation_id)
     assert saved[0]["content"].startswith("__CLICODING_MULTIMODAL_V1__")
@@ -1035,7 +1038,7 @@ def test_openai_api_regenerates_only_the_latest_matching_turn(tmp_path):
     events = database.list_events(conversation_id)
     assert [event["role"] for event in events] == ["user", "assistant"]
     assert events[-1]["content"] == "reply-2"
-    assert gateway.calls[1] == [{"role": "user", "content": "Explain the design"}]
+    assert gateway.calls[1][-1] == {"role": "user", "content": "Explain the design"}
 
 
 def test_openai_api_rejects_regeneration_for_nonmatching_latest_input(tmp_path):
@@ -1179,7 +1182,7 @@ def test_openwebui_regeneration_is_detected_from_exact_submitted_history(tmp_pat
     )
     assert second.status_code == 200
     assert second.json()["choices"][0]["message"]["content"] == "reply-2"
-    assert gateway.calls[1] == [{"role": "user", "content": "Repeat this question"}]
+    assert gateway.calls[1][-1] == {"role": "user", "content": "Repeat this question"}
 
     third = client.post(
         "/v1/chat/completions",
@@ -1194,7 +1197,7 @@ def test_openwebui_regeneration_is_detected_from_exact_submitted_history(tmp_pat
         headers=headers,
     )
     assert third.status_code == 200
-    assert gateway.calls[2] == [
+    assert gateway.calls[2][1:] == [
         {"role": "user", "content": "Repeat this question"},
         {"role": "assistant", "content": "reply-2"},
         {"role": "user", "content": "Repeat this question"},
@@ -1223,7 +1226,7 @@ def test_openai_api_edits_user_event_and_truncates_later_turns_only_after_succes
         },
     )
     assert edited.status_code == 200
-    assert gateway.calls[0] == [{"role": "user", "content": "edited question"}]
+    assert gateway.calls[0][-1] == {"role": "user", "content": "edited question"}
     events = database.list_events(conversation_id)
     assert [event["role"] for event in events] == ["user", "assistant"]
     assert events[0]["content"] == "edited question"
