@@ -1199,3 +1199,115 @@ def test_openwebui_regeneration_is_detected_from_exact_submitted_history(tmp_pat
         {"role": "assistant", "content": "reply-2"},
         {"role": "user", "content": "Repeat this question"},
     ]
+
+
+def test_openai_api_edits_user_event_and_truncates_later_turns_only_after_success(tmp_path):
+    client, gateway = make_client(tmp_path)
+    database = Database(str(tmp_path / "openai.sqlite3"))
+    conversation_id = database.create_conversation()["id"]
+    target = database.append_event(conversation_id, "user", "old question", "user")
+    database.append_event(conversation_id, "assistant", "old answer", "chat")
+    database.append_event(conversation_id, "user", "later question", "user")
+    database.append_event(conversation_id, "assistant", "later answer", "chat")
+
+    edited = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "CDS_AI",
+            "conversation_id": conversation_id,
+            "messages": [{"role": "user", "content": "edited question"}],
+        },
+        headers={
+            "X-CLICoding-Operation": "edit",
+            "X-CLICoding-Event-ID": target["id"],
+        },
+    )
+    assert edited.status_code == 200
+    assert gateway.calls[0] == [{"role": "user", "content": "edited question"}]
+    events = database.list_events(conversation_id)
+    assert [event["role"] for event in events] == ["user", "assistant"]
+    assert events[0]["content"] == "edited question"
+    assert events[1]["content"] == "reply-1"
+
+
+def test_failed_edit_preserves_the_original_conversation_history(tmp_path):
+    gateway = FailOnceGateway()
+    database = Database(str(tmp_path / "openai.sqlite3"))
+    conversation_id = database.create_conversation()["id"]
+    target = database.append_event(conversation_id, "user", "original", "user")
+    database.append_event(conversation_id, "assistant", "original answer", "chat")
+    original = database.list_events(conversation_id)
+    registry = WorkerRegistry([
+        Worker("chat", "http://chat/v1", "chat-model", frozenset({"chat"}))
+    ])
+    app = create_app(
+        settings=Settings(database_path=str(tmp_path / "openai.sqlite3")),
+        gateway=gateway,
+        database=database,
+        registry=registry,
+    )
+    response = TestClient(app).post(
+        "/v1/chat/completions",
+        json={
+            "model": "CDS_AI",
+            "conversation_id": conversation_id,
+            "messages": [{"role": "user", "content": "edited"}],
+        },
+        headers={
+            "X-CLICoding-Operation": "edit",
+            "X-CLICoding-Event-ID": target["id"],
+        },
+    )
+    assert response.status_code == 502
+    assert database.list_events(conversation_id) == original
+
+
+def test_openai_api_rejects_editing_an_assistant_event(tmp_path):
+    client, _ = make_client(tmp_path)
+    database = Database(str(tmp_path / "openai.sqlite3"))
+    conversation_id = database.create_conversation()["id"]
+    database.append_event(conversation_id, "user", "question", "user")
+    assistant = database.append_event(conversation_id, "assistant", "answer", "chat")
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "CDS_AI",
+            "conversation_id": conversation_id,
+            "messages": [{"role": "user", "content": "edited"}],
+        },
+        headers={
+            "X-CLICoding-Operation": "edit",
+            "X-CLICoding-Event-ID": assistant["id"],
+        },
+    )
+    assert response.status_code == 400
+    assert [event["role"] for event in database.list_events(conversation_id)] == [
+        "user", "assistant"
+    ]
+
+
+def test_openai_api_streams_edit_and_commits_history_after_completion(tmp_path):
+    client, _ = make_client(tmp_path)
+    database = Database(str(tmp_path / "openai.sqlite3"))
+    conversation_id = database.create_conversation()["id"]
+    target = database.append_event(conversation_id, "user", "old question", "user")
+    database.append_event(conversation_id, "assistant", "old answer", "chat")
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "CDS_AI",
+            "conversation_id": conversation_id,
+            "messages": [{"role": "user", "content": "new edited question"}],
+            "stream": True,
+        },
+        headers={
+            "X-CLICoding-Operation": "edit",
+            "X-CLICoding-Event-ID": target["id"],
+        },
+    )
+    assert response.status_code == 200
+    assert "data: [DONE]" in response.text
+    events = database.list_events(conversation_id)
+    assert [event["role"] for event in events] == ["user", "assistant"]
+    assert events[0]["content"] == "new edited question"
+    assert events[1]["content"] == "reply-1"
