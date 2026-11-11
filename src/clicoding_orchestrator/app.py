@@ -139,7 +139,9 @@ def _restore_content(content: str) -> str | list[dict[str, Any]]:
     return value if isinstance(value, list) else content
 
 
-def _content_text(content: str | list[dict[str, Any]]) -> str:
+def _content_text(content: str | list[dict[str, Any]] | None) -> str:
+    if content is None:
+        return ""
     if isinstance(content, str):
         return content
     return "\n".join(
@@ -318,6 +320,8 @@ def create_app(
                 item = {"role": event["role"], "content": _restore_content(event["content"])}
                 if event.get("metadata"):
                     item.update(event["metadata"])
+                    if event["role"] == "assistant" and event["metadata"].get("tool_calls"):
+                        item["content"] = None
                 events.append(item)
             history = list(system_messages or []) + events
             recent_image_parts: list[dict[str, Any]] = []
@@ -450,11 +454,16 @@ def create_app(
             db.append_event(
                 conversation_id, role="user", content=_store_content(content), producer="user"
             )
-            events = [
-                {"role": event["role"], "content": _restore_content(event["content"])}
-                for event in db.list_events(conversation_id)
-                if event["role"] in ("user", "assistant")
-            ]
+            events = []
+            for event in db.list_events(conversation_id):
+                if event["role"] not in ("user", "assistant", "tool"):
+                    continue
+                item = {"role": event["role"], "content": _restore_content(event["content"])}
+                if event.get("metadata"):
+                    item.update(event["metadata"])
+                    if event["role"] == "assistant" and event["metadata"].get("tool_calls"):
+                        item["content"] = None
+                events.append(item)
             history = list(system_messages) + events
             role_chunk = {
                 "id": response_id,
@@ -555,6 +564,8 @@ def create_app(
             not isinstance(last_message.content, str) or not last_message.content
         ):
             raise HTTPException(status_code=400, detail="Tool result content is required")
+        if last_message.role == "tool" and chat_request.tools is None:
+            raise HTTPException(status_code=400, detail="Tool definitions must accompany tool results")
         last_user = last_message.content
         supplied_system = [
             _chat_message(message) for message in chat_request.messages
