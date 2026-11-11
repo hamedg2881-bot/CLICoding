@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 
 import httpx
@@ -1593,3 +1594,125 @@ def test_specialist_stream_uses_valid_sse_delimiters(tmp_path):
     ]
     assert payloads[1]["choices"][0]["delta"]["content"] == "specialist-result"
     assert payloads[2]["choices"][0]["finish_reason"] == "stop"
+
+
+
+def test_typed_image_attachment_upload_resolves_for_vision_and_stays_scoped(tmp_path):
+    class RecordingGateway:
+        def __init__(self):
+            self.calls = []
+
+        async def complete(self, messages, **kwargs):
+            self.calls.append(messages)
+            return Completion(content="I can inspect the attached image.", model="vision-model")
+
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/e6kAAAAASUVORK5CYII="
+    )
+    gateway = RecordingGateway()
+    database = Database(str(tmp_path / "attachments.sqlite3"))
+    conversation_id = database.create_conversation()["id"]
+    other_conversation_id = database.create_conversation()["id"]
+    settings = Settings(
+        database_path=str(tmp_path / "attachments.sqlite3"),
+        attachment_storage_dir=str(tmp_path / "attachments"),
+        max_attachment_bytes=1024 * 1024,
+    )
+    app = create_app(
+        settings=settings,
+        gateway=gateway,
+        database=database,
+        registry=WorkerRegistry([
+            Worker(
+                "vision", "http://vision/v1", "vision-model",
+                frozenset({"chat", "vision"}),
+            )
+        ]),
+    )
+    client = TestClient(app)
+    uploaded = client.post(
+        f"/api/v1/conversations/{conversation_id}/attachments",
+        content=png,
+        headers={"Content-Type": "image/png", "X-Filename": "../screen shot.png"},
+    )
+    assert uploaded.status_code == 200
+    attachment = uploaded.json()
+    assert attachment["mime_type"] == "image/png"
+    assert attachment["size_bytes"] == len(png)
+    assert attachment["content_part"]["type"] == "attachment"
+
+    fetched = client.get(
+        f"/api/v1/conversations/{conversation_id}/attachments/{attachment['attachment_id']}"
+    )
+    assert fetched.status_code == 200
+    assert fetched.content == png
+    assert fetched.headers["content-type"].startswith("image/png")
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "CDS_AI",
+            "conversation_id": conversation_id,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "What is in this image?"},
+                    attachment["content_part"],
+                ],
+            }],
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "I can inspect the attached image."
+    image_part = gateway.calls[0][-1]["content"][1]
+    assert image_part["type"] == "image_url"
+    assert image_part["image_url"]["url"].startswith("data:image/png;base64,")
+    stored_user_content = _restore_content(database.list_events(conversation_id)[-2]["content"])
+    assert stored_user_content[1]["type"] == "attachment"
+    assert stored_user_content[1]["attachment_id"] == attachment["attachment_id"]
+
+    cross_conversation = client.get(
+        f"/api/v1/conversations/{other_conversation_id}/attachments/{attachment['attachment_id']}"
+    )
+    assert cross_conversation.status_code == 404
+
+    deleted = client.delete(
+        f"/api/v1/conversations/{conversation_id}/attachments/{attachment['attachment_id']}"
+    )
+    assert deleted.status_code == 200
+    assert deleted.json() == {"deleted": True}
+    missing = client.get(
+        f"/api/v1/conversations/{conversation_id}/attachments/{attachment['attachment_id']}"
+    )
+    assert missing.status_code == 404
+
+
+def test_attachment_upload_rejects_mime_mismatch_and_oversized_body(tmp_path):
+    png = b"\x89PNG\r\n\x1a\n" + b"small-image"
+    database = Database(str(tmp_path / "attachment-limits.sqlite3"))
+    conversation_id = database.create_conversation()["id"]
+    app = create_app(
+        settings=Settings(
+            database_path=str(tmp_path / "attachment-limits.sqlite3"),
+            attachment_storage_dir=str(tmp_path / "attachment-limits"),
+            max_attachment_bytes=1024,
+        ),
+        database=database,
+        registry=WorkerRegistry([
+            Worker("vision", "http://vision/v1", "vision-model", frozenset({"chat", "vision"}))
+        ]),
+    )
+    client = TestClient(app)
+    mismatch = client.post(
+        f"/api/v1/conversations/{conversation_id}/attachments",
+        content=png,
+        headers={"Content-Type": "image/jpeg"},
+    )
+    assert mismatch.status_code == 415
+    oversized = client.post(
+        f"/api/v1/conversations/{conversation_id}/attachments",
+        content=b"\x89PNG\r\n\x1a\n" + (b"x" * 2048),
+        headers={"Content-Type": "image/png"},
+    )
+    assert oversized.status_code == 413
+    assert database.get_attachment(conversation_id, "00000000-0000-0000-0000-000000000000") is None
