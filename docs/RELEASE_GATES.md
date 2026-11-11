@@ -1,0 +1,62 @@
+# CDS_AI release gates
+
+**Product:** CDS_AI  
+**Source repository:** https://github.com/hamedg2881-bot/CLICoding  
+**Current integration candidate:** `feature/cds-ai-release-integration`  
+**Deployment policy:** Source is completed and verified on GitHub first. DGX transfer and service restart are separate later stages.
+
+## Implemented source capabilities
+- [x] One public assistant identity: `CDS_AI`, with a shared policy applied to every model call.
+- [x] Conversation-first direct chat; ordinary chat bypasses Planner.
+- [x] Persistent conversation history and Open WebUI session/user mapping.
+- [x] Direct-chat upstream SSE, streamed tool-call deltas and disconnect cleanup.
+- [x] Specialist final-answer SSE with valid event framing.
+- [x] OpenAI function tool-call round-trip, schema validation and pending-call correlation.
+- [x] Workstation reference tool host with workspace scope, approval, idempotency and fixed commands.
+- [x] Per-user bearer-token ownership isolation.
+- [x] Exact retry idempotency for failed user/tool continuations.
+- [x] Latest-turn regenerate and guarded edit/resubmit with history replacement.
+- [x] Authenticated active-turn cancellation for direct and conversation API routes.
+- [x] Versioned model-assisted context compaction for direct chat/tool turns; original events retained, latest three user turns preserved, summary invalidation on history rewrite.
+- [x] Conservative context admission/output reservation; overflow is never silently truncated.
+
+## Remaining source capabilities
+- [ ] Specialist multi-model context compaction and specialist progress events.
+- [ ] Typed attachment records, bounded binary storage, MIME sniffing, retention and access control.
+- [ ] Packaged IDE integration with workspace selection, approval, diff review/apply and Stop controls.
+- [ ] Browser/Playwright/screenshot workflow and vision-based UI validation.
+- [ ] Multi-call/parallel tool semantics, only after exact runtime capability verification.
+- [ ] User-visible context inspection and summary correction controls.
+
+## Security and operations
+- [x] No arbitrary shell tool is advertised by the reference workstation tool host.
+- [x] Workspace-relative paths, traversal/symlink rejection in covered tests.
+- [x] Writes and build/test require explicit approval; tool idempotency ledger is durable.
+- [x] Summary invalidation when edited/regenerated/deleted history intersects covered events.
+- [ ] Close filesystem path-validation TOCTOU races with platform-appropriate safe APIs.
+- [ ] Expand secret detection and redact tool outputs before persistence/transmission.
+- [ ] OS-level process sandboxing and Windows/macOS/Linux adapter tests.
+- [ ] Rate limits, token rotation/revocation and audit export.
+- [ ] Multi-process conversation locking or explicitly enforce a single-process deployment.
+- [ ] Prove trusted Open WebUI headers are stripped/reinjected by the actual private proxy; otherwise use per-user tokens.
+
+## Live DGX runtime acceptance
+- [ ] Verify exact served model aliases and ports at live `/v1/models` endpoints.
+- [ ] Test GPT-OSS-20B chat/planning, Qwen3-Coder-Next coding/review and Qwen3-VL-2B image understanding.
+- [ ] Validate tool calling with the exact model/runtime/parser before enabling `tool_calling`.
+- [ ] Measure context/output limits, timeout/cancellation, concurrency and unified-memory headroom.
+- [ ] Verify routing, fallback and failure isolation without interrupting active requests.
+
+The sample registry uses recorded ports 8003/8004/8005 but leaves all workers disabled. Verify served aliases before enabling any worker.
+
+## Client and offline release
+- [ ] Open WebUI multi-turn, SSE, Stop, regenerate/edit and multi-user acceptance.
+- [ ] Packaged IDE workspace selection, approvals, diff review/apply and build/test evidence.
+- [ ] Diagnose and repair a deliberately failing sample project; capture successful build/test exit codes.
+- [ ] Browser screenshot, verified Vision handoff, visual correction and before/after evidence.
+- [ ] Clean workstation installation with public internet blocked.
+- [ ] Versioned ZIP and SHA-256 manifest, database/config backup, migration-on-copy and rollback validation.
+- [ ] Stage without restart; obtain explicit approval before Orchestrator restart.
+- [ ] Record exact commit, archive hash, deployed files, tests and rollback point.
+
+CI is source-level evidence only. No hardware or client acceptance gate may be marked complete based solely on GitHub Actions.
