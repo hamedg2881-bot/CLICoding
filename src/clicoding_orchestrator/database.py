@@ -327,6 +327,28 @@ class Database:
             "created_at": now,
         }
 
+    def delete_last_event(self, conversation_id: str, event_id: str) -> None:
+        """Delete only the current tail event, preventing concurrent history rewrites."""
+        with self.session() as connection:
+            row = connection.execute(
+                """
+                SELECT id FROM conversation_events
+                WHERE conversation_id = ?
+                ORDER BY sequence DESC LIMIT 1
+                """,
+                (conversation_id,),
+            ).fetchone()
+            if row is None or row["id"] != event_id:
+                raise ValueError("event is not the current conversation tail")
+            connection.execute(
+                "DELETE FROM conversation_events WHERE conversation_id = ? AND id = ?",
+                (conversation_id, event_id),
+            )
+            connection.execute(
+                "UPDATE conversations SET updated_at = ? WHERE id = ?",
+                (utc_now(), conversation_id),
+            )
+
     def list_events(self, conversation_id: str) -> list[dict[str, Any]]:
         with self.session() as connection:
             rows = connection.execute(
