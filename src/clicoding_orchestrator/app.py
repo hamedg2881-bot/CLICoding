@@ -308,10 +308,7 @@ def create_app(
             if matched_user is not None:
                 request.state.principal_id = matched_user
             elif config.api_key and hmac.compare_digest(token, config.api_key):
-                if config.user_api_keys:
-                    request.state.principal_id = "admin"
-                    request.state.is_admin = True
-                elif config.trust_user_header:
+                if config.trust_user_header:
                     # Open WebUI can supply its authenticated user ID through a
                     # server-side header template. Trust it only behind a private,
                     # trusted proxy that strips client-supplied identity headers.
@@ -325,6 +322,9 @@ def create_app(
                         request.state.principal_id = header_user
                     else:
                         request.state.principal_id = "shared"
+                elif config.user_api_keys:
+                    request.state.principal_id = "admin"
+                    request.state.is_admin = True
                 else:
                     request.state.principal_id = "shared"
                     request.state.is_admin = True
