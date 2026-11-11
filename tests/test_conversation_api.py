@@ -149,6 +149,7 @@ def test_openai_compatible_endpoint_uses_orchestrator_and_keeps_one_identity(tmp
         "/v1/chat/completions",
         json={
             "model": "clicoding",
+            "task_type": "coding",
             "messages": [{"role": "user", "content": "Analyze this task"}],
         },
     )
@@ -164,6 +165,7 @@ def test_openai_compatible_endpoint_uses_orchestrator_and_keeps_one_identity(tmp
         "/v1/chat/completions",
         json={
             "model": "clicoding",
+            "task_type": "coding",
             "conversation_id": conversation_id,
             "messages": [
                 {"role": "user", "content": "Analyze this task"},
