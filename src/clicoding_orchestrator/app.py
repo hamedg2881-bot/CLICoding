@@ -31,6 +31,7 @@ from .gateway import GatewayError, ModelGateway, OpenAICompatibleGateway
 from .registry import RegistryError, Worker, WorkerRegistry, runtime_key
 from .router import CapabilityRouter, NoEligibleWorker
 from .orchestration import MultiModelOrchestrator
+from .security import SecurityStore
 
 
 class TurnRequest(BaseModel):
@@ -133,6 +134,11 @@ class OpenAIChatRequest(BaseModel):
         ):
             raise ValueError("stop must be a string or 1-4 non-empty strings of at most 256 characters")
         return value
+
+
+class AdminTokenCreate(BaseModel):
+    owner_id: str = Field(min_length=1, max_length=128)
+    label: str = Field(min_length=1, max_length=80)
 
 
 logger = logging.getLogger(__name__)
@@ -319,6 +325,7 @@ def create_app(
 ) -> FastAPI:
     config = settings or Settings.from_env()
     db = database or Database(config.database_path)
+    security_store = SecurityStore(config.database_path)
 
     if registry is not None:
         worker_registry = registry
@@ -561,19 +568,35 @@ def create_app(
 
     @app.middleware("http")
     async def optional_bearer_auth(request: Request, call_next):
-        # Health remains available to local service monitors. User tokens provide
-        # isolated conversation namespaces; a global key is an admin/service key.
+        # Legacy deployments may run without auth; once any configured or issued
+        # token exists, every non-health endpoint requires a valid principal.
         request.state.principal_id = "shared"
         request.state.is_admin = not (config.api_key or config.user_api_keys)
-        if request.url.path != "/health" and (config.api_key or config.user_api_keys):
+        supplied_request_id = request.headers.get("x-request-id", "").strip()
+        request.state.request_id = (
+            supplied_request_id
+            if 1 <= len(supplied_request_id) <= 128
+            and all(character.isalnum() or character in "-_." for character in supplied_request_id)
+            else str(uuid.uuid4())
+        )
+        is_health = request.url.path == "/health"
+        auth_enabled = bool(
+            config.api_key or config.user_api_keys or security_store.has_active_tokens()
+        )
+        if not is_health and auth_enabled:
             supplied = request.headers.get("authorization", "")
             scheme, separator, token = supplied.partition(" ")
             if not separator or scheme.lower() != "bearer" or not token:
-                return JSONResponse(
+                response = JSONResponse(
                     status_code=401,
                     content={"detail": "Invalid or missing bearer token"},
                     headers={"WWW-Authenticate": "Bearer"},
                 )
+                security_store.append_audit(
+                    request.state.request_id, "anonymous", "auth.denied",
+                    request.url.path, 401, {"method": request.method},
+                )
+                return response
 
             matched_user = next(
                 (
@@ -585,34 +608,113 @@ def create_app(
             if matched_user is not None:
                 request.state.principal_id = matched_user
                 request.state.is_admin = matched_user == "admin"
+            elif (dynamic_owner := security_store.authenticate_token(token)) is not None:
+                request.state.principal_id = dynamic_owner
+                request.state.is_admin = False
             elif config.api_key and hmac.compare_digest(token, config.api_key):
                 if config.trust_user_header:
-                    # Open WebUI can supply its authenticated user ID through a
-                    # server-side header template. Trust it only behind a private,
-                    # trusted proxy that strips client-supplied identity headers.
+                    # Trust this header only behind a private proxy that strips
+                    # client-supplied identity headers and injects authenticated IDs.
                     header_user = request.headers.get("x-clicoding-user-id", "").strip()
                     if header_user:
                         if len(header_user) > 128 or any(ch.isspace() for ch in header_user):
-                            return JSONResponse(
+                            response = JSONResponse(
                                 status_code=400,
                                 content={"detail": "Invalid trusted user identity header"},
                             )
+                            security_store.append_audit(
+                                request.state.request_id, "anonymous", "auth.invalid_identity",
+                                request.url.path, 400, {"method": request.method},
+                            )
+                            return response
                         request.state.principal_id = header_user
+                        request.state.is_admin = False
                     else:
                         request.state.principal_id = "shared"
-                elif config.user_api_keys:
+                        request.state.is_admin = False
+                else:
                     request.state.principal_id = "admin"
                     request.state.is_admin = True
-                else:
-                    request.state.principal_id = "shared"
-                    request.state.is_admin = True
             else:
-                return JSONResponse(
+                response = JSONResponse(
                     status_code=401,
                     content={"detail": "Invalid or missing bearer token"},
                     headers={"WWW-Authenticate": "Bearer"},
                 )
-        return await call_next(request)
+                security_store.append_audit(
+                    request.state.request_id, "anonymous", "auth.denied",
+                    request.url.path, 401, {"method": request.method},
+                )
+                return response
+
+        if not is_health:
+            try:
+                allowed, count, retry_after = security_store.consume_rate_limit(
+                    request.state.principal_id,
+                    config.rate_limit_requests_per_minute,
+                    config.rate_limit_window_seconds,
+                )
+            except Exception:
+                logger.exception(
+                    "Rate-limit storage failed (request_id=%s)", request.state.request_id
+                )
+                return JSONResponse(
+                    status_code=503,
+                    content={"detail": "Request admission is temporarily unavailable"},
+                    headers={"X-Request-ID": request.state.request_id},
+                )
+            if not allowed:
+                response = JSONResponse(
+                    status_code=429,
+                    content={"detail": "Rate limit exceeded"},
+                    headers={
+                        "Retry-After": str(retry_after),
+                        "X-RateLimit-Limit": str(config.rate_limit_requests_per_minute),
+                        "X-RateLimit-Remaining": "0",
+                        "X-Request-ID": request.state.request_id,
+                    },
+                )
+                security_store.append_audit(
+                    request.state.request_id, request.state.principal_id,
+                    "request.rate_limited", request.url.path, 429,
+                    {"method": request.method},
+                )
+                return response
+
+        try:
+            response = await call_next(request)
+        except Exception:
+            try:
+                security_store.append_audit(
+                    request.state.request_id, request.state.principal_id,
+                    "request.exception", request.url.path, 500,
+                    {"method": request.method},
+                )
+            except Exception:
+                logger.exception(
+                    "Audit write failed (request_id=%s)", request.state.request_id
+                )
+            raise
+
+        response.headers["X-Request-ID"] = request.state.request_id
+        if not is_health:
+            response.headers["X-RateLimit-Limit"] = str(
+                config.rate_limit_requests_per_minute
+            )
+            response.headers["X-RateLimit-Remaining"] = str(
+                max(0, config.rate_limit_requests_per_minute - count)
+            )
+            try:
+                security_store.append_audit(
+                    request.state.request_id, request.state.principal_id,
+                    "http.request", request.url.path, response.status_code,
+                    {"method": request.method},
+                )
+            except Exception:
+                logger.exception(
+                    "Audit write failed (request_id=%s)", request.state.request_id
+                )
+        return response
 
     def _owner_scope(request: Request) -> str | None:
         return None if request.state.is_admin else request.state.principal_id
@@ -630,6 +732,46 @@ def create_app(
         ):
             return None
         return execution
+
+    @app.post("/api/v1/admin/tokens", status_code=201)
+    async def create_api_token(
+        payload: AdminTokenCreate, http_request: Request
+    ) -> dict[str, Any]:
+        if not http_request.state.is_admin:
+            raise HTTPException(status_code=403, detail="Administrator access required")
+        try:
+            token = security_store.issue_token(payload.owner_id, payload.label)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return token
+
+    @app.get("/api/v1/admin/tokens")
+    async def list_api_tokens(
+        http_request: Request, owner_id: str | None = None
+    ) -> dict[str, Any]:
+        if not http_request.state.is_admin:
+            raise HTTPException(status_code=403, detail="Administrator access required")
+        return {"tokens": security_store.list_tokens(owner_id)}
+
+    @app.delete("/api/v1/admin/tokens/{token_id}")
+    async def revoke_api_token(token_id: str, http_request: Request) -> dict[str, bool]:
+        if not http_request.state.is_admin:
+            raise HTTPException(status_code=403, detail="Administrator access required")
+        if not security_store.revoke_token(token_id):
+            raise HTTPException(status_code=404, detail="Active token not found")
+        return {"revoked": True}
+
+    @app.get("/api/v1/admin/audit")
+    async def export_audit_events(
+        http_request: Request, limit: int = 100, before_id: int | None = None
+    ) -> dict[str, Any]:
+        if not http_request.state.is_admin:
+            raise HTTPException(status_code=403, detail="Administrator access required")
+        try:
+            events = security_store.list_audit(limit=limit, before_id=before_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"events": events, "next_before_id": events[-1]["id"] if events else None}
 
     @app.get("/health")
     async def health() -> dict[str, str]:
