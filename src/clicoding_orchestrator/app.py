@@ -901,17 +901,35 @@ def create_app(
         )
         return {"deleted": True}
 
+    async def monitor_conversation_turn(
+        conversation_id: str, owner_token: str, task: asyncio.Task[Any]
+    ) -> None:
+        """Renew the durable lease and propagate cancellation from any API process."""
+        last_renewal = time.monotonic()
+        while not task.done():
+            await asyncio.sleep(0.25)
+            if db.conversation_turn_cancel_requested(conversation_id, owner_token):
+                task.cancel()
+                return
+            if time.monotonic() - last_renewal >= 5:
+                if not db.renew_conversation_turn(conversation_id, owner_token):
+                    # A lost lease must fail closed; never let two workers mutate one turn.
+                    task.cancel()
+                    return
+                last_renewal = time.monotonic()
+
     @app.post("/api/v1/conversations/{conversation_id}/cancel")
     async def cancel_active_turn(
         conversation_id: str, http_request: Request
     ) -> dict[str, bool]:
         if not _owns_conversation(http_request, conversation_id):
             raise HTTPException(status_code=404, detail="Conversation not found")
+        requested = db.request_conversation_turn_cancel(conversation_id)
         active = active_turns.get(conversation_id)
-        if active is None or active.done():
-            return {"cancelled": False}
-        active.cancel()
-        return {"cancelled": True}
+        if active is not None and not active.done():
+            active.cancel()
+            requested = True
+        return {"cancelled": requested}
 
     async def run_turn(
         conversation_id: str,
@@ -1570,11 +1588,18 @@ def create_app(
         *args: Any,
         **kwargs: Any,
     ):
-        active = active_turns.get(conversation_id)
-        if active is not None and not active.done():
+        owner_token = uuid.uuid4().hex
+        try:
+            acquired = db.acquire_conversation_turn(conversation_id, owner_token)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail="Conversation not found") from exc
+        if not acquired:
             raise HTTPException(status_code=409, detail="A turn is already active for this conversation")
         task = asyncio.create_task(run_turn(conversation_id, *args, **kwargs))
         active_turns[conversation_id] = task
+        monitor = asyncio.create_task(monitor_conversation_turn(
+            conversation_id, owner_token, task
+        ))
         try:
             return await task
         except asyncio.CancelledError:
@@ -1583,24 +1608,37 @@ def create_app(
                 raise
             raise HTTPException(status_code=409, detail="The assistant turn was cancelled")
         finally:
+            monitor.cancel()
+            await asyncio.gather(monitor, return_exceptions=True)
             if active_turns.get(conversation_id) is task:
                 active_turns.pop(conversation_id, None)
+            db.release_conversation_turn(conversation_id, owner_token)
 
     async def stream_direct_turn(*args: Any, **kwargs: Any):
         conversation_id = args[0] if args else kwargs["conversation_id"]
         current_task = asyncio.current_task()
         if current_task is None:
             raise RuntimeError("stream generation requires an asyncio task")
-        active = active_turns.get(conversation_id)
-        if active is not None and active is not current_task and not active.done():
+        owner_token = uuid.uuid4().hex
+        try:
+            acquired = db.acquire_conversation_turn(conversation_id, owner_token)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail="Conversation not found") from exc
+        if not acquired:
             raise HTTPException(status_code=409, detail="A turn is already active for this conversation")
         active_turns[conversation_id] = current_task
+        monitor = asyncio.create_task(monitor_conversation_turn(
+            conversation_id, owner_token, current_task
+        ))
         try:
             async for chunk in _stream_direct_turn_impl(*args, **kwargs):
                 yield chunk
         finally:
+            monitor.cancel()
+            await asyncio.gather(monitor, return_exceptions=True)
             if active_turns.get(conversation_id) is current_task:
                 active_turns.pop(conversation_id, None)
+            db.release_conversation_turn(conversation_id, owner_token)
 
     @app.post(
         "/api/v1/conversations/{conversation_id}/turns",
