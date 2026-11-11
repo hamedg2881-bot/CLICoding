@@ -198,3 +198,25 @@ def test_idempotency_key_cannot_be_reused_with_different_arguments(tmp_path):
     )))
     assert first["content"] == "alpha"
     assert second["status"] == "conflict"
+
+
+def test_workspace_tool_results_redact_credential_values(tmp_path):
+    root, host = make_host(tmp_path)
+    secret_api_key = "sk-abcdefghijklmnopqrstuvwx"
+    secret_bearer = "Bearer abcdefghijklmnopqrstuvwxyz012345"
+    (root / "config.txt").write_text(
+        f"api_key={secret_api_key}\\nauthorization: {secret_bearer}\\n",
+        encoding="utf-8",
+    )
+
+    read = result(host.execute_tool_call(call(
+        "workspace_read_file", {"path": "config.txt"}, "redact_read"
+    )))
+    searched = result(host.execute_tool_call(call(
+        "workspace_search_text", {"query": "api_key", "directory": "."}, "redact_search"
+    )))
+
+    serialized = json.dumps({"read": read, "searched": searched})
+    assert secret_api_key not in serialized
+    assert secret_bearer not in serialized
+    assert "[REDACTED]" in serialized
