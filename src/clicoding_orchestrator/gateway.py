@@ -114,6 +114,78 @@ class OpenAICompatibleGateway:
             finish_reason=finish_reason,
         )
 
+    async def stream_events(
+        self,
+        messages: list[dict[str, object]],
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Yield structured OpenAI SSE deltas, including partial function tool calls."""
+        payload: dict[str, Any] = {"model": self.model, "messages": messages, "stream": True}
+        if tools is not None:
+            payload["tools"] = tools
+            payload["parallel_tool_calls"] = False
+        if tool_choice is not None:
+            payload["tool_choice"] = tool_choice
+        if options:
+            allowed_options = {
+                "temperature", "max_tokens", "top_p",
+                "presence_penalty", "frequency_penalty", "stop",
+            }
+            unknown = set(options) - allowed_options
+            if unknown:
+                raise GatewayError(f"Unsupported generation options: {sorted(unknown)}")
+            payload.update(options)
+
+        saw_done = False
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                async with client.stream(
+                    "POST", self.url, json=payload, headers=self._headers()
+                ) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if not line or line.startswith(":") or not line.startswith("data:"):
+                            continue
+                        raw = line[5:].strip()
+                        if raw == "[DONE]":
+                            saw_done = True
+                            break
+                        try:
+                            event = json.loads(raw)
+                        except json.JSONDecodeError as exc:
+                            raise GatewayError("Upstream returned malformed streaming data") from exc
+                        if isinstance(event, dict) and event.get("error"):
+                            raise GatewayError("Upstream model reported a streaming error")
+                        choices = event.get("choices", []) if isinstance(event, dict) else []
+                        if not choices:
+                            continue
+                        choice = choices[0]
+                        delta = choice.get("delta", {})
+                        if not isinstance(delta, dict):
+                            raise GatewayError("Upstream returned an invalid streaming delta")
+                        content = delta.get("content")
+                        if isinstance(content, str) and content:
+                            yield {"content": content}
+                        tool_deltas = delta.get("tool_calls")
+                        if tool_deltas is not None:
+                            if not isinstance(tool_deltas, list):
+                                raise GatewayError("Upstream returned invalid tool-call deltas")
+                            yield {"tool_calls": tool_deltas}
+                        finish_reason = choice.get("finish_reason")
+                        if finish_reason is not None:
+                            yield {"finish_reason": str(finish_reason)}
+        except GatewayError:
+            raise
+        except httpx.HTTPError as exc:
+            raise GatewayError(f"Upstream streaming request failed: {exc}") from exc
+
+        if not saw_done:
+            raise GatewayError("Upstream streaming response ended before [DONE]")
+        yield {"done": True}
+
     async def stream(
         self,
         messages: list[dict[str, object]],
