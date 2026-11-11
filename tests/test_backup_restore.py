@@ -4,7 +4,7 @@ import uuid
 
 import pytest
 
-from scripts.cds_ai_backup import BackupError, create_backup, restore_backup, verify_backup
+from clicoding_orchestrator.backup import BackupError, create_backup, restore_backup, verify_backup
 
 
 def make_source(tmp_path):
