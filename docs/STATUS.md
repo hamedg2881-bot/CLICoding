@@ -348,3 +348,13 @@ User supplied a fresh command output from host `spark-7ea3`:
 - Conversation creation/read/turns, OpenAI-compatible continuation, execution reads, and sandbox approval/result routes now enforce owner scope. Worker diagnostics are admin-only.
 - No automatic reassignment of legacy shared conversations; administrator migration is required before multi-user rollout.
 - Remaining identity/security gates: verify Open WebUI identity headers in a real multi-user deployment, token rotation/revocation, rate limits, and audit export.
+
+
+## 2026-11-11 — Retry and regeneration semantics
+
+- Exact retries of the last unfinished user/tool input reuse the existing event; duplicate user/tool entries are not added after failed requests or stream cancellation.
+- Added guarded tail-event deletion and `X-CLICoding-Operation: regenerate` for the latest completed assistant turn only.
+- Regeneration verifies the exact preceding input and deletes only the current tail assistant event; earlier conversation history is retained.
+- Buffered requests return HTTP 409 for invalid regeneration; streaming requests emit an SSE error.
+- Editing an earlier turn and truncating subsequent history is not implemented; it requires a target event ID and explicit confirmation.
+- Packaged Open WebUI/IDE controls for the regenerate header remain an integration task.
