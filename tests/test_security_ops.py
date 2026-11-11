@@ -55,6 +55,18 @@ def test_admin_can_issue_list_and_revoke_user_tokens(tmp_path):
     rejected = client.get("/v1/models", headers=user_headers)
     assert rejected.status_code == 401
 
+    audit = client.get(
+        "/api/v1/admin/audit?limit=50",
+        headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
+    )
+    assert audit.status_code == 200
+    assert any(
+        event["route"] == "/api/v1/admin/tokens"
+        and event["action"] == "http.request"
+        for event in audit.json()["events"]
+    )
+    assert token["token"] not in audit.text
+
 
 def test_dynamic_tokens_enable_authentication_and_cannot_issue_admin_identity(tmp_path):
     settings = Settings(
@@ -117,8 +129,6 @@ def test_rate_limits_are_isolated_between_user_tokens(tmp_path):
         rate_limit_requests_per_minute=1,
     )
     client = TestClient(create_app(settings=settings))
-    admin_headers = {"Authorization": f"Bearer {ADMIN_TOKEN}"}
-
     store = SecurityStore(settings.database_path)
     tokens = [
         store.issue_token(owner, owner)["token"]
