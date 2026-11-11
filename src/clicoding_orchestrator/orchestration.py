@@ -237,7 +237,8 @@ class MultiModelOrchestrator:
             )
         planning_context = await self._compact_context_for_worker(
             planning_worker, conversation_context
-        )\n        plan = await planner.create_plan(planning_request, planning_context)
+        )
+        plan = await planner.create_plan(planning_request, planning_context)
 
         # Validate capability combinations against real enabled workers before
         # persisting or dispatching the plan. A union of capabilities is not enough:
