@@ -209,11 +209,22 @@ def validate_tool_result(
     events: list[dict[str, Any]],
     tool_call_id: str | None,
     tool_name: str | None,
+    content: str | None = None,
 ) -> None:
     if not tool_call_id or not _CALL_ID.fullmatch(tool_call_id):
         raise ToolProtocolError("tool result requires a valid tool_call_id")
     pending = pending_tool_call(events)
     if pending is None:
+        # An exact duplicate of the last tool result is an idempotent retry after
+        # the previous model continuation failed or was cancelled.
+        if events and events[-1].get("role") == "tool":
+            last = events[-1]
+            metadata = last.get("metadata") or {}
+            same_call = metadata.get("tool_call_id") == tool_call_id
+            same_name = tool_name is None or metadata.get("name") == tool_name
+            same_content = content is None or last.get("content") == content
+            if same_call and same_name and same_content:
+                return
         raise ToolProtocolError("there is no pending tool call for this conversation")
     if tool_call_id != pending[0]:
         raise ToolProtocolError("tool_call_id does not match the pending assistant tool call")
