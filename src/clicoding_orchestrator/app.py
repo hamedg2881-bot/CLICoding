@@ -490,6 +490,7 @@ def create_app(
     ) -> tuple[dict[str, Any], dict[str, Any], str, str | None]:
         if not db.conversation_exists(conversation_id):
             raise HTTPException(status_code=404, detail="Conversation not found")
+        system_messages = effective_system_messages(system_messages)
         lock = conversation_locks.setdefault(conversation_id, asyncio.Lock())
         async with lock:
             regeneration_event = None
@@ -742,6 +743,7 @@ def create_app(
         edit_event_id: str | None = None,
     ):
         """Stream direct chat and validated function-tool deltas; persist only on success."""
+        system_messages = effective_system_messages(system_messages)
         lock = conversation_locks.setdefault(conversation_id, asyncio.Lock())
         async with lock:
             regeneration_event = None
@@ -1284,7 +1286,7 @@ def create_app(
                     stream_input["tool_call_id"] = last_message.tool_call_id
                     if last_message.name:
                         stream_input["name"] = last_message.name
-                stream_history = supplied_system + stream_events
+                stream_history = effective_system_messages(supplied_system) + stream_events
                 if not regenerate:
                     stream_history.append(stream_input)
                 ensure_context_budget(
@@ -1402,7 +1404,7 @@ def create_app(
                 "user_event_id": input_event["id"],
                 "assistant_event_id": assistant_event["id"],
                 "producer": assistant_event["producer"],
-                "system_messages_applied": len(supplied_system),
+                "system_messages_applied": len(effective_system_messages(supplied_system)),
                 "execution_id": execution_id,
                 "orchestrated": execution_id is not None,
             },
