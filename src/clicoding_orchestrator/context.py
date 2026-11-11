@@ -7,7 +7,7 @@ from typing import Any
 
 # Vision token cost varies by model and image resolution. Reserve a conservative
 # fixed amount per attached image until a runtime-specific tokenizer is available.
-IMAGE_TOKEN_RESERVE = 8192
+IMAGE_TOKEN_RESERVE = 4096
 
 
 class ContextBudgetExceeded(ValueError):
