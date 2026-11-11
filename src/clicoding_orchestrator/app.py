@@ -245,6 +245,24 @@ def _prepare_regeneration(
     return events[-1]
 
 
+def _prepare_edit(
+    database: Database,
+    conversation_id: str,
+    event_id: str,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    events = database.list_events(conversation_id)
+    target_index = next(
+        (index for index, event in enumerate(events) if event["id"] == event_id),
+        None,
+    )
+    if target_index is None:
+        raise HTTPException(status_code=404, detail="Edit target event not found")
+    target = events[target_index]
+    if target["role"] != "user":
+        raise HTTPException(status_code=400, detail="Only user events can be edited")
+    return target, events[:target_index]
+
+
 def _content_text(content: str | list[dict[str, Any]] | None) -> str:
     if content is None:
         return ""
@@ -468,17 +486,25 @@ def create_app(
         tool_choice: str | dict[str, Any] | None = None,
         generation_options: dict[str, Any] | None = None,
         regenerate: bool = False,
+        edit_event_id: str | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], str, str | None]:
         if not db.conversation_exists(conversation_id):
             raise HTTPException(status_code=404, detail="Conversation not found")
         lock = conversation_locks.setdefault(conversation_id, asyncio.Lock())
         async with lock:
             regeneration_event = None
+            edit_target = None
             if regenerate:
                 regeneration_event = _prepare_regeneration(
                     db, conversation_id, input_role, content, input_metadata
                 )
                 input_event = db.list_events(conversation_id)[-2]
+                stored_events = db.list_events(conversation_id)[:-1]
+            elif edit_event_id is not None:
+                edit_target, stored_events = _prepare_edit(
+                    db, conversation_id, edit_event_id
+                )
+                input_event = None
             else:
                 input_event = _append_input_event(
                     db,
@@ -488,9 +514,7 @@ def create_app(
                     "user" if input_role == "user" else "tool-client",
                     input_metadata,
                 )
-            stored_events = db.list_events(conversation_id)
-            if regeneration_event is not None:
-                stored_events = stored_events[:-1]
+                stored_events = db.list_events(conversation_id)
             events = []
             for event in stored_events:
                 if event["role"] not in ("user", "assistant", "tool"):
@@ -502,6 +526,11 @@ def create_app(
                         item["content"] = None
                 events.append(item)
             history = list(system_messages or []) + events
+            if edit_target is not None:
+                edit_message = {"role": input_role, "content": content}
+                if input_metadata:
+                    edit_message.update(input_metadata)
+                history.append(edit_message)
             recent_image_parts: list[dict[str, Any]] = []
             for event in reversed(events):
                 if event["role"] == "user" and _has_images(event["content"]):
@@ -526,7 +555,11 @@ def create_app(
                 # Specialist work is orchestrated; ordinary chat stays on the
                 # direct conversation path and never depends on Planner output.
                 # The public API continues to expose one assistant identity.
-                context_messages = list(system_messages or []) + events[:-1]
+                context_messages = (
+                    list(system_messages or []) + events
+                    if edit_target is not None
+                    else list(system_messages or []) + events[:-1]
+                )
                 context = "\n\n".join(
                     f"{message['role']}: {_content_text(message['content'])}"
                     for message in context_messages
@@ -655,7 +688,16 @@ def create_app(
                 {"tool_calls": returned_tool_calls, "finish_reason": "tool_calls"}
                 if returned_tool_calls else None
             )
-            if regeneration_event is not None:
+            if edit_target is not None:
+                db.delete_events_from(conversation_id, edit_target["id"])
+                input_event = db.append_event(
+                    conversation_id,
+                    role=input_role,
+                    content=_store_content(content),
+                    producer="user",
+                    metadata=input_metadata,
+                )
+            elif regeneration_event is not None:
                 db.delete_last_event(conversation_id, regeneration_event["id"])
             assistant_event = db.append_event(
                 conversation_id, role="assistant", content=answer,
