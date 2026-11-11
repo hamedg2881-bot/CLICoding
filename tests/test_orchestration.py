@@ -588,3 +588,45 @@ def test_specialist_context_compaction_is_worker_budgeted(tmp_path):
         )
 
     asyncio.run(scenario())
+
+
+def test_orchestrator_emits_structured_progress_events(tmp_path):
+    async def scenario():
+        db = Database(str(tmp_path / "orchestration-progress.sqlite3"))
+        conversation = db.create_conversation()
+        registry = WorkerRegistry([
+            Worker("planner", "http://planner/v1", "planner", frozenset({"planning"}), priority=1),
+            Worker("coder", "http://coder/v1", "coder", frozenset({"coding"})),
+            Worker("vision", "http://vision/v1", "vision", frozenset({"vision"})),
+            Worker("synth", "http://synth/v1", "synth", frozenset({"chat"}), priority=1),
+        ])
+        gateways = {}
+
+        def gateway_factory(worker):
+            gateways.setdefault(worker.id, FakeGateway(worker.id))
+            return gateways[worker.id]
+
+        events = []
+        orchestrator = MultiModelOrchestrator(
+            db,
+            CapabilityRouter(registry),
+            max_parallel_tasks=2,
+            gateway_factory=gateway_factory,
+        )
+        result = await orchestrator.run(
+            conversation["id"],
+            "Review code and screenshot",
+            "Prior conversation facts",
+            progress_callback=events.append,
+        )
+
+        assert result.execution.succeeded
+        assert events[0]["type"] == "plan.created"
+        assert events[0]["task_count"] == 2
+        assert sum(event["type"] == "task.started" for event in events) == 2
+        assert sum(event["type"] == "task.succeeded" for event in events) == 2
+        assert events[-1]["type"] == "execution.completed"
+        assert events[-1]["status"] == "succeeded"
+        assert all(event["execution_id"] == result.execution_id for event in events)
+
+    asyncio.run(scenario())
