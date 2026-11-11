@@ -21,6 +21,8 @@ class Settings:
     trust_user_header: bool = False
     attachment_storage_dir: str = "./data/attachments"
     max_attachment_bytes: int = 10 * 1024 * 1024
+    rate_limit_requests_per_minute: int = 120
+    rate_limit_window_seconds: int = 60
 
     def __post_init__(self) -> None:
         if not self.database_path.strip():
@@ -33,6 +35,10 @@ class Settings:
             raise ValueError("attachment_storage_dir cannot be empty")
         if self.max_attachment_bytes < 1024 or self.max_attachment_bytes > 25 * 1024 * 1024:
             raise ValueError("max_attachment_bytes must be between 1 KiB and 25 MiB")
+        if self.rate_limit_requests_per_minute < 1 or self.rate_limit_requests_per_minute > 10000:
+            raise ValueError("rate_limit_requests_per_minute must be between 1 and 10000")
+        if self.rate_limit_window_seconds < 1 or self.rate_limit_window_seconds > 3600:
+            raise ValueError("rate_limit_window_seconds must be between 1 and 3600")
         if self.api_key is not None and (
             len(self.api_key) < 32 or not self.api_key.isascii() or not self.api_key.strip()
         ):
@@ -84,5 +90,11 @@ class Settings:
             ),
             max_attachment_bytes=int(
                 os.getenv("CLICODING_MAX_ATTACHMENT_BYTES", str(10 * 1024 * 1024))
+            ),
+            rate_limit_requests_per_minute=int(
+                os.getenv("CLICODING_RATE_LIMIT_PER_WINDOW", "120")
+            ),
+            rate_limit_window_seconds=int(
+                os.getenv("CLICODING_RATE_LIMIT_WINDOW_SECONDS", "60")
             ),
         )
