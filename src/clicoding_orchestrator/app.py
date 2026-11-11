@@ -384,7 +384,7 @@ def create_app(
                         "tool_calling" if tool_definitions is not None
                         else ("vision" if _has_images(vision_content) else task_type)
                     )
-                    worker = router.select(required_capability)
+                    worker = router.select_capabilities({required_capability})
                 except NoEligibleWorker as exc:
                     raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -662,7 +662,7 @@ def create_app(
 
         if tool_definitions:
             try:
-                router.select("tool_calling")
+                router.select_capabilities({"tool_calling"})
             except NoEligibleWorker as exc:
                 raise HTTPException(status_code=503, detail=str(exc)) from exc
         input_metadata = None
