@@ -1562,7 +1562,7 @@ def test_cancel_endpoint_cancels_an_active_conversation_turn_route(tmp_path):
 
 def test_specialist_stream_uses_valid_sse_delimiters(tmp_path):
     class RecordingOrchestrator:
-        async def run(self, conversation_id, user_request, context, user_content=None):
+        async def run(self, conversation_id, user_request, context, user_content=None, progress_callback=None):
             from types import SimpleNamespace
             return SimpleNamespace(answer="specialist-result", execution_id="specialist-execution")
 
