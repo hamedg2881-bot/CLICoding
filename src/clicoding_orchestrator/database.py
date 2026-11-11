@@ -91,6 +91,21 @@ class Database:
                 CREATE INDEX IF NOT EXISTS ix_summaries_conversation_sequence
                     ON conversation_summaries(conversation_id, through_sequence);
 
+                CREATE TABLE IF NOT EXISTS attachments (
+                    id TEXT PRIMARY KEY,
+                    conversation_id TEXT NOT NULL
+                        REFERENCES conversations(id) ON DELETE CASCADE,
+                    filename TEXT NOT NULL,
+                    mime_type TEXT NOT NULL,
+                    size_bytes INTEGER NOT NULL,
+                    sha256 TEXT NOT NULL,
+                    storage_key TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS ix_attachments_conversation
+                    ON attachments(conversation_id, created_at);
+
                 CREATE TABLE IF NOT EXISTS executions (
                     id TEXT PRIMARY KEY,
                     conversation_id TEXT NOT NULL
@@ -588,6 +603,77 @@ class Database:
                 (conversation_id, from_sequence),
             )
             return cursor.rowcount
+
+    def create_attachment(self, attachment: dict[str, Any]) -> dict[str, Any]:
+        required = (
+            "id", "conversation_id", "filename", "mime_type",
+            "size_bytes", "sha256", "storage_key",
+        )
+        if any(key not in attachment for key in required):
+            raise ValueError("attachment record is incomplete")
+        if not isinstance(attachment["size_bytes"], int) or attachment["size_bytes"] < 1:
+            raise ValueError("attachment size must be positive")
+        now = utc_now()
+        record = {**attachment, "created_at": now}
+        with self.session() as connection:
+            if connection.execute(
+                "SELECT 1 FROM conversations WHERE id = ?",
+                (attachment["conversation_id"],),
+            ).fetchone() is None:
+                raise ValueError("conversation does not exist")
+            connection.execute(
+                """
+                INSERT INTO attachments
+                    (id, conversation_id, filename, mime_type, size_bytes, sha256, storage_key, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record["id"], record["conversation_id"], record["filename"],
+                    record["mime_type"], record["size_bytes"], record["sha256"],
+                    record["storage_key"], now,
+                ),
+            )
+        return record
+
+    def get_attachment(
+        self,
+        conversation_id: str,
+        attachment_id: str,
+    ) -> dict[str, Any] | None:
+        with self.session() as connection:
+            row = connection.execute(
+                """
+                SELECT id, conversation_id, filename, mime_type, size_bytes,
+                       sha256, storage_key, created_at
+                FROM attachments
+                WHERE conversation_id = ? AND id = ?
+                """,
+                (conversation_id, attachment_id),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def delete_attachment(
+        self,
+        conversation_id: str,
+        attachment_id: str,
+    ) -> dict[str, Any] | None:
+        with self.session() as connection:
+            row = connection.execute(
+                """
+                SELECT id, conversation_id, filename, mime_type, size_bytes,
+                       sha256, storage_key, created_at
+                FROM attachments
+                WHERE conversation_id = ? AND id = ?
+                """,
+                (conversation_id, attachment_id),
+            ).fetchone()
+            if row is None:
+                return None
+            connection.execute(
+                "DELETE FROM attachments WHERE conversation_id = ? AND id = ?",
+                (conversation_id, attachment_id),
+            )
+        return dict(row)
 
     def get_conversation(
         self, conversation_id: str, owner_id: str | None = None
