@@ -343,6 +343,7 @@ def test_orchestration_failure_is_logged_without_exposing_request_content(tmp_pa
             "/v1/chat/completions",
             json={
                 "model": "clicoding",
+                "task_type": "coding",
                 "messages": [{"role": "user", "content": private_request}],
             },
         )
