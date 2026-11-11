@@ -1023,7 +1023,7 @@ def test_openai_api_regenerates_only_the_latest_matching_turn(tmp_path):
 
     first = client.post("/v1/chat/completions", json=request)
     assert first.status_code == 200
-    assert first.json()["choices"][0]["message"]["content"] == "answer-1"
+    assert first.json()["choices"][0]["message"]["content"] == "reply-1"
 
     regenerated = client.post(
         "/v1/chat/completions",
@@ -1031,10 +1031,10 @@ def test_openai_api_regenerates_only_the_latest_matching_turn(tmp_path):
         headers={"X-CLICoding-Operation": "regenerate"},
     )
     assert regenerated.status_code == 200
-    assert regenerated.json()["choices"][0]["message"]["content"] == "answer-2"
+    assert regenerated.json()["choices"][0]["message"]["content"] == "reply-2"
     events = database.list_events(conversation_id)
     assert [event["role"] for event in events] == ["user", "assistant"]
-    assert events[-1]["content"] == "answer-2"
+    assert events[-1]["content"] == "reply-2"
     assert gateway.calls[1] == [{"role": "user", "content": "Explain the design"}]
 
 
@@ -1178,7 +1178,7 @@ def test_openwebui_regeneration_is_detected_from_exact_submitted_history(tmp_pat
         headers=headers,
     )
     assert second.status_code == 200
-    assert second.json()["choices"][0]["message"]["content"] == "answer-2"
+    assert second.json()["choices"][0]["message"]["content"] == "reply-2"
     assert gateway.calls[1] == [{"role": "user", "content": "Repeat this question"}]
 
     third = client.post(
