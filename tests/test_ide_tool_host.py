@@ -205,7 +205,7 @@ def test_workspace_tool_results_redact_credential_values(tmp_path):
     secret_api_key = "sk-abcdefghijklmnopqrstuvwx"
     secret_bearer = "Bearer abcdefghijklmnopqrstuvwxyz012345"
     (root / "config.txt").write_text(
-        f"api_key={secret_api_key}\\nauthorization: {secret_bearer}\\n",
+        f"api_key={secret_api_key}\nauthorization: {secret_bearer}\n",
         encoding="utf-8",
     )
 
