@@ -88,6 +88,8 @@ class StructuredPlanner:
         ]
         try:
             completion = await self.gateway.complete(messages)
+        except ContextBudgetExceeded:
+            raise
         except Exception as exc:
             raise PlanningError(f"Planning model request failed: {type(exc).__name__}") from exc
 
