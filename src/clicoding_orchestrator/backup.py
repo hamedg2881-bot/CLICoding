@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -56,7 +57,7 @@ def _safe_source_file(root: Path, key: PurePosixPath) -> Path:
 
 
 def _attachment_rows(database_path: Path) -> list[dict[str, Any]]:
-    with sqlite3.connect(f"file:{database_path}?mode=ro", uri=True) as connection:
+    with closing(sqlite3.connect(f"file:{database_path}?mode=ro", uri=True)) as connection:
         connection.row_factory = sqlite3.Row
         try:
             rows = connection.execute(
@@ -68,7 +69,7 @@ def _attachment_rows(database_path: Path) -> list[dict[str, Any]]:
 
 
 def _integrity_check(database_path: Path) -> None:
-    with sqlite3.connect(f"file:{database_path}?mode=ro", uri=True) as connection:
+    with closing(sqlite3.connect(f"file:{database_path}?mode=ro", uri=True)) as connection:
         result = connection.execute("PRAGMA integrity_check").fetchone()
     if result is None or result[0] != "ok":
         raise BackupError("SQLite integrity_check failed")
@@ -87,7 +88,7 @@ def create_backup(database: str | Path, attachments: str | Path, output: str | P
     staging.mkdir(mode=0o700)
     try:
         snapshot = staging / DATABASE_NAME
-        with sqlite3.connect(f"file:{database_path}?mode=ro", uri=True) as source, sqlite3.connect(snapshot) as target:
+        with closing(sqlite3.connect(f"file:{database_path}?mode=ro", uri=True)) as source, closing(sqlite3.connect(snapshot)) as target:
             source.backup(target)
         os.chmod(snapshot, 0o600)
         _integrity_check(snapshot)
@@ -136,6 +137,24 @@ def create_backup(database: str | Path, attachments: str | Path, output: str | P
         raise
 
 
+def _verify_attachment_tree(root: Path, expected_records: list[dict[str, Any]]) -> None:
+    if root.is_symlink() or not root.is_dir():
+        raise BackupError("attachment backup directory is missing or unsafe")
+    expected_files = {item["storage_key"] for item in expected_records}
+    expected_directories: set[str] = set()
+    for key in expected_files:
+        parts = _safe_key(key).parts
+        expected_directories.add(parts[0])
+    for path in root.rglob("*"):
+        if path.is_symlink():
+            raise BackupError("backup contains a symbolic link")
+        relative = path.relative_to(root).as_posix()
+        if path.is_file() and relative not in expected_files:
+            raise BackupError("backup contains an unreferenced attachment file")
+        if path.is_dir() and relative not in expected_directories:
+            raise BackupError("backup contains an unexpected attachment directory")
+
+
 def verify_backup(backup: str | Path) -> dict[str, Any]:
     root = Path(backup).expanduser().resolve(strict=True)
     manifest_path = root / MANIFEST_NAME
@@ -170,6 +189,7 @@ def verify_backup(backup: str | Path) -> dict[str, Any]:
     actual_by_key = {item.get("storage_key"): item for item in expected if isinstance(item, dict)}
     if len(actual_by_key) != len(expected):
         raise BackupError("attachment manifest contains duplicate or invalid entries")
+    _verify_attachment_tree(attachments_path, expected)
     for row in rows:
         key = _safe_key(row["storage_key"])
         record = actual_by_key.get(key.as_posix())
@@ -218,10 +238,11 @@ def restore_backup(
     try:
         shutil.copyfile(backup_root / DATABASE_NAME, staged_database)
         os.chmod(staged_database, 0o600)
-        with staged_database.open("rb") as stream:
+        with staged_database.open("rb+") as stream:
             os.fsync(stream.fileno())
         shutil.copytree(backup_root / "attachments", staged_attachments)
         _integrity_check(staged_database)
+        _verify_attachment_tree(staged_attachments, manifest["attachments"])
         for item in manifest["attachments"]:
             key = _safe_key(item["storage_key"])
             staged_file = staged_attachments.joinpath(*key.parts)
