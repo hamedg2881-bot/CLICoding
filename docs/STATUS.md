@@ -367,3 +367,10 @@ User supplied a fresh command output from host `spark-7ea3`:
 - Target and later events are deleted transactionally only after a successful model response/tool-call stream; failed/cancelled edits preserve the original history.
 - Works for buffered specialist turns and direct streamed chat/tool turns.
 - Packaged UI controls for selecting the target event and confirming the history rewrite remain integration work.
+
+## Consolidated validation
+
+- Consolidated Draft PR: #13 — `Complete CDS_AI conversation, tools, identity, and IDE foundation`.
+- CI run `43020629874` on head `3bfbaab4a30653ffa980bfbee9884c6a345581f2`: **128 passed, 1 warning**.
+- Earlier incremental PRs #5–#12 are closed as superseded by PR #13; no changes were merged into `main`.
+- All work remains on GitHub only. No source ZIP has been transferred to DGX Spark, and no DGX service/runtime/model has been changed or restarted.
