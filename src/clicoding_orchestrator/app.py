@@ -1133,10 +1133,17 @@ def create_app(
 
         raw_operation = http_request.headers.get("x-clicoding-operation")
         operation = raw_operation.strip().lower() if raw_operation is not None else "append"
-        if operation not in {"append", "regenerate"}:
+        if operation not in {"append", "regenerate", "edit"}:
             raise HTTPException(status_code=400, detail="Unsupported X-CLICoding-Operation")
         existing_events = db.list_events(conversation_id)
         regenerate = operation == "regenerate"
+        edit_event_id = None
+        if operation == "edit":
+            if last_message.role != "user":
+                raise HTTPException(status_code=400, detail="Only user messages can be edited")
+            edit_event_id = http_request.headers.get("x-clicoding-event-id", "").strip()
+            if not edit_event_id:
+                raise HTTPException(status_code=400, detail="X-CLICoding-Event-ID is required for edit")
         if (
             raw_operation is None
             and external_conversation_id is not None
@@ -1159,7 +1166,7 @@ def create_app(
                 )
             except ToolProtocolError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
-        elif not regenerate:
+        elif not regenerate and edit_event_id is None:
             try:
                 if pending_tool_call(existing_events) is not None:
                     raise ToolProtocolError("the pending tool call must be answered before a new user turn")
@@ -1214,11 +1221,14 @@ def create_app(
         if chat_request.stream and not is_specialist:
             assert stream_worker is not None
             stream_events = []
-            stream_source_events = (
-                existing_events[:-1]
-                if regenerate and existing_events and existing_events[-1]["role"] == "assistant"
-                else existing_events
-            )
+            if regenerate and existing_events and existing_events[-1]["role"] == "assistant":
+                stream_source_events = existing_events[:-1]
+            elif edit_event_id is not None:
+                _, stream_source_events = _prepare_edit(
+                    db, conversation_id, edit_event_id
+                )
+            else:
+                stream_source_events = existing_events
             for event in stream_source_events:
                 if event["role"] not in ("user", "assistant", "tool"):
                     continue
@@ -1234,8 +1244,11 @@ def create_app(
                     stream_input["tool_call_id"] = last_message.tool_call_id
                     if last_message.name:
                         stream_input["name"] = last_message.name
+                stream_history = supplied_system + stream_events
+                if not regenerate:
+                    stream_history.append(stream_input)
                 ensure_context_budget(
-                    supplied_system + stream_events + [stream_input],
+                    stream_history,
                     context_window_tokens=stream_worker.context_window_tokens,
                     reserved_output_tokens=(
                         chat_request.max_tokens or stream_worker.max_output_tokens
@@ -1263,6 +1276,7 @@ def create_app(
                         if last_message.role == "tool" else None
                     ),
                     regenerate,
+                    edit_event_id,
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -1284,6 +1298,7 @@ def create_app(
             input_role=last_message.role, input_metadata=input_metadata,
             tool_definitions=tool_definitions or None, tool_choice=chat_request.tool_choice,
             generation_options=generation_options, regenerate=regenerate,
+            edit_event_id=edit_event_id,
         )
 
         if chat_request.stream:
