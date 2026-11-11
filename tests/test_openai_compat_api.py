@@ -417,7 +417,7 @@ def test_explicit_specialist_task_uses_orchestrator(tmp_path):
         def __init__(self):
             self.calls = []
 
-        async def run(self, conversation_id, user_request, context, user_content=None):
+        async def run(self, conversation_id, user_request, context, user_content=None, progress_callback=None):
             self.calls.append((conversation_id, user_request, context, user_content))
             from types import SimpleNamespace
             return SimpleNamespace(answer="specialist-result", execution_id="execution-123")
