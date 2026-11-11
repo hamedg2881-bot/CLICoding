@@ -165,7 +165,9 @@ def test_dotnet_build_uses_fixed_command_restricted_environment_and_approval(tmp
     )))
 
     assert output["status"] == "ok"
-    assert captured["command"] == ["dotnet", "build", "Demo.csproj", "--no-restore"]
+    assert captured["command"] == [
+        "/usr/bin/dotnet", "build", str(root / "Demo.csproj"), "--no-restore"
+    ]
     assert captured["shell"] is False
     assert captured["cwd"] == root
     assert "CLICODING_API_KEY" not in captured["env"]
