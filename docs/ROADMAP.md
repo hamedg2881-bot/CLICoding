@@ -163,3 +163,12 @@ The detailed product and release contract is in docs/CHAT_EXPERIENCE_SPEC.md. Th
 - Completed in this branch: true upstream SSE delta streaming for direct chat; persist assistant turn only after the full stream succeeds; cancel upstream iteration when the client disconnects; regression coverage.
 - Next: tool-call round-trip and workstation tool broker contract; context-window budgeting/compaction; cancellation and retry semantics; multimodal attachment references; reference IDE adapter.
 - Specialist execution continues to use explicit orchestration and currently streams only its completed final answer. Do not claim token-level specialist progress until implemented.
+
+## Phase 2D — Secure workstation tool protocol
+
+The tool-call and IDE-side execution boundary is specified in docs/IDE_TOOL_PROTOCOL.md.
+
+- The IDE adapter owns workspace, file, process, build/test, browser, and screenshot operations on the developer workstation.
+- The DGX remains an inference/orchestration host and must not mount developer workspaces.
+- Next implementation: OpenAI tool-call message round-trip, typed tool definitions/results, and a reference local tool host with allow-list and approval gates.
+- No arbitrary shell tool is exposed; tools are introduced one at a time with schemas, policy, audit, idempotency, and tests.
