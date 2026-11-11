@@ -192,7 +192,7 @@ def _prepare_regeneration(
     role: str,
     content: str | list[dict[str, Any]] | None,
     metadata: dict[str, Any] | None,
-) -> None:
+) -> dict[str, Any]:
     events = database.list_events(conversation_id)
     if len(events) < 2 or events[-1]["role"] != "assistant":
         raise HTTPException(status_code=409, detail="There is no completed assistant turn to regenerate")
