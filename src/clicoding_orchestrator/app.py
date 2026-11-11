@@ -375,6 +375,91 @@ def create_app(
             )
             return user_event, assistant_event, answer, execution_id
 
+    async def stream_direct_turn(
+        conversation_id: str,
+        content: str | list[dict[str, Any]],
+        system_messages: list[dict[str, str]],
+        worker: Worker,
+        selected_gateway: ModelGateway,
+        response_id: str,
+        created_at: int,
+    ):
+        """Stream a direct-chat turn and persist its assistant event only on success."""
+        lock = conversation_locks.setdefault(conversation_id, asyncio.Lock())
+        async with lock:
+            db.append_event(
+                conversation_id, role="user", content=_store_content(content), producer="user"
+            )
+            events = [
+                {"role": event["role"], "content": _restore_content(event["content"])}
+                for event in db.list_events(conversation_id)
+                if event["role"] in ("user", "assistant")
+            ]
+            history = list(system_messages) + events
+            role_chunk = {
+                "id": response_id,
+                "object": "chat.completion.chunk",
+                "created": created_at,
+                "model": "clicoding",
+                "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
+            }
+            yield "data: " + json.dumps(role_chunk, ensure_ascii=False, separators=(",", ":")) + "\n\n"
+            answer_parts: list[str] = []
+            try:
+                async with worker_semaphores[runtime_key(worker)]:
+                    stream_method = getattr(selected_gateway, "stream", None)
+                    if callable(stream_method):
+                        async for piece in stream_method(history):
+                            if not isinstance(piece, str):
+                                raise GatewayError("Upstream stream yielded a non-text delta")
+                            if not piece:
+                                continue
+                            answer_parts.append(piece)
+                            chunk = {
+                                "id": response_id,
+                                "object": "chat.completion.chunk",
+                                "created": created_at,
+                                "model": "clicoding",
+                                "choices": [{"index": 0, "delta": {"content": piece}, "finish_reason": None}],
+                            }
+                            yield "data: " + json.dumps(chunk, ensure_ascii=False, separators=(",", ":")) + "\n\n"
+                    else:
+                        completion = await selected_gateway.complete(history)
+                        answer_parts.append(completion.content)
+                        chunk = {
+                            "id": response_id,
+                            "object": "chat.completion.chunk",
+                            "created": created_at,
+                            "model": "clicoding",
+                            "choices": [{"index": 0, "delta": {"content": completion.content}, "finish_reason": None}],
+                        }
+                        yield "data: " + json.dumps(chunk, ensure_ascii=False, separators=(",", ":")) + "\n\n"
+                db.append_event(
+                    conversation_id, role="assistant", content="".join(answer_parts),
+                    producer=worker.id,
+                )
+                final_chunk = {
+                    "id": response_id,
+                    "object": "chat.completion.chunk",
+                    "created": created_at,
+                    "model": "clicoding",
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                }
+                yield "data: " + json.dumps(final_chunk, ensure_ascii=False, separators=(",", ":")) + "\n\n"
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception(
+                    "Direct chat streaming failed (conversation_id=%s)", conversation_id
+                )
+                yield "data: " + json.dumps({
+                    "error": {
+                        "message": "The assistant stream was interrupted. Please retry.",
+                        "type": "server_error",
+                    }
+                }, ensure_ascii=False) + "\n\n"
+            yield "data: [DONE]\n\n"
+
     @app.post(
         "/api/v1/conversations/{conversation_id}/turns",
         response_model=TurnResponse,
@@ -434,18 +519,41 @@ def create_app(
                         producer="client-import",
                     )
 
-        user_event, assistant_event, answer, execution_id = await run_turn(
-            conversation_id, last_user, chat_request.task_type, supplied_system,
-            force_orchestration=(
-                chat_request.task_type != "chat" or _has_images(last_user)
-            ),
-        )
-
         response_id = f"chatcmpl-{uuid.uuid4().hex}"
         created_at = int(time.time())
+        is_specialist = chat_request.task_type != "chat" or _has_images(last_user)
+        if chat_request.stream and not is_specialist:
+            try:
+                stream_worker = router.select("chat")
+            except NoEligibleWorker as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+            stream_gateway = gateway or OpenAICompatibleGateway(
+                base_url=stream_worker.base_url,
+                model=stream_worker.model,
+                api_key=stream_worker.api_key,
+                timeout_seconds=stream_worker.timeout_seconds,
+            )
+            return StreamingResponse(
+                stream_direct_turn(
+                    conversation_id, last_user, supplied_system, stream_worker,
+                    stream_gateway, response_id, created_at,
+                ),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
+                    "Connection": "keep-alive",
+                },
+            )
+
+        user_event, assistant_event, answer, execution_id = await run_turn(
+            conversation_id, last_user, chat_request.task_type, supplied_system,
+            force_orchestration=is_specialist,
+        )
+
         if chat_request.stream:
-            # Buffered SSE compatibility: orchestration completes before the final
-            # answer is emitted. This is protocol streaming, not token-by-token output.
+            # Specialist execution emits a final-answer SSE stream after the task
+            # graph completes. Direct chat uses true upstream token streaming.
             async def event_stream():
                 chunks = [
                     {
@@ -471,8 +579,8 @@ def create_app(
                     },
                 ]
                 for chunk in chunks:
-                    yield "data: " + json.dumps(chunk, ensure_ascii=False, separators=(",", ":")) + "\n\n"
-                yield "data: [DONE]\n\n"
+                    yield "data: " + json.dumps(chunk, ensure_ascii=False, separators=(",", ":")) + "\\n\\n"
+                yield "data: [DONE]\\n\\n"
 
             return StreamingResponse(
                 event_stream(),
