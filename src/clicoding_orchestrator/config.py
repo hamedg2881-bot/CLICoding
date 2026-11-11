@@ -31,6 +31,8 @@ class Settings:
             len(self.api_key) < 32 or not self.api_key.isascii() or not self.api_key.strip()
         ):
             raise ValueError("api_key must be at least 32 ASCII characters")
+        if not isinstance(self.user_api_keys, dict):
+            raise ValueError("user_api_keys must be a mapping of user IDs to tokens")
         if any(
             not isinstance(user_id, str)
             or not user_id.strip()
