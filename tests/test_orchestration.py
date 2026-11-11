@@ -454,6 +454,11 @@ def test_full_original_request_and_acceptance_criteria_reach_workers_and_synthes
             "Include runnable code, exact output, and a Persian explanation."
         )
         captured = {}
+        prior_context = (
+            "user: برای تست حفظ مکالمه، این کد را به خاطر بسپار: "
+            "CLICODING_SESSION_REGRESSION_20261111 فقط با کلمه OK پاسخ بده.\\n\\n"
+            "assistant: OK"
+        )
 
         class ContractGateway:
             def __init__(self, worker_id):
@@ -492,6 +497,7 @@ def test_full_original_request_and_acceptance_criteria_reach_workers_and_synthes
                         "این تابع تعداد کل رخداد هر عدد تکراری را برمی‌گرداند.",
                         "qwen-coder",
                     )
+                captured["synthesis_system"] = messages[0]["content"]
                 captured["synthesis_message"] = messages[-1]["content"]
                 return Completion(
                     "def find_duplicates(nums):\n"
@@ -513,12 +519,18 @@ def test_full_original_request_and_acceptance_criteria_reach_workers_and_synthes
         orchestrator = MultiModelOrchestrator(
             db, CapabilityRouter(registry), gateway_factory=gateway_factory
         )
-        result = await orchestrator.run(conversation["id"], original_request)
+        result = await orchestrator.run(
+            conversation["id"], original_request, prior_context
+        )
 
         assert result.execution.succeeded
         assert original_request in captured["worker_message"]
         assert "Return total occurrence counts" in captured["worker_message"]
         assert original_request in captured["synthesis_message"]
+        assert prior_context in captured["worker_message"]
+        assert prior_context in captured["synthesis_message"]
+        assert "quote exact prior values" in captured["synthesis_system"]
+        assert "Never claim that information was persisted externally" in captured["synthesis_system"]
         assert "{2: 2, 3: 3}" in result.answer
         assert "def find_duplicates" in result.answer
 
