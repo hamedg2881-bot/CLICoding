@@ -143,3 +143,56 @@ def test_workspace_tool_catalog_has_no_general_shell_tool(tmp_path):
     assert "workspace_read_file" in names
     assert "workspace_write_file" in names
     assert not any("shell" in name or name == "run_command" for name in names)
+
+
+def test_dotnet_build_uses_fixed_command_restricted_environment_and_approval(tmp_path, monkeypatch):
+    import subprocess
+
+    root, host = make_host(tmp_path, approval=lambda request: True)
+    (root / "Demo.csproj").write_text("<Project />", encoding="utf-8")
+    captured = {}
+    monkeypatch.setenv("CLICODING_API_KEY", "must-not-enter-child-process")
+    monkeypatch.setattr("cds_ai_ide_adapter.tool_host.shutil.which", lambda name: "/usr/bin/dotnet")
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(command, 0, stdout="Build succeeded", stderr="")
+
+    monkeypatch.setattr("cds_ai_ide_adapter.tool_host.subprocess.run", fake_run)
+    output = result(host.execute_tool_call(call(
+        "workspace_dotnet_build", {"project": "Demo.csproj"}
+    )))
+
+    assert output["status"] == "ok"
+    assert captured["command"] == ["dotnet", "build", "Demo.csproj", "--no-restore"]
+    assert captured["shell"] is False
+    assert captured["cwd"] == root
+    assert "CLICODING_API_KEY" not in captured["env"]
+
+
+def test_dotnet_build_is_denied_without_explicit_approval(tmp_path, monkeypatch):
+    root, host = make_host(tmp_path)
+    (root / "Demo.csproj").write_text("<Project />", encoding="utf-8")
+    monkeypatch.setattr(
+        "cds_ai_ide_adapter.tool_host.subprocess.run",
+        lambda *args, **kwargs: pytest.fail("denied command must not execute"),
+    )
+    output = result(host.execute_tool_call(call(
+        "workspace_dotnet_build", {"project": "Demo.csproj"}
+    )))
+    assert output["status"] == "approval_denied"
+
+
+def test_idempotency_key_cannot_be_reused_with_different_arguments(tmp_path):
+    root, host = make_host(tmp_path)
+    (root / "a.txt").write_text("alpha", encoding="utf-8")
+    (root / "b.txt").write_text("beta", encoding="utf-8")
+    first = result(host.execute_tool_call(call(
+        "workspace_read_file", {"path": "a.txt"}, "same_call"
+    )))
+    second = result(host.execute_tool_call(call(
+        "workspace_read_file", {"path": "b.txt"}, "same_call"
+    )))
+    assert first["content"] == "alpha"
+    assert second["status"] == "conflict"
