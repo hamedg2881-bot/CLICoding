@@ -37,7 +37,10 @@
 - [ ] Close filesystem path-validation TOCTOU races with platform-appropriate safe APIs.
 - [ ] Expand secret detection and redact tool outputs before persistence/transmission.
 - [ ] OS-level process sandboxing and Windows/macOS/Linux adapter tests.
-- [ ] Rate limits, token rotation/revocation and audit export.
+- [x] Durable per-principal API rate limits backed by SQLite transactions.
+- [x] Administrator token issue/list/revoke API; only token hashes are stored and plaintext is returned once.
+- [x] Paginated administrator-only audit export without request bodies or bearer-token values.
+- [ ] Audit retention/export signing and alerting policy.
 - [ ] Multi-process conversation locking or explicitly enforce a single-process deployment.
 - [ ] Prove trusted Open WebUI headers are stripped/reinjected by the actual private proxy; otherwise use per-user tokens.
 

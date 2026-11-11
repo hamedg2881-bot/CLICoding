@@ -1,3 +1,14 @@
+## 2026-11-11 — API security operations hardening
+
+- Added a durable SQLite token registry with cryptographically random user tokens, SHA-256 hashes at rest, one-time plaintext disclosure, administrator-only listing and revocation.
+- Dynamic tokens activate authentication even when no environment-mapped user token exists; revoked tokens are rejected on the next request.
+- Added per-principal fixed-window rate limiting using SQLite transactions with an immediate write lock, so concurrent application processes share the same admission counter.
+- Added request correlation IDs and an administrator-only paginated audit endpoint. Audit records contain principal, route, method, status and timestamp only; request bodies, prompts, bearer tokens and credentials are not recorded.
+- Added regression tests for token lifecycle, privilege separation, revocation, rate-limit isolation and audit redaction.
+- Configuration: CLICODING_RATE_LIMIT_PER_WINDOW (default 120) and CLICODING_RATE_LIMIT_WINDOW_SECONDS (default 60).
+- This is source-level security hardening; production key bootstrap, TLS/proxy configuration, audit retention and operational alerting remain deployment gates.
+- No DGX transfer or service/runtime restart has occurred.
+
 # Project Status
 
 **Last updated:** 2026-11-11  
@@ -14,7 +25,7 @@
 - Workstation execution: approved, allow-listed reference tool host; no arbitrary shell tool.
 - Worker example uses recorded ports 8003/8004/8005 and leaves all workers disabled. Served aliases and tool-call capability require live verification.
 - Attachments: conversation-scoped PNG/JPEG/GIF/WebP upload, bounded size, MIME sniffing, SHA-256 integrity, private local storage, owner-scoped fetch/delete, and attachment-reference resolution into model vision payloads. Automatic expiry/retention and storage backup/restore policy remain open.
-- Remaining source gates include packaged IDE UI, browser/screenshot visual validation, specialist progress, OS-level process sandboxing, rate limiting, audit export, multi-process locking and cross-platform acceptance.
+- Remaining source gates include packaged IDE UI, browser/screenshot visual validation, specialist progress, OS-level process sandboxing, audit retention/alerting, multi-process conversation serialization and cross-platform acceptance.
 - No DGX host files, services, model runtimes or containers have been changed.
 
 ## Confirmed requirements
