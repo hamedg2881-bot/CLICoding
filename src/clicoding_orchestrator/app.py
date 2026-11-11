@@ -381,8 +381,7 @@ def create_app(
     )
     async def create_turn(conversation_id: str, request: TurnRequest) -> TurnResponse:
         user_event, assistant_event, answer, execution_id = await run_turn(
-            conversation_id, request.content, request.task_type,
-            force_orchestration=True,
+            conversation_id, request.content, request.task_type
         )
         return TurnResponse(
             conversation_id=conversation_id,
@@ -516,7 +515,8 @@ def create_app(
                 status_code=503, detail="Multi-model planning is disabled"
             )
         user_event, assistant_event, answer, execution_id = await run_turn(
-            conversation_id, request.content, request.task_type
+            conversation_id, request.content, request.task_type,
+            force_orchestration=True,
         )
         return TurnResponse(
             conversation_id=conversation_id,
