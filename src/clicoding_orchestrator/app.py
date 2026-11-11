@@ -12,6 +12,11 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
+from .tool_protocol import (
+    ToolProtocolError, pending_tool_call, validate_tool_calls,
+    validate_tool_definitions, validate_tool_result,
+)
+
 from .config import Settings
 from .database import Database
 from .gateway import GatewayError, ModelGateway, OpenAICompatibleGateway
@@ -36,15 +41,20 @@ class TurnResponse(BaseModel):
 
 
 class ChatMessage(BaseModel):
-    role: Literal["system", "user", "assistant"]
-    content: str | list[dict[str, Any]]
+    role: Literal["system", "user", "assistant", "tool"]
+    content: str | list[dict[str, Any]] | None
+    tool_call_id: str | None = None
+    tool_calls: list[dict[str, Any]] | None = None
+    name: str | None = None
 
     @field_validator("content")
     @classmethod
     def validate_content(cls, value):
+        if value is None:
+            return None
         if isinstance(value, str):
-            if not value.strip() or len(value) > 200_000:
-                raise ValueError("text content must be non-empty and at most 200000 characters")
+            if len(value) > 200_000:
+                raise ValueError("text content must be at most 200000 characters")
             return value
         if not isinstance(value, list) or not value or len(value) > 8:
             raise ValueError("multimodal content must contain between 1 and 8 parts")
@@ -90,6 +100,8 @@ class OpenAIChatRequest(BaseModel):
     temperature: float | None = None
     max_tokens: int | None = Field(default=None, gt=0)
     user: str | None = None
+    tools: list[dict[str, Any]] | None = None
+    tool_choice: str | dict[str, Any] | None = None
 
 
 logger = logging.getLogger(__name__)
@@ -98,11 +110,20 @@ logger = logging.getLogger(__name__)
 _MULTIMODAL_STORAGE_PREFIX = "__CLICODING_MULTIMODAL_V1__"
 
 
-def _chat_message(role: str, content: str | list[dict[str, Any]]) -> dict[str, object]:
-    return {"role": role, "content": content}
+def _chat_message(message: ChatMessage) -> dict[str, Any]:
+    result: dict[str, Any] = {"role": message.role, "content": message.content}
+    if message.tool_call_id is not None:
+        result["tool_call_id"] = message.tool_call_id
+    if message.tool_calls is not None:
+        result["tool_calls"] = message.tool_calls
+    if message.name is not None:
+        result["name"] = message.name
+    return result
 
 
-def _store_content(content: str | list[dict[str, Any]]) -> str:
+def _store_content(content: str | list[dict[str, Any]] | None) -> str:
+    if content is None:
+        return ""
     if isinstance(content, str):
         return content
     return _MULTIMODAL_STORAGE_PREFIX + json.dumps(content, ensure_ascii=False)
@@ -274,19 +295,30 @@ def create_app(
         task_type: str,
         system_messages: list[dict[str, str]] | None = None,
         force_orchestration: bool = False,
+        input_role: str = "user",
+        input_metadata: dict[str, Any] | None = None,
+        tool_definitions: dict[str, dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], str, str | None]:
         if not db.conversation_exists(conversation_id):
             raise HTTPException(status_code=404, detail="Conversation not found")
         lock = conversation_locks.setdefault(conversation_id, asyncio.Lock())
         async with lock:
-            user_event = db.append_event(
-                conversation_id, role="user", content=_store_content(content), producer="user"
+            input_event = db.append_event(
+                conversation_id,
+                role=input_role,
+                content=_store_content(content),
+                producer="user" if input_role == "user" else "tool-client",
+                metadata=input_metadata,
             )
-            events = [
-                {"role": event["role"], "content": _restore_content(event["content"])}
-                for event in db.list_events(conversation_id)
-                if event["role"] in ("user", "assistant")
-            ]
+            events = []
+            for event in db.list_events(conversation_id):
+                if event["role"] not in ("user", "assistant", "tool"):
+                    continue
+                item = {"role": event["role"], "content": _restore_content(event["content"])}
+                if event.get("metadata"):
+                    item.update(event["metadata"])
+                events.append(item)
             history = list(system_messages or []) + events
             recent_image_parts: list[dict[str, Any]] = []
             for event in reversed(events):
@@ -305,10 +337,8 @@ def create_app(
                 )
             execution_id: str | None = None
 
-            if multi_model is not None and (
-                force_orchestration
-                or task_type != "chat"
-                or _has_images(vision_content)
+            if tool_definitions is None and multi_model is not None and (
+                force_orchestration or task_type != "chat" or _has_images(vision_content)
             ):
                 # Specialist work is orchestrated; ordinary chat stays on the
                 # direct conversation path and never depends on Planner output.
@@ -345,7 +375,11 @@ def create_app(
                 execution_id = result.execution_id
             else:
                 try:
-                    worker = router.select("vision" if _has_images(vision_content) else task_type)
+                    required_capability = (
+                        "tool_calling" if tool_definitions is not None
+                        else ("vision" if _has_images(vision_content) else task_type)
+                    )
+                    worker = router.select(required_capability)
                 except NoEligibleWorker as exc:
                     raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -357,7 +391,13 @@ def create_app(
                 )
                 try:
                     async with worker_semaphores[runtime_key(worker)]:
-                        completion = await selected_gateway.complete(history)
+                        if tool_definitions is not None:
+                            completion = await selected_gateway.complete(
+                                history, tools=list(tool_definitions.values()),
+                                tool_choice=tool_choice,
+                            )
+                        else:
+                            completion = await selected_gateway.complete(history)
                 except GatewayError as exc:
                     raise HTTPException(status_code=502, detail=str(exc)) from exc
                 except Exception as exc:
@@ -366,14 +406,25 @@ def create_app(
                     ) from exc
                 answer = completion.content
                 producer = worker.id
+                returned_tool_calls = validate_tool_calls(
+                    completion.tool_calls, tool_definitions or {}
+                )
+                if tool_choice == "required" and not returned_tool_calls:
+                    raise GatewayError("Upstream did not honor required tool_choice")
+                if tool_choice == "none" and returned_tool_calls:
+                    raise GatewayError("Upstream returned a tool call when tool_choice was none")
+            else:
+                returned_tool_calls = []
 
-            assistant_event = db.append_event(
-                conversation_id,
-                role="assistant",
-                content=answer,
-                producer=producer,
+            assistant_metadata = (
+                {"tool_calls": returned_tool_calls, "finish_reason": "tool_calls"}
+                if returned_tool_calls else None
             )
-            return user_event, assistant_event, answer, execution_id
+            assistant_event = db.append_event(
+                conversation_id, role="assistant", content=answer,
+                producer=producer, metadata=assistant_metadata,
+            )
+            return input_event, assistant_event, answer, execution_id
 
     async def stream_direct_turn(
         conversation_id: str,
@@ -483,18 +534,42 @@ def create_app(
     ) -> Any:
         if chat_request.model not in ("CDS_AI", "cds_ai", "clicoding", "assistant", "auto"):
             raise HTTPException(status_code=404, detail="Unknown public model alias")
-        if not chat_request.messages or chat_request.messages[-1].role != "user":
-            raise HTTPException(
-                status_code=400,
-                detail="The final message must be a user message",
-            )
-
-        last_user = chat_request.messages[-1].content
+        if not chat_request.messages or chat_request.messages[-1].role not in ("user", "tool"):
+            raise HTTPException(status_code=400, detail="The final message must be a user or tool message")
+        last_message = chat_request.messages[-1]
+        if last_message.role == "user" and (
+            not isinstance(last_message.content, (str, list))
+            or (isinstance(last_message.content, str) and not last_message.content.strip())
+        ):
+            raise HTTPException(status_code=400, detail="User message content is required")
+        if last_message.role == "tool" and (
+            not isinstance(last_message.content, str) or not last_message.content
+        ):
+            raise HTTPException(status_code=400, detail="Tool result content is required")
+        last_user = last_message.content
         supplied_system = [
-            _chat_message(message.role, message.content)
-            for message in chat_request.messages
+            _chat_message(message) for message in chat_request.messages
             if message.role == "system"
         ]
+        try:
+            tool_definitions = validate_tool_definitions(chat_request.tools)
+            if chat_request.tool_choice is not None:
+                if chat_request.tools is None:
+                    raise ToolProtocolError("tool_choice requires tools")
+                if isinstance(chat_request.tool_choice, str):
+                    if chat_request.tool_choice not in {"auto", "none", "required"}:
+                        raise ToolProtocolError("tool_choice must be auto, none, required, or a function selector")
+                elif isinstance(chat_request.tool_choice, dict):
+                    selector = chat_request.tool_choice.get("function", {})
+                    name = selector.get("name") if isinstance(selector, dict) else None
+                    if chat_request.tool_choice.get("type") != "function" or name not in tool_definitions:
+                        raise ToolProtocolError("tool_choice references an undeclared function")
+                else:
+                    raise ToolProtocolError("tool_choice has an invalid format")
+            if chat_request.stream and tool_definitions:
+                raise ToolProtocolError("streaming tool calls are not enabled in this release")
+        except ToolProtocolError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         # Open WebUI drops arbitrary response fields such as conversation_id.
         # Its configured custom headers preserve chat/user identity on every turn.
@@ -511,13 +586,32 @@ def create_app(
             conversation_id = created["id"]
             # Generic OpenAI clients may bootstrap a new conversation with full history.
             for message in chat_request.messages[:-1]:
-                if message.role in ("user", "assistant"):
+                if message.role in ("user", "assistant", "tool"):
+                    metadata = {}
+                    if message.tool_calls is not None:
+                        metadata["tool_calls"] = message.tool_calls
+                    if message.tool_call_id is not None:
+                        metadata["tool_call_id"] = message.tool_call_id
+                    if message.name is not None:
+                        metadata["name"] = message.name
                     db.append_event(
-                        conversation_id,
-                        role=message.role,
-                        content=_store_content(message.content),
-                        producer="client-import",
+                        conversation_id, role=message.role,
+                        content=_store_content(message.content), producer="client-import",
+                        metadata=metadata or None,
                     )
+
+        existing_events = db.list_events(conversation_id)
+        if last_message.role == "tool":
+            try:
+                validate_tool_result(existing_events, last_message.tool_call_id, last_message.name)
+            except ToolProtocolError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        else:
+            try:
+                if pending_tool_call(existing_events) is not None:
+                    raise ToolProtocolError("the pending tool call must be answered before a new user turn")
+            except (ToolProtocolError, KeyError, TypeError) as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
 
         response_id = f"chatcmpl-{uuid.uuid4().hex}"
         created_at = int(time.time())
@@ -546,9 +640,22 @@ def create_app(
                 },
             )
 
-        user_event, assistant_event, answer, execution_id = await run_turn(
-            conversation_id, last_user, chat_request.task_type, supplied_system,
-            force_orchestration=is_specialist,
+        if tool_definitions:
+            try:
+                router.select("tool_calling")
+            except NoEligibleWorker as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+        input_metadata = None
+        if last_message.role == "tool":
+            input_metadata = {
+                "tool_call_id": last_message.tool_call_id,
+                **({"name": last_message.name} if last_message.name else {}),
+            }
+        input_event, assistant_event, answer, execution_id = await run_turn(
+            conversation_id, last_user or "", chat_request.task_type, supplied_system,
+            force_orchestration=is_specialist and not tool_definitions,
+            input_role=last_message.role, input_metadata=input_metadata,
+            tool_definitions=tool_definitions or None, tool_choice=chat_request.tool_choice,
         )
 
         if chat_request.stream:
@@ -597,12 +704,19 @@ def create_app(
             "choices": [
                 {
                     "index": 0,
-                    "message": {"role": "assistant", "content": answer},
-                    "finish_reason": "stop",
+                    "message": {
+                        "role": "assistant",
+                        "content": None if assistant_event.get("metadata") else answer,
+                        **(
+                            {"tool_calls": assistant_event["metadata"]["tool_calls"]}
+                            if assistant_event.get("metadata") else {}
+                        ),
+                    },
+                    "finish_reason": "tool_calls" if assistant_event.get("metadata") else "stop",
                 }
             ],
             "x_clicoding": {
-                "user_event_id": user_event["id"],
+                "user_event_id": input_event["id"],
                 "assistant_event_id": assistant_event["id"],
                 "producer": assistant_event["producer"],
                 "system_messages_applied": len(supplied_system),
