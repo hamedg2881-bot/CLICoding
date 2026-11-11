@@ -581,7 +581,7 @@ def create_app(
         )
         is_health = request.url.path == "/health"
         auth_enabled = bool(
-            config.api_key or config.user_api_keys or security_store.has_active_tokens()
+            config.api_key or config.user_api_keys or security_store.has_issued_tokens()
         )
         if not is_health and auth_enabled:
             supplied = request.headers.get("authorization", "")
