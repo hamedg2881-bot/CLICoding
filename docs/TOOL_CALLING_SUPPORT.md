@@ -28,8 +28,8 @@ The validator supports object, array, string, integer, number, and boolean types
 ## Current limitations
 
 - One tool call per assistant turn; parallel tool calls are disabled.
-- Tool-call SSE streaming is not yet supported. A request with both `stream: true` and `tools` is rejected explicitly; it is not silently downgraded to buffered output.
-- No workstation tool host or IDE adapter is shipped by this transport slice.
+- OpenAI-compatible API streaming now forwards incremental `delta.tool_calls` SSE fragments and persists the validated assembled call only after the stream completes. Tool-call streams still allow only one function call per assistant turn.
+- The workstation Python reference client still uses buffered HTTP tool rounds; Open WebUI and other SSE clients can receive streamed tool-call deltas.
 - Approval and execution are responsibilities of the future workstation-side tool host; no tool result should be submitted until its local policy has allowed the action.
 - The model's live tool-call compatibility remains unverified on the DGX runtime.
 
