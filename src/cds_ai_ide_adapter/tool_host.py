@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import dataclass
 import hashlib
 import json
@@ -37,9 +38,10 @@ class ToolExecutionStore:
 
     def __init__(self, path: str | Path):
         self.path = str(path)
-        if self.path != ":memory:":
-            Path(self.path).parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as connection:
+        if self.path == ":memory:":
+            raise ValueError("tool idempotency store must use persistent local storage")
+        Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+        with closing(self._connect()) as connection, connection:
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS tool_invocations (
@@ -61,7 +63,7 @@ class ToolExecutionStore:
 
     def begin(self, key: str, request_sha256: str) -> dict[str, Any] | None:
         now = time.time()
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 "SELECT request_sha256, status, result_json FROM tool_invocations "
@@ -91,7 +93,7 @@ class ToolExecutionStore:
     def finish(self, key: str, result: dict[str, Any], status: str = "succeeded") -> None:
         if status not in {"succeeded", "failed"}:
             raise ValueError("invalid terminal tool invocation status")
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             cursor = connection.execute(
                 """
                 UPDATE tool_invocations
