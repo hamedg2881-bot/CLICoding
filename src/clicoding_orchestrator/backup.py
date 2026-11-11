@@ -93,7 +93,7 @@ def create_backup(database: str | Path, attachments: str | Path, output: str | P
         os.chmod(snapshot, 0o600)
         _integrity_check(snapshot)
 
-        copied: list[dict[str, Any]] =
+        copied: list[dict[str, Any]] = []
         backup_attachment_root = staging / "attachments"
         backup_attachment_root.mkdir(mode=0o700)
         for row in _attachment_rows(snapshot):
