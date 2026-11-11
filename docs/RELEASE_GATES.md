@@ -21,7 +21,8 @@
 - [x] Conservative context admission/output reservation; overflow is never silently truncated.
 
 ## Remaining source capabilities
-- [ ] Specialist multi-model context compaction and specialist progress events.
+- [x] Worker-specific specialist context compaction for planning, each specialist task, and final synthesis; mandatory task/request/result context is reserved before summarizing history, and canonical conversation events are not rewritten.
+- [ ] User-visible specialist progress events and streaming.
 - [x] Typed, conversation-scoped image attachment records, bounded binary upload, MIME sniffing, SHA-256 integrity checks, private storage and authenticated retrieval/deletion.
 - [x] Offline SQLite and attachment backup/restore CLI with versioned manifest, integrity verification and retained pre-restore rollback paths.
 - [ ] Automatic attachment retention/expiry, image decoding/content validation and malware scanning.
