@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from .context import ContextBudgetExceeded, ensure_context_budget, redact_sensitive_text
+from .context import ContextBudgetExceeded, ensure_context_budget, estimate_message_tokens, redact_sensitive_text
 from .database import Database
 from .executor import PlanExecution, SequentialWaveExecutor
 from .gateway import Completion, ModelGateway, OpenAICompatibleGateway
@@ -97,7 +97,7 @@ class MultiModelOrchestrator:
             chunks.append("".join(current))
         return chunks
 
-    async def _compact_context_for_worker(self, worker: Worker, context: str) -> str:
+    async def _compact_context_for_worker(\n        self, worker: Worker, context: str, reserved_input_tokens: int = 0\n    ) -> str:
         """Create a worker-budgeted continuity summary without mutating canonical history."""
         if not context:
             return ""
@@ -109,6 +109,14 @@ class MultiModelOrchestrator:
             "tasks. Do not invent facts. Redact credentials and secrets. Do not include "
             "private reasoning. Return only the summary."
         )
+        if reserved_input_tokens < 0:
+            raise ValueError("reserved_input_tokens cannot be negative")
+        effective_window = worker.context_window_tokens - reserved_input_tokens
+        if effective_window <= worker.max_output_tokens or effective_window < 1024:
+            raise ContextBudgetExceeded(
+                worker.context_window_tokens - effective_window,
+                max(0, effective_window - worker.max_output_tokens),
+            )
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": context},
@@ -116,7 +124,7 @@ class MultiModelOrchestrator:
         try:
             ensure_context_budget(
                 messages,
-                context_window_tokens=worker.context_window_tokens,
+                context_window_tokens=effective_window,
                 reserved_output_tokens=worker.max_output_tokens,
             )
             return context
@@ -136,7 +144,7 @@ class MultiModelOrchestrator:
                 ]
                 ensure_context_budget(
                     chunk_messages,
-                    context_window_tokens=worker.context_window_tokens,
+                    context_window_tokens=effective_window,
                     reserved_output_tokens=worker.max_output_tokens,
                 )
                 completion = await self._complete(worker, chunk_messages)
@@ -264,17 +272,25 @@ class MultiModelOrchestrator:
             self.database.update_execution_task(
                 execution_id, task.task_id, "running", worker_id=worker.id
             )
-            task_context = await self._compact_context_for_worker(
-                worker, conversation_context
-            )
-            user_task_text = (
+            fixed_task_context = (
                 f"Original user request (authoritative; preserve all explicit requirements):\n{user_request}\n\n"
                 f"Overall goal:\n{plan.goal}\n\n"
                 f"Plan acceptance criteria:\n{plan.acceptance_criteria}\n\n"
                 f"Task:\n{task.objective}\n\n"
                 f"Expected output:\n{task.expected_output}\n\n"
-                f"Dependency outputs:\n{dependency_outputs}\n\n"
-                f"Relevant conversation context:\n{task_context}"
+                f"Dependency outputs:\n{dependency_outputs}"
+            )
+            task_context = await self._compact_context_for_worker(
+                worker,
+                conversation_context,
+                reserved_input_tokens=estimate_message_tokens(
+                    {"role": "user", "content": fixed_task_context}
+                ),
+            )
+            user_task_text = (
+                fixed_task_context
+                + "\n\nRelevant conversation context:\n"
+                + task_context
             )
             user_message_content: object = user_task_text
             if image_parts and "vision" in worker.capabilities:
@@ -384,8 +400,17 @@ class MultiModelOrchestrator:
         else:
             try:
                 synthesis_worker = self.router.select("chat")
+                synthesis_fixed_context = (
+                    f"Original request:\n{user_request}\n\n"
+                    f"Acceptance criteria:\n{plan.acceptance_criteria}\n\n"
+                    f"Worker results:\n" + "\n\n".join(successful)
+                )
                 synthesis_context = await self._compact_context_for_worker(
-                    synthesis_worker, conversation_context
+                    synthesis_worker,
+                    conversation_context,
+                    reserved_input_tokens=estimate_message_tokens(
+                        {"role": "user", "content": synthesis_fixed_context}
+                    ) + 512,
                 )
                 synthesis = await self._complete(
                     synthesis_worker,
