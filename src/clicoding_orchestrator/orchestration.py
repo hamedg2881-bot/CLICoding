@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from .context import ensure_context_budget
 from .database import Database
 from .executor import PlanExecution, SequentialWaveExecutor
 from .gateway import Completion, ModelGateway, OpenAICompatibleGateway
@@ -53,8 +54,19 @@ class MultiModelOrchestrator:
         semaphore = self._worker_semaphores.get(runtime_key(worker))
         if semaphore is None:
             raise RuntimeError(f"No concurrency slot configured for runtime {runtime_key(worker)!r}")
+        ensure_context_budget(
+            messages,
+            context_window_tokens=worker.context_window_tokens,
+            reserved_output_tokens=worker.max_output_tokens,
+        )
         async with semaphore:
-            return await self.gateway_factory(worker).complete(messages)
+            selected_gateway = self.gateway_factory(worker)
+            if isinstance(selected_gateway, OpenAICompatibleGateway):
+                return await selected_gateway.complete(
+                    messages,
+                    options={"max_tokens": worker.max_output_tokens},
+                )
+            return await selected_gateway.complete(messages)
 
     @staticmethod
     def _expects_code_artifact(expected_output: str) -> bool:

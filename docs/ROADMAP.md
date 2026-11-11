@@ -125,3 +125,50 @@ Exit gate: pass the single-model continuity, model handoff, Vision-to-Coder hand
 
 Phase 2 gateway work must expose transport primitives required by this core, but LiteLLM or any other gateway must not become the owner of conversation or task state. The first implementation should be a thin vertical slice, not a large framework adoption. The current code includes a YAML-backed worker registry, deterministic capability routing, same-conversation history, a non-streaming OpenAI-compatible text API, validated execution plans, a structured LLM Planner, SQLite-persisted execution/task state, and a multi-model orchestration service with bounded dependency-wave execution. The service is available through both the standard OpenAI chat endpoint and the internal conversation route when planning is enabled; otherwise the standard endpoint retains deterministic single-worker routing. Worker concurrency limits are enforced per served runtime within one process. Open WebUI conversation mapping, streaming, multimodal image transport, cancellation/retry, cross-process locking, distributed admission, and resource-aware scheduling remain unimplemented. Open WebUI's ability to preserve the returned conversation ID remains unverified.
 
+## Phase 2B — Conversation-first core and shared IDE agent contract (priority)
+
+**Status:** Approved; implementation started on branch `architecture/conversation-first-core`.
+
+### Architecture target
+- One model-independent Conversation Engine is the entry point for Open WebUI and IDE clients.
+- Ordinary chat bypasses Planner and responds directly through a chat-capable model.
+- Specialist routing invokes coding/review/vision workers; Planner is reserved for work that genuinely needs decomposition.
+- Tool calling uses typed, validated, allow-listed contracts. The orchestrator executes tools under policy, workspace scope, audit, and approval rules.
+- The same assistant identity, conversation history, and context contract are shared by chat and IDE adapters.
+- IDE-side workspace, file, terminal, build/test, browser, and screenshot tools execute on the developer workstation; model inference remains on DGX over LAN.
+
+### Ordered implementation slices
+1. **Direct-chat baseline:** route ordinary text chat directly to the chat worker; prove that Planner is not called; retain persisted conversation continuity.
+2. **Explicit specialist dispatch:** route declared coding/review/vision tasks to existing specialist orchestration; preserve image handoff and durable task records.
+3. **Tool-call contract:** define typed tool requests/results, allow-list, validation, error semantics, idempotency, and approval policy before enabling execution.
+4. **IDE adapter:** implement one reference IDE client against the same stable API; pass workspace context and tool results without exposing worker endpoints.
+5. **Engineering loop:** approved file edits, diffs, build/test evidence, bounded repair, rollback, and screenshot-based visual validation.
+6. **Portability and hardening:** validate a second editor, streaming, cancellation, concurrency, failure recovery, and offline installation.
+
+### Acceptance gates
+- A greeting and general question succeed with Planner unavailable and produce no execution-plan row.
+- Multi-turn context survives direct chat and model handoff.
+- Explicit coding/review and image requests reach the correct specialist path.
+- Malformed planner output is rejected/recovered without a generic unhandled 502 or execution of partial data.
+- No file/shell/build/test operation executes without the appropriate workstation tool policy and approval.
+- An IDE can understand a sample repository, propose a scoped plan, request approval, apply a diff, run build/tests locally, and report real exit-code evidence.
+- All CI tests pass before ZIP transfer; DGX deployment and Orchestrator restart require separate validation and user approval.
+
+The existing Phase 3 workstation-side IDE requirement remains mandatory; this phase makes the shared conversation/tool contract a prerequisite rather than deferring it as a disconnected add-on.
+
+## Phase 2C — Modern assistant interaction quality (priority, 2026-11-11)
+
+The detailed product and release contract is in docs/CHAT_EXPERIENCE_SPEC.md. This is a first-class architecture requirement, not UI polish.
+
+- Completed in this branch: true upstream SSE delta streaming for direct chat; persist assistant turn only after the full stream succeeds; cancel upstream iteration when the client disconnects; regression coverage.
+- Next: tool-call round-trip and workstation tool broker contract; context-window budgeting/compaction; cancellation and retry semantics; multimodal attachment references; reference IDE adapter.
+- Specialist execution continues to use explicit orchestration and currently streams only its completed final answer. Do not claim token-level specialist progress until implemented.
+
+## Phase 2D — Secure workstation tool protocol
+
+The tool-call and IDE-side execution boundary is specified in docs/IDE_TOOL_PROTOCOL.md.
+
+- The IDE adapter owns workspace, file, process, build/test, browser, and screenshot operations on the developer workstation.
+- The DGX remains an inference/orchestration host and must not mount developer workspaces.
+- Next implementation: OpenAI tool-call message round-trip, typed tool definitions/results, and a reference local tool host with allow-list and approval gates.
+- No arbitrary shell tool is exposed; tools are introduced one at a time with schemas, policy, audit, idempotency, and tests.

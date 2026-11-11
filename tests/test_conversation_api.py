@@ -1,8 +1,10 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from clicoding_orchestrator.app import create_app
 from clicoding_orchestrator.config import Settings
 from clicoding_orchestrator.database import Database
+from clicoding_orchestrator.policy import CDS_AI_SYSTEM_PROMPT
 from clicoding_orchestrator.gateway import Completion
 from clicoding_orchestrator.registry import Worker, WorkerRegistry
 
@@ -57,6 +59,7 @@ def test_conversation_history_survives_worker_handoff(tmp_path):
     assert second.json()["producer"] == "coder-worker"
 
     assert gateway.calls[1] == [
+        {"role": "system", "content": CDS_AI_SYSTEM_PROMPT},
         {"role": "user", "content": "Hello"},
         {"role": "assistant", "content": "answer-1"},
         {"role": "user", "content": "Fix the Python function"},
@@ -149,13 +152,14 @@ def test_openai_compatible_endpoint_uses_orchestrator_and_keeps_one_identity(tmp
         "/v1/chat/completions",
         json={
             "model": "clicoding",
+            "task_type": "coding",
             "messages": [{"role": "user", "content": "Analyze this task"}],
         },
     )
     assert first.status_code == 200
     first_body = first.json()
     conversation_id = first_body["conversation_id"]
-    assert first_body["model"] == "clicoding"
+    assert first_body["model"] == "CDS_AI"
     assert first_body["choices"][0]["message"]["content"] == "orchestrated-1"
     assert first_body["x_clicoding"]["orchestrated"] is True
     assert first_body["x_clicoding"]["execution_id"] == "execution-1"
@@ -164,6 +168,7 @@ def test_openai_compatible_endpoint_uses_orchestrator_and_keeps_one_identity(tmp
         "/v1/chat/completions",
         json={
             "model": "clicoding",
+            "task_type": "coding",
             "conversation_id": conversation_id,
             "messages": [
                 {"role": "user", "content": "Analyze this task"},
@@ -247,3 +252,130 @@ def test_deterministic_routing_enforces_worker_limit_across_conversations(tmp_pa
         assert maximum_active == 1
 
     asyncio.run(scenario())
+
+
+def test_trusted_openwebui_user_header_scopes_conversation_ownership(tmp_path):
+    shared_key = "s" * 40
+    database = Database(str(tmp_path / "owners.sqlite3"))
+    app = create_app(
+        settings=Settings(
+            database_path=str(tmp_path / "owners.sqlite3"),
+            api_key=shared_key,
+            trust_user_header=True,
+        ),
+        gateway=FakeGateway(),
+        database=database,
+        registry=WorkerRegistry([
+            Worker("chat", "http://chat/v1", "chat-model", frozenset({"chat"}))
+        ]),
+    )
+    client = TestClient(app)
+    alice = {
+        "Authorization": f"Bearer {shared_key}",
+        "X-CLICoding-User-ID": "alice",
+    }
+    bob = {
+        "Authorization": f"Bearer {shared_key}",
+        "X-CLICoding-User-ID": "bob",
+    }
+
+    created = client.post("/api/v1/conversations", headers=alice)
+    assert created.status_code == 201
+    conversation_id = created.json()["id"]
+    assert created.json()["owner_id"] == "alice"
+
+    assert client.get(
+        f"/api/v1/conversations/{conversation_id}", headers=alice
+    ).status_code == 200
+    assert client.get(
+        f"/api/v1/conversations/{conversation_id}", headers=bob
+    ).status_code == 404
+    assert client.post(
+        f"/api/v1/conversations/{conversation_id}/turns",
+        headers=bob,
+        json={"content": "cross-user access"},
+    ).status_code == 404
+
+
+def test_per_user_api_tokens_isolate_conversations_and_global_key_is_admin(tmp_path):
+    admin_key = "a" * 40
+    alice_key = "b" * 40
+    bob_key = "c" * 40
+    database = Database(str(tmp_path / "user-tokens.sqlite3"))
+    app = create_app(
+        settings=Settings(
+            database_path=str(tmp_path / "user-tokens.sqlite3"),
+            api_key=admin_key,
+            user_api_keys={"alice": alice_key, "bob": bob_key},
+        ),
+        gateway=FakeGateway(),
+        database=database,
+        registry=WorkerRegistry([
+            Worker("chat", "http://chat/v1", "chat-model", frozenset({"chat"}))
+        ]),
+    )
+    client = TestClient(app)
+    alice_headers = {"Authorization": f"Bearer {alice_key}"}
+    bob_headers = {"Authorization": f"Bearer {bob_key}"}
+    admin_headers = {"Authorization": f"Bearer {admin_key}"}
+
+    created = client.post("/api/v1/conversations", headers=alice_headers)
+    conversation_id = created.json()["id"]
+    assert created.json()["owner_id"] == "alice"
+    assert client.get(
+        f"/api/v1/conversations/{conversation_id}", headers=bob_headers
+    ).status_code == 404
+    assert client.get(
+        f"/api/v1/conversations/{conversation_id}", headers=admin_headers
+    ).status_code == 200
+    assert client.get("/api/v1/workers", headers=alice_headers).status_code == 403
+    assert client.get("/api/v1/workers", headers=admin_headers).status_code == 200
+
+
+def test_conversation_owner_migration_keeps_legacy_records_in_shared_namespace(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "legacy-owner.sqlite3"
+    connection = sqlite3.connect(path)
+    connection.execute(
+        "CREATE TABLE conversations (id TEXT PRIMARY KEY, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+    )
+    connection.execute(
+        "INSERT INTO conversations (id, created_at, updated_at) VALUES (?, ?, ?)",
+        ("legacy-conversation", "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00"),
+    )
+    connection.commit()
+    connection.close()
+
+    database = Database(str(path))
+    restored = database.get_conversation("legacy-conversation")
+    assert restored is not None
+    assert restored["owner_id"] == "shared"
+    assert database.conversation_exists("legacy-conversation", owner_id="shared")
+    assert not database.conversation_exists("legacy-conversation", owner_id="alice")
+    with pytest.raises(PermissionError):
+        database.get_or_create_conversation("legacy-conversation", owner_id="alice")
+
+
+def test_database_only_deletes_the_current_tail_event(tmp_path):
+    database = Database(str(tmp_path / "delete-tail.sqlite3"))
+    conversation_id = database.create_conversation()["id"]
+    database.append_event(conversation_id, "user", "question", "user")
+    assistant = database.append_event(conversation_id, "assistant", "answer", "chat")
+    database.delete_last_event(conversation_id, assistant["id"])
+    assert [event["role"] for event in database.list_events(conversation_id)] == ["user"]
+    with pytest.raises(ValueError, match="current conversation tail"):
+        database.delete_last_event(conversation_id, assistant["id"])
+
+
+def test_database_deletes_target_and_all_later_events_transactionally(tmp_path):
+    database = Database(str(tmp_path / "delete-from.sqlite3"))
+    conversation_id = database.create_conversation()["id"]
+    first = database.append_event(conversation_id, "user", "first", "user")
+    database.append_event(conversation_id, "assistant", "first answer", "chat")
+    database.append_event(conversation_id, "user", "second", "user")
+    removed = database.delete_events_from(conversation_id, first["id"])
+    assert removed == 3
+    assert database.list_events(conversation_id) == []
+    with pytest.raises(ValueError, match="target event does not exist"):
+        database.delete_events_from(conversation_id, first["id"])

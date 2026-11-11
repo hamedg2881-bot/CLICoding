@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "clicoding-orchestrator"
-version = "0.2.0"
-description = "Model-independent conversation and task orchestration core for CLICoding"
+version = "0.4.0"
+description = "CDS_AI model-independent conversation and task orchestration core"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115,<1",

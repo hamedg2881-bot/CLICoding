@@ -111,3 +111,53 @@ def test_yaml_registry_rejects_missing_secret_environment_variable(tmp_path, mon
         assert "unset or empty" in str(exc)
     else:
         raise AssertionError("missing configured secret must fail closed")
+
+
+def test_worker_registry_exposes_and_validates_context_budgets():
+    worker = Worker(
+        "chat",
+        "http://chat/v1",
+        "chat-model",
+        frozenset({"chat"}),
+        context_window_tokens=16384,
+        max_output_tokens=2048,
+    )
+    registry = WorkerRegistry([worker])
+    described = registry.describe()[0]
+    assert described["context_window_tokens"] == 16384
+    assert described["max_output_tokens"] == 2048
+
+    try:
+        WorkerRegistry([
+            Worker(
+                "bad-context",
+                "http://chat/v1",
+                "chat-model",
+                frozenset({"chat"}),
+                context_window_tokens=512,
+                max_output_tokens=128,
+            )
+        ])
+    except RegistryError as exc:
+        assert "invalid limits" in str(exc)
+    else:
+        raise AssertionError("undersized context window must be rejected")
+
+
+def test_yaml_registry_loads_explicit_context_budgets(tmp_path):
+    path = tmp_path / "workers.yaml"
+    path.write_text(
+        """workers:
+  - id: chat
+    base_url: http://localhost:8000/v1
+    model: chat-model
+    capabilities: [chat]
+    enabled: true
+    context_window_tokens: 32768
+    max_output_tokens: 4096
+""",
+        encoding="utf-8",
+    )
+    worker = WorkerRegistry.from_yaml(str(path)).enabled_workers()[0]
+    assert worker.context_window_tokens == 32768
+    assert worker.max_output_tokens == 4096

@@ -1,4 +1,6 @@
-# CLICoding — Offline AI Development Platform
+# CDS_AI — Offline AI Development Assistant
+
+**Assistant identity:** CDS_AI. **Source repository:** CLICoding.
 
 **Project status:** Conversation persistence, capability routing, planner-backed multi-model execution, and an OpenAI-compatible API are implemented and CI-tested. Open WebUI integration and DGX deployment validation remain pending.  
 **Operating mode:** Internet unavailable during development; internal LAN available.  
@@ -60,11 +62,11 @@ See [docs/ROADMAP.md](docs/ROADMAP.md) for phases and exit gates.
 ## Current status
 
 - The canonical repository contains the FastAPI/SQLite Orchestrator, YAML worker registry, capability router, structured planner, dependency-wave executor, durable execution/task state, and OpenAI-compatible API.
-- When `CLICODING_ENABLE_PLANNING=true`, the standard `/v1/chat/completions` endpoint routes through the multi-model Orchestrator while exposing one public assistant alias. When disabled, deterministic capability routing is used.
+- The public assistant identity is `CDS_AI`. Ordinary text chat bypasses Planner and routes directly to a chat-capable worker; explicit coding/review/vision or multi-step requests may use specialist orchestration. Legacy model aliases remain accepted during migration.
 - Worker `max_concurrency` limits are enforced across concurrent requests within one service process.
 - An optional inbound bearer key (`CLICODING_API_KEY`) protects API and diagnostic endpoints; `/health` remains public. Configure a strong key before any LAN exposure and use internal TLS.
-- The API is currently non-streaming. OpenAI-style text plus base64 image data-URI content is accepted, persisted in the canonical conversation event, and routed to the Vision-capable worker; remote image URLs and audio/video parts are not supported. This is CI-tested with fake workers but has not yet been verified against the live Qwen3.6 runtime. Open WebUI conversation-ID preservation has not been verified; do not assume a generic client stores the returned `conversation_id`.
-- The selected three-model MoE topology is GPT-OSS-20B (fast reasoning/planning/chat), Qwen3-Coder-Next (coding/review), and Qwen3.6-35B-A3B (multimodal general/vision). All three runtimes are intended to remain resident simultaneously; each starts with per-runtime concurrency 1. Exact served aliases/endpoints and simultaneous resource headroom must be verified on DGX before deployment.
+- Direct ordinary chat supports upstream token/delta SSE streaming. Specialist task graphs still return a buffered final answer. Text and base64 image data-URI content are accepted; remote image URLs and audio/video parts are not supported. Live vision behavior remains a DGX acceptance gate.
+- The intended three-model topology is documented separately and remains subject to live DGX resource/capability validation. A worker is not considered tool-capable until its exact served runtime passes tool-call tests and is explicitly configured with the `tool_calling` capability. Exact served aliases/endpoints and simultaneous resource headroom must be verified on DGX before deployment.
 - The code has not yet been deployed or validated on DGX Spark. Hardware/runtime inventory, ARM64 dependency staging, service configuration, and end-to-end model compatibility are still deployment gates.
 - Latest implementation and test evidence is recorded in [docs/STATUS.md](docs/STATUS.md). See [orchestrator/README.md](orchestrator/README.md) for API/run instructions, [docs/DGX_STAGING_CHECKLIST.md](docs/DGX_STAGING_CHECKLIST.md) for controlled DGX staging prerequisites, and [docs/DGX_RUNTIME_PROFILES.md](docs/DGX_RUNTIME_PROFILES.md) for the three-model runtime/memory plan. Run the read-only inventory with `bash scripts/dgx_spark_model_preflight.sh` before preparing model containers.
 
@@ -91,7 +93,7 @@ For each implementation session:
 
 ## Conversation and multi-model orchestration
 
-The target design presents one assistant and one continuous conversation while a central Task Orchestrator assigns work to one or more model workers. The current code supports validated task decomposition, sequential/parallel dependency waves, capability routing, durable task state, and result synthesis. Tool execution, human approval gates, cancellation, retries, streaming, and multimodal transport remain planned work. Model identity is hidden from the normal user experience.
+CDS_AI presents one assistant identity and one persistent conversation while the central Orchestrator assigns specialist work to internal model workers. Ordinary chat is direct and Planner-independent. The API supports true direct-chat SSE streaming and a validated, single-call-at-a-time OpenAI function-tool round-trip. The workstation reference adapter provides workspace-scoped read/search/write, Git status/diff, and approved .NET build/test tools. Tool execution remains on the workstation; the DGX model server receives neither workspace mounts nor shell authority.
 
-The gateway is only the model transport layer. Conversation history and task state are model-independent. See [docs/ORCHESTRATOR_SPEC.md](docs/ORCHESTRATOR_SPEC.md) for the accepted contracts and acceptance tests, and [docs/THREE_MODEL_TOPOLOGY.md](docs/THREE_MODEL_TOPOLOGY.md) for the agreed three-model layout and Flash retirement gates.
+The tool adapter is an initial Python reference library, not yet a packaged IDE extension. Conservative per-worker context admission control is implemented; automatic summarization/compaction and a context-inspection UI remain release gates. Multi-user authorization, automatic context compaction, automatic context compaction, packaged Open WebUI/IDE controls for edit semantics, richer attachment lifecycle, and end-to-end IDE acceptance remain open. Stream disconnect cancellation, exact retry idempotency, latest-turn regeneration, and event-targeted edit/resubmit are implemented. OpenAI-compatible tool-call SSE deltas are implemented, while the Python workstation client still uses buffered tool rounds. See [docs/TOOL_CALLING_SUPPORT.md](docs/TOOL_CALLING_SUPPORT.md), [docs/WORKSTATION_ADAPTER.md](docs/WORKSTATION_ADAPTER.md), [docs/CONTEXT_BUDGETING.md](docs/CONTEXT_BUDGETING.md), [docs/IDENTITY_AND_ACCESS.md](docs/IDENTITY_AND_ACCESS.md), [docs/CONVERSATION_OPERATIONS.md](docs/CONVERSATION_OPERATIONS.md), [docs/CHAT_EXPERIENCE_SPEC.md](docs/CHAT_EXPERIENCE_SPEC.md), and [docs/IDE_TOOL_PROTOCOL.md](docs/IDE_TOOL_PROTOCOL.md).
 

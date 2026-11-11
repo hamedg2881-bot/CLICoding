@@ -22,6 +22,8 @@ class Worker:
     api_key: str | None = None
     timeout_seconds: float = 180.0
     max_concurrency: int = 1
+    context_window_tokens: int = 16384
+    max_output_tokens: int = 2048
 
 
 class RegistryError(ValueError):
@@ -64,6 +66,10 @@ class WorkerRegistry:
                 not isinstance(worker.enabled, bool)
                 or worker.priority < 0
                 or worker.max_concurrency < 1
+                or worker.context_window_tokens < 1024
+                or worker.context_window_tokens > 1_000_000
+                or worker.max_output_tokens < 1
+                or worker.max_output_tokens >= worker.context_window_tokens
                 or not math.isfinite(worker.timeout_seconds)
                 or worker.timeout_seconds <= 0
             ):
@@ -99,6 +105,8 @@ class WorkerRegistry:
                 enabled = item.get("enabled", False)
                 priority = int(item.get("priority", 100))
                 max_concurrency = int(item.get("max_concurrency", 1))
+                context_window_tokens = int(item.get("context_window_tokens", 16384))
+                max_output_tokens = int(item.get("max_output_tokens", 2048))
                 timeout = float(item.get("timeout_seconds", 180))
                 api_key_env = item.get("api_key_env")
             except (KeyError, TypeError, ValueError) as exc:
@@ -108,7 +116,15 @@ class WorkerRegistry:
                 raise RegistryError(f"workers[{index}] requires id, base_url, model and capabilities")
             if not isinstance(enabled, bool):
                 raise RegistryError(f"workers[{index}].enabled must be boolean")
-            if priority < 0 or max_concurrency < 1 or timeout <= 0:
+            if (
+                priority < 0
+                or max_concurrency < 1
+                or context_window_tokens < 1024
+                or context_window_tokens > 1_000_000
+                or max_output_tokens < 1
+                or max_output_tokens >= context_window_tokens
+                or timeout <= 0
+            ):
                 raise RegistryError(f"workers[{index}] has invalid limits")
             if api_key_env is not None and not isinstance(api_key_env, str):
                 raise RegistryError(f"workers[{index}].api_key_env must be a string")
@@ -131,6 +147,8 @@ class WorkerRegistry:
                     ),
                     timeout_seconds=timeout,
                     max_concurrency=max_concurrency,
+                    context_window_tokens=context_window_tokens,
+                    max_output_tokens=max_output_tokens,
                 )
             )
         return cls(workers)
@@ -147,6 +165,8 @@ class WorkerRegistry:
                 "enabled": worker.enabled,
                 "priority": worker.priority,
                 "max_concurrency": worker.max_concurrency,
+                "context_window_tokens": worker.context_window_tokens,
+                "max_output_tokens": worker.max_output_tokens,
             }
             for worker in self._workers
         ]

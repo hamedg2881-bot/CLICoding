@@ -276,3 +276,108 @@ User supplied a fresh command output from host `spark-7ea3`:
 - No real Vision image inference has been run yet. Persian/English OCR, screenshot/UI interpretation, coordinate grounding, and error analysis remain the immediate validation gate.
 - Current context caps are deliberately conservative: GPT-OSS 8K, Coder 8K, Vision 4K. Do not increase them until KV-cache and concurrent-load measurements support it.
 - No model files, containers, or images were deleted; Flash assets/runtime remain outside this experiment and untouched.
+
+## 2026-11-11 — Conversation-first redesign started
+
+- User-approved direction: one shared Conversation Engine for Open WebUI and IDE clients; ordinary chat goes directly to a chat-capable model; Planner is reserved for specialist/multi-step work; tool execution remains host-mediated, allow-listed, workspace-scoped, and approval-gated.
+- Architecture decision recorded as D-015; architecture and roadmap updated in PR #6.
+- PR #6 first vertical slice: ordinary text chat bypasses Planner even when planning is enabled; explicit specialist task hints and image turns retain the existing orchestration path; the explicit orchestrated-turn endpoint can force orchestration.
+- Regression tests added for direct-chat bypass and explicit specialist dispatch. CI is pending at the time of this status entry.
+- PR #5 (bounded Planner output repair) passed CI but is a defensive reliability improvement only; it is not the architecture fix and has not been merged.
+- No changes deployed to DGX. ZIP transfer and service restart remain gated on CI, source review, host-side validation, and explicit user approval.
+- Required next work: typed tool-call contracts; safe host-side tool execution and approvals; shared IDE adapter contract; workstation-side workspace/file/diff/build/test/screenshot loop; natural-language specialist routing; true incremental streaming and cancellation.
+
+## 2026-11-11 — Modern chat interaction slice
+
+- Extended the OpenAI-compatible model gateway with upstream SSE delta streaming.
+- Direct chat now forwards actual incremental text deltas to clients; it does not wait for the complete model answer before sending the first content chunk.
+- Conversation user event is persisted before generation; assistant event is persisted only after a complete successful stream. Interrupted streams are not recorded as completed assistant messages.
+- Client cancellation propagates through async stream iteration so the upstream HTTP stream is closed and the worker semaphore is released.
+- Added regression coverage for incremental delta chunks and final conversation persistence.
+- CI run 43012306383 passed: 73 tests passed, 1 warning. Earlier implementation runs 43012195870 and 43012270120 also passed.
+- Added docs/CHAT_EXPERIENCE_SPEC.md as the product acceptance contract for modern chat quality and IDE parity.
+- Limitations remain explicit: specialist orchestration streams only its final answer; tool-call round-trip, context budgeting/compaction, client-visible cancellation controls, richer attachment storage, and reference IDE adapter are not yet implemented.
+- No DGX transfer or service restart has occurred.
+
+## 2026-11-11 — Gateway streaming tests and IDE tool boundary
+
+- Added gateway-level tests for upstream OpenAI SSE delta parsing and rejection of streams that end without [DONE].
+- Latest code CI run 43012613955 passed: 75 tests passed, 1 warning.
+- Added docs/IDE_TOOL_PROTOCOL.md specifying the workstation-side tool host, typed call/result contract, workspace scope, idempotency, approval, cancellation, and evidence requirements.
+- The tool-call round-trip and workstation agent are design targets only at this point; no execution API has been enabled.
+
+## 2026-11-11 — CDS_AI identity and conversation-first foundation
+
+- User confirmed the public assistant name is **CDS_AI**. The canonical GitHub repository remains `hamedg2881-bot/CLICoding`; product identity and source-repository identity are intentionally separate.
+- The OpenAI-compatible API now advertises `CDS_AI` as its public model ID and returns that identity in completion responses. Legacy request aliases `clicoding`, `assistant`, and `auto` remain accepted for migration compatibility. Existing environment-variable names, database paths, and service identifiers are intentionally unchanged.
+- Added `docs/PRODUCT_IDENTITY.md` and updated README/package/API metadata.
+- Integrated the bounded planner-output repair from the separate planner-recovery PR into the conversation-first branch. Invalid JSON/schema output gets one repair attempt; persistent invalid output still fails closed.
+- Direct ordinary chat remains Planner-independent and uses true upstream SSE delta streaming. Specialist streaming remains buffered until the task graph completes; it is not token streaming.
+- GitHub Actions run **43013958446** on head `80a3366890e68688b81edc2d4cd40f02c1922370`: **76 passed, 1 warning**.
+- No source files have been transferred to DGX Spark; no host services, model runtimes, or worker configurations have been changed.
+- Remaining release blockers include structured tool-call round-tripping and a workstation tool host, per-user authorization/ownership enforcement, context budgeting and compaction, explicit cancellation/retry/regeneration, attachment lifecycle hardening, reference IDE adapter, and Open WebUI/IDE end-to-end acceptance.
+
+## 2026-11-11 — Workstation adapter and context admission control
+
+- Added the Python reference package `cds_ai_ide_adapter`: workspace-bound file listing/read/search, approved atomic file writes with SHA-256 optimistic concurrency, fixed Git status/diff, and approved fixed .NET build/test commands.
+- Added a local SQLite idempotency ledger. Successful tool results are cached; a reused call ID with different arguments is rejected; interrupted side effects are not automatically re-executed.
+- Added `CDSAIClient` to run the non-streaming tool loop on the workstation. DGX remains an inference/orchestration endpoint and receives no workspace mount or shell authority.
+- Workstation tests cover traversal, symlink escape, secret-file blocking, approval denial, write idempotency, command argument arrays, restricted environment, and an end-to-end tool round-trip through the API.
+- Added per-worker `context_window_tokens` and `max_output_tokens` limits. Context admission uses a conservative UTF-8 estimate and fixed image reservation; over-budget requests are rejected with HTTP 413 rather than silently truncated. Direct streaming is preflighted before SSE and rechecked under the conversation lock.
+- Supported OpenAI generation options (temperature, max_tokens, top_p, presence/frequency penalties, bounded stop sequences) are forwarded to direct chat and tool-call workers; output limits are enforced per worker. Specialist user-supplied generation options are explicitly rejected for now rather than silently ignored.
+- Automatic history summarization/compaction is not implemented. Token estimation is not tokenizer-specific and must be replaced/refined per actual runtime before larger context windows are enabled.
+- Latest CI evidence for the workstation adapter before context-budgeting work: run 43015872942, **98 passed, 1 warning**. Context-budgeting branch is awaiting its own CI run.
+- No transfer to DGX Spark or changes to any DGX runtime/service have been made.
+
+
+## 2026-11-11 — Incremental tool-call SSE
+
+- Added structured upstream SSE parsing for partial OpenAI function-call deltas.
+- The OpenAI-compatible API now forwards `delta.tool_calls`, reassembles and validates the completed function call, and persists it only after a successful stream.
+- Streamed tool-result continuation is supported; tool messages remain correlated to the exact pending call.
+- Direct streaming still propagates client cancellation and does not persist a partial assistant event.
+- Parallel tool calls remain disabled; one outstanding tool call per assistant turn is enforced.
+- The Python workstation reference client currently uses buffered HTTP tool rounds; Open WebUI-compatible API clients can use streamed tool-call deltas.
+- Live DGX runtime compatibility remains unverified and no production worker has been marked `tool_calling`.
+
+## 2026-11-11 — Identity and conversation ownership
+
+- Added `owner_id` to conversations with a backward-compatible migration; pre-existing records remain in the `shared` namespace.
+- Added per-user bearer token mapping through `CLICODING_USER_API_KEYS` (JSON object of stable user IDs to unique 32+ character tokens); reserved principal `admin` is administrative.
+- Added optional Open WebUI trusted-user-header mode through `CLICODING_TRUST_USER_HEADER=true`. This is explicitly a trusted-network mode, not cryptographic identity; it requires a private proxy that strips client-supplied identity headers.
+- Conversation creation/read/turns, OpenAI-compatible continuation, execution reads, and sandbox approval/result routes now enforce owner scope. Worker diagnostics are admin-only.
+- No automatic reassignment of legacy shared conversations; administrator migration is required before multi-user rollout.
+- Remaining identity/security gates: verify Open WebUI identity headers in a real multi-user deployment, token rotation/revocation, rate limits, and audit export.
+
+
+## 2026-11-11 — Retry and regeneration semantics
+
+- Exact retries of the last unfinished user/tool input reuse the existing event; duplicate user/tool entries are not added after failed requests or stream cancellation.
+- Added guarded tail-event deletion and `X-CLICoding-Operation: regenerate` for the latest completed assistant turn only.
+- Regeneration verifies the exact preceding input and deletes only the current tail assistant event; earlier conversation history is retained.
+- Buffered requests return HTTP 409 for invalid regeneration; streaming requests emit an SSE error.
+- Editing an earlier turn and truncating subsequent history is not implemented; it requires a target event ID and explicit confirmation.
+- Packaged Open WebUI/IDE controls for the regenerate header remain an integration task.
+
+
+## 2026-11-11 — Edit and resubmit
+
+- Added `X-CLICoding-Operation: edit` with an explicit `X-CLICoding-Event-ID` target.
+- Only user events can be edited. The new request context contains all events before the target plus the replacement message.
+- Target and later events are deleted transactionally only after a successful model response/tool-call stream; failed/cancelled edits preserve the original history.
+- Works for buffered specialist turns and direct streamed chat/tool turns.
+- Packaged UI controls for selecting the target event and confirming the history rewrite remain integration work.
+
+## Consolidated validation
+
+- Consolidated Draft PR: #13 — `Complete CDS_AI conversation, tools, identity, and IDE foundation`.
+- CI run `43020629874` on head `3bfbaab4a30653ffa980bfbee9884c6a345581f2`: **128 passed, 1 warning**.
+- Earlier incremental PRs #5–#12 are closed as superseded by PR #13; no changes were merged into `main`.
+- All work remains on GitHub only. No source ZIP has been transferred to DGX Spark, and no DGX service/runtime/model has been changed or restarted.
+
+
+## 2026-11-11 — Shared CDS_AI policy
+
+- Added a single internal system policy applied to direct chat, streaming, specialist orchestration context, and the reference conversation endpoints.
+- Establishes the CDS_AI identity, same-language responses, Persian RTL preservation, uncertainty/action honesty, tool-output untrusted-data handling, and approved-tool-only behavior.
+- Client-provided system messages are retained but the CDS_AI policy is appended after them so they cannot override the core safety/reliability rules.

@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import hashlib
+import json
 from pathlib import Path
 import sqlite3
 import uuid
@@ -55,6 +56,7 @@ class Database:
                 """
                 CREATE TABLE IF NOT EXISTS conversations (
                     id TEXT PRIMARY KEY,
+                    owner_id TEXT NOT NULL DEFAULT 'shared',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -67,6 +69,7 @@ class Database:
                     role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'tool')),
                     content TEXT NOT NULL,
                     producer TEXT,
+                    metadata_json TEXT,
                     created_at TEXT NOT NULL,
                     UNIQUE (conversation_id, sequence)
                 );
@@ -124,7 +127,33 @@ class Database:
                     ON sandbox_approvals(execution_id, task_id, created_at);
                 """
             )
+        self._migrate_event_metadata()
+        self._migrate_conversation_owner()
         self._migrate_sandbox_approval_languages()
+
+    def _migrate_conversation_owner(self) -> None:
+        """Add conversation ownership; legacy records remain in the shared namespace."""
+        with self.session() as connection:
+            columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(conversations)").fetchall()
+            }
+            if "owner_id" not in columns:
+                connection.execute(
+                    "ALTER TABLE conversations ADD COLUMN owner_id TEXT NOT NULL DEFAULT 'shared'"
+                )
+
+    def _migrate_event_metadata(self) -> None:
+        """Add structured event metadata without rebuilding or losing old conversations."""
+        with self.session() as connection:
+            columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(conversation_events)").fetchall()
+            }
+            if "metadata_json" not in columns:
+                connection.execute(
+                    "ALTER TABLE conversation_events ADD COLUMN metadata_json TEXT"
+                )
 
     def _migrate_sandbox_approval_languages(self) -> None:
         """Expand the SQLite language CHECK without losing existing approvals/results."""
@@ -185,45 +214,83 @@ class Database:
             connection.execute("PRAGMA foreign_keys = ON")
             connection.close()
 
-    def create_conversation(self) -> dict[str, str]:
+    @staticmethod
+    def _validate_owner_id(owner_id: str) -> str:
+        if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
+            raise ValueError("owner_id must contain 1 to 128 non-whitespace characters")
+        return owner_id
+
+    def create_conversation(self, owner_id: str = "shared") -> dict[str, str]:
+        owner_id = self._validate_owner_id(owner_id)
         conversation_id = str(uuid.uuid4())
         now = utc_now()
         with self.session() as connection:
             connection.execute(
-                "INSERT INTO conversations (id, created_at, updated_at) VALUES (?, ?, ?)",
-                (conversation_id, now, now),
+                "INSERT INTO conversations (id, owner_id, created_at, updated_at) VALUES (?, ?, ?, ?)",
+                (conversation_id, owner_id, now, now),
             )
-        return {"id": conversation_id, "created_at": now, "updated_at": now}
+        return {
+            "id": conversation_id,
+            "owner_id": owner_id,
+            "created_at": now,
+            "updated_at": now,
+        }
 
-    def get_or_create_conversation(self, conversation_id: str) -> dict[str, str]:
-        """Return a conversation with a caller-derived stable ID, creating it once."""
+    def get_or_create_conversation(
+        self, conversation_id: str, owner_id: str = "shared"
+    ) -> dict[str, str]:
+        """Return a caller-derived stable ID only within the authenticated owner namespace."""
+        owner_id = self._validate_owner_id(owner_id)
         if not conversation_id or len(conversation_id) > 128:
             raise ValueError("conversation_id must contain 1 to 128 characters")
         now = utc_now()
         with self.session() as connection:
             connection.execute(
                 """
-                INSERT OR IGNORE INTO conversations (id, created_at, updated_at)
-                VALUES (?, ?, ?)
+                INSERT OR IGNORE INTO conversations (id, owner_id, created_at, updated_at)
+                VALUES (?, ?, ?, ?)
                 """,
-                (conversation_id, now, now),
+                (conversation_id, owner_id, now, now),
             )
             row = connection.execute(
-                "SELECT id, created_at, updated_at FROM conversations WHERE id = ?",
+                "SELECT id, owner_id, created_at, updated_at FROM conversations WHERE id = ?",
                 (conversation_id,),
             ).fetchone()
+        if row is None or row["owner_id"] != owner_id:
+            raise PermissionError("conversation does not belong to the authenticated owner")
         return dict(row)
 
-    def conversation_exists(self, conversation_id: str) -> bool:
+    def conversation_exists(
+        self, conversation_id: str, owner_id: str | None = None
+    ) -> bool:
         with self.session() as connection:
-            row = connection.execute(
-                "SELECT 1 FROM conversations WHERE id = ?", (conversation_id,)
-            ).fetchone()
+            if owner_id is None:
+                row = connection.execute(
+                    "SELECT 1 FROM conversations WHERE id = ?", (conversation_id,)
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    "SELECT 1 FROM conversations WHERE id = ? AND owner_id = ?",
+                    (conversation_id, self._validate_owner_id(owner_id)),
+                ).fetchone()
         return row is not None
 
     def append_event(
-        self, conversation_id: str, role: str, content: str, producer: str | None = None
+        self,
+        conversation_id: str,
+        role: str,
+        content: str,
+        producer: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        if role not in {"user", "assistant", "tool"}:
+            raise ValueError("unsupported conversation event role")
+        if not isinstance(content, str):
+            raise TypeError("conversation event content must be text")
+        metadata_json = (
+            json.dumps(metadata, ensure_ascii=False, separators=(",", ":"))
+            if metadata is not None else None
+        )
         now = utc_now()
         event_id = str(uuid.uuid4())
         with self.session() as connection:
@@ -236,10 +303,14 @@ class Database:
             connection.execute(
                 """
                 INSERT INTO conversation_events
-                    (id, conversation_id, sequence, role, content, producer, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (id, conversation_id, sequence, role, content, producer,
+                     metadata_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (event_id, conversation_id, sequence, role, content, producer, now),
+                (
+                    event_id, conversation_id, sequence, role, content, producer,
+                    metadata_json, now,
+                ),
             )
             connection.execute(
                 "UPDATE conversations SET updated_at = ? WHERE id = ?",
@@ -252,28 +323,181 @@ class Database:
             "role": role,
             "content": content,
             "producer": producer,
+            "metadata": metadata,
             "created_at": now,
         }
+
+    def replace_events_from(
+        self,
+        conversation_id: str,
+        event_id: str,
+        replacement_events: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Atomically replace a target event and all later events."""
+        prepared = []
+        for event in replacement_events:
+            role = event.get("role")
+            content = event.get("content")
+            if role not in {"user", "assistant", "tool"} or not isinstance(content, str):
+                raise ValueError("replacement events require supported roles and text content")
+            metadata = event.get("metadata")
+            metadata_json = (
+                json.dumps(metadata, ensure_ascii=False, separators=(",", ":"))
+                if metadata is not None else None
+            )
+            prepared.append((
+                str(uuid.uuid4()),
+                role,
+                content,
+                event.get("producer"),
+                metadata,
+                metadata_json,
+            ))
+
+        now = utc_now()
+        result = []
+        with self.session() as connection:
+            target = connection.execute(
+                "SELECT sequence FROM conversation_events WHERE conversation_id = ? AND id = ?",
+                (conversation_id, event_id),
+            ).fetchone()
+            if target is None:
+                raise ValueError("target event does not exist in this conversation")
+            connection.execute(
+                "DELETE FROM conversation_events WHERE conversation_id = ? AND sequence >= ?",
+                (conversation_id, target["sequence"]),
+            )
+            row = connection.execute(
+                "SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence "
+                "FROM conversation_events WHERE conversation_id = ?",
+                (conversation_id,),
+            ).fetchone()
+            sequence = int(row["next_sequence"])
+            for new_id, role, content, producer, metadata, metadata_json in prepared:
+                connection.execute(
+                    """
+                    INSERT INTO conversation_events
+                        (id, conversation_id, sequence, role, content, producer,
+                         metadata_json, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        new_id, conversation_id, sequence, role, content,
+                        producer, metadata_json, now,
+                    ),
+                )
+                result.append({
+                    "id": new_id,
+                    "conversation_id": conversation_id,
+                    "sequence": sequence,
+                    "role": role,
+                    "content": content,
+                    "producer": producer,
+                    "metadata": metadata,
+                    "created_at": now,
+                })
+                sequence += 1
+            connection.execute(
+                "UPDATE conversations SET updated_at = ? WHERE id = ?",
+                (now, conversation_id),
+            )
+        return result
+
+    def delete_events_from(self, conversation_id: str, event_id: str) -> int:
+        """Delete a target event and every later event in one transaction."""
+        with self.session() as connection:
+            target = connection.execute(
+                """
+                SELECT sequence FROM conversation_events
+                WHERE conversation_id = ? AND id = ?
+                """,
+                (conversation_id, event_id),
+            ).fetchone()
+            if target is None:
+                raise ValueError("target event does not exist in this conversation")
+            cursor = connection.execute(
+                """
+                DELETE FROM conversation_events
+                WHERE conversation_id = ? AND sequence >= ?
+                """,
+                (conversation_id, target["sequence"]),
+            )
+            connection.execute(
+                "UPDATE conversations SET updated_at = ? WHERE id = ?",
+                (utc_now(), conversation_id),
+            )
+            return cursor.rowcount
+
+    def delete_last_event(self, conversation_id: str, event_id: str) -> None:
+        """Delete only the current tail event, preventing concurrent history rewrites."""
+        with self.session() as connection:
+            row = connection.execute(
+                """
+                SELECT id FROM conversation_events
+                WHERE conversation_id = ?
+                ORDER BY sequence DESC LIMIT 1
+                """,
+                (conversation_id,),
+            ).fetchone()
+            if row is None or row["id"] != event_id:
+                raise ValueError("event is not the current conversation tail")
+            connection.execute(
+                "DELETE FROM conversation_events WHERE conversation_id = ? AND id = ?",
+                (conversation_id, event_id),
+            )
+            connection.execute(
+                "UPDATE conversations SET updated_at = ? WHERE id = ?",
+                (utc_now(), conversation_id),
+            )
 
     def list_events(self, conversation_id: str) -> list[dict[str, Any]]:
         with self.session() as connection:
             rows = connection.execute(
                 """
-                SELECT id, conversation_id, sequence, role, content, producer, created_at
+                SELECT id, conversation_id, sequence, role, content, producer,
+                       metadata_json, created_at
                 FROM conversation_events
                 WHERE conversation_id = ?
                 ORDER BY sequence ASC
                 """,
                 (conversation_id,),
             ).fetchall()
-        return [dict(row) for row in rows]
+        events = []
+        for row in rows:
+            event = dict(row)
+            raw_metadata = event.pop("metadata_json", None)
+            if raw_metadata:
+                try:
+                    metadata = json.loads(raw_metadata)
+                except json.JSONDecodeError:
+                    raise RuntimeError(
+                        f"Conversation event {event['id']} contains invalid metadata JSON"
+                    )
+                if not isinstance(metadata, dict):
+                    raise RuntimeError(
+                        f"Conversation event {event['id']} metadata must be an object"
+                    )
+                event["metadata"] = metadata
+            else:
+                event["metadata"] = None
+            events.append(event)
+        return events
 
-    def get_conversation(self, conversation_id: str) -> dict[str, Any] | None:
+    def get_conversation(
+        self, conversation_id: str, owner_id: str | None = None
+    ) -> dict[str, Any] | None:
         with self.session() as connection:
-            row = connection.execute(
-                "SELECT id, created_at, updated_at FROM conversations WHERE id = ?",
-                (conversation_id,),
-            ).fetchone()
+            if owner_id is None:
+                row = connection.execute(
+                    "SELECT id, owner_id, created_at, updated_at FROM conversations WHERE id = ?",
+                    (conversation_id,),
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    "SELECT id, owner_id, created_at, updated_at FROM conversations "
+                    "WHERE id = ? AND owner_id = ?",
+                    (conversation_id, self._validate_owner_id(owner_id)),
+                ).fetchone()
         if row is None:
             return None
         result = dict(row)

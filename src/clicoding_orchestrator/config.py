@@ -1,4 +1,5 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import json
 import math
 import os
 
@@ -16,6 +17,8 @@ class Settings:
     enable_planning: bool = False
     max_parallel_tasks: int = 3
     api_key: str | None = None
+    user_api_keys: dict[str, str] = field(default_factory=dict)
+    trust_user_header: bool = False
 
     def __post_init__(self) -> None:
         if not self.database_path.strip():
@@ -28,10 +31,32 @@ class Settings:
             len(self.api_key) < 32 or not self.api_key.isascii() or not self.api_key.strip()
         ):
             raise ValueError("api_key must be at least 32 ASCII characters")
+        if not isinstance(self.user_api_keys, dict):
+            raise ValueError("user_api_keys must be a mapping of user IDs to tokens")
+        if any(
+            not isinstance(user_id, str)
+            or not user_id.strip()
+            or len(user_id) > 128
+            or not isinstance(token, str)
+            or len(token) < 32
+            or not token.isascii()
+            for user_id, token in self.user_api_keys.items()
+        ):
+            raise ValueError("user_api_keys require non-empty IDs and tokens of at least 32 ASCII characters")
 
     @classmethod
     def from_env(cls) -> "Settings":
         load_dotenv()
+        raw_user_keys = os.getenv("CLICODING_USER_API_KEYS", "").strip()
+        try:
+            user_api_keys = json.loads(raw_user_keys) if raw_user_keys else {}
+        except json.JSONDecodeError as exc:
+            raise ValueError("CLICODING_USER_API_KEYS must be a JSON object") from exc
+        if not isinstance(user_api_keys, dict):
+            raise ValueError("CLICODING_USER_API_KEYS must be a JSON object")
+        trust_user_header = os.getenv("CLICODING_TRUST_USER_HEADER", "").strip().lower() in {
+            "1", "true", "yes", "on"
+        }
         return cls(
             database_path=os.getenv("CLICODING_DATABASE_PATH", "./data/clicoding.db"),
             upstream_base_url=os.getenv(
@@ -46,4 +71,6 @@ class Settings:
             enable_planning=os.getenv("CLICODING_ENABLE_PLANNING", "false").lower() in ("1", "true", "yes"),
             max_parallel_tasks=int(os.getenv("CLICODING_MAX_PARALLEL_TASKS", "3")),
             api_key=os.getenv("CLICODING_API_KEY") or None,
+            user_api_keys=user_api_keys,
+            trust_user_header=trust_user_header,
         )
