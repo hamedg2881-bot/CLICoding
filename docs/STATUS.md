@@ -374,3 +374,10 @@ User supplied a fresh command output from host `spark-7ea3`:
 - CI run `43020629874` on head `3bfbaab4a30653ffa980bfbee9884c6a345581f2`: **128 passed, 1 warning**.
 - Earlier incremental PRs #5–#12 are closed as superseded by PR #13; no changes were merged into `main`.
 - All work remains on GitHub only. No source ZIP has been transferred to DGX Spark, and no DGX service/runtime/model has been changed or restarted.
+
+
+## 2026-11-11 — Shared CDS_AI policy
+
+- Added a single internal system policy applied to direct chat, streaming, specialist orchestration context, and the reference conversation endpoints.
+- Establishes the CDS_AI identity, same-language responses, Persian RTL preservation, uncertainty/action honesty, tool-output untrusted-data handling, and approved-tool-only behavior.
+- Client-provided system messages are retained but the CDS_AI policy is appended after them so they cannot override the core safety/reliability rules.
