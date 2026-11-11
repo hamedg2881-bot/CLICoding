@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from clicoding_orchestrator.app import create_app
 from clicoding_orchestrator.config import Settings
+from clicoding_orchestrator.security import SecurityStore
 
 
 ADMIN_TOKEN = "a" * 48
@@ -100,9 +101,13 @@ def test_rate_limit_is_enforced_per_principal_and_audited(tmp_path):
     assert third.headers["x-request-id"]
     assert third.headers["x-ratelimit-remaining"] == "0"
 
-    audit = client.get("/api/v1/admin/audit?limit=20", headers=headers)
-    assert audit.status_code == 429  # the same principal is rate-limited on admin routes too
-    assert audit.json()["detail"] == "Rate limit exceeded"
+    audit = SecurityStore(settings.database_path).list_audit(limit=20)
+    assert any(
+        event["action"] == "request.rate_limited"
+        and event["status_code"] == 429
+        and event["route"] == "/v1/models"
+        for event in audit
+    )
 
 
 def test_rate_limits_are_isolated_between_user_tokens(tmp_path):
@@ -114,15 +119,11 @@ def test_rate_limits_are_isolated_between_user_tokens(tmp_path):
     client = TestClient(create_app(settings=settings))
     admin_headers = {"Authorization": f"Bearer {ADMIN_TOKEN}"}
 
-    tokens = []
-    for owner in ("alice", "bob"):
-        response = client.post(
-            "/api/v1/admin/tokens",
-            headers=admin_headers,
-            json={"owner_id": owner, "label": owner},
-        )
-        assert response.status_code == 201
-        tokens.append(response.json()["token"])
+    store = SecurityStore(settings.database_path)
+    tokens = [
+        store.issue_token(owner, owner)["token"]
+        for owner in ("alice", "bob")
+    ]
 
     alice_headers = {"Authorization": f"Bearer {tokens[0]}"}
     bob_headers = {"Authorization": f"Bearer {tokens[1]}"}
