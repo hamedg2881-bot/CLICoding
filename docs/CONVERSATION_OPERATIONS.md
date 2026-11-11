@@ -28,8 +28,15 @@ This works for direct answers and tool-call turns. For a previous tool-call turn
 
 ## Edit/resubmit
 
-Editing an earlier user message and truncating all later turns is not yet implemented. It requires a target event ID and a user-visible confirmation because it rewrites conversation history. Do not simulate it by changing an old message in place.
+Send:
+
+```http
+X-CLICoding-Operation: edit
+X-CLICoding-Event-ID: <target-user-event-id>
+```
+
+The target ID is available from the conversation event history. Only user events can be edited. CDS_AI builds the new model context from events before the target plus the replacement user content. It deletes the target and all later events, and appends the replacement turn, only after the new answer/tool call completes successfully. If the request fails or is cancelled, the original history remains intact. This is a deliberate history rewrite; clients should confirm the edit with the user.
 
 ## Client integration
 
-The Python workstation client currently exposes ordinary chat/tool loops. It does not yet expose a dedicated regenerate method. For Open WebUI requests carrying both configured chat/user identity headers, CDS_AI also detects regeneration when the submitted non-system transcript exactly matches the stored transcript with only the final assistant event removed. An ordinary repeated prompt that includes the previous assistant answer does not match and remains a new turn. Other OpenAI-compatible clients can send the operation header directly.
+The Python workstation client currently exposes ordinary chat/tool loops. It does not yet expose dedicated regenerate/edit methods. For Open WebUI requests carrying both configured chat/user identity headers, CDS_AI also detects regeneration when the submitted non-system transcript exactly matches the stored transcript with only the final assistant event removed. An ordinary repeated prompt that includes the previous assistant answer does not match and remains a new turn. Other OpenAI-compatible clients can send the operation header directly.
