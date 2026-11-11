@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from clicoding_orchestrator.app import create_app
