@@ -952,6 +952,7 @@ def create_app(
         generation_options: dict[str, Any] | None = None,
         regenerate: bool = False,
         edit_event_id: str | None = None,
+        progress_queue: asyncio.Queue[dict[str, Any]] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], str, str | None]:
         if not db.conversation_exists(conversation_id):
             raise HTTPException(status_code=404, detail="Conversation not found")
@@ -1065,6 +1066,9 @@ def create_app(
                     for message in context_messages
                 )
                 try:
+                    orchestration_options = {}
+                    if progress_queue is not None:
+                        orchestration_options["progress_callback"] = progress_queue.put_nowait
                     result = await multi_model.run(
                         conversation_id,
                         _content_text(content) or (
@@ -1072,6 +1076,7 @@ def create_app(
                         ),
                         context,
                         user_content=vision_content,
+                        **orchestration_options,
                     )
                 except NoEligibleWorker as exc:
                     raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -1921,6 +1926,120 @@ def create_app(
                 "tool_call_id": last_message.tool_call_id,
                 **({"name": last_message.name} if last_message.name else {}),
             }
+
+        if chat_request.stream and is_specialist and not tool_definitions:
+            async def specialist_event_stream():
+                progress_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+                turn_task = asyncio.create_task(run_registered_turn(
+                    conversation_id,
+                    last_user or "",
+                    chat_request.task_type,
+                    supplied_system,
+                    force_orchestration=True,
+                    input_role=last_message.role,
+                    input_metadata=input_metadata,
+                    generation_options=generation_options,
+                    regenerate=regenerate,
+                    edit_event_id=edit_event_id,
+                    progress_queue=progress_queue,
+                ))
+                try:
+                    role_chunk = {
+                        "id": response_id,
+                        "object": "chat.completion.chunk",
+                        "created": created_at,
+                        "model": "CDS_AI",
+                        "choices": [{
+                            "index": 0,
+                            "delta": {"role": "assistant"},
+                            "finish_reason": None,
+                        }],
+                    }
+                    yield "data: " + json.dumps(
+                        role_chunk, ensure_ascii=False, separators=(",", ":")
+                    ) + "\n\n"
+
+                    while not turn_task.done() or not progress_queue.empty():
+                        try:
+                            progress = await asyncio.wait_for(
+                                progress_queue.get(), timeout=0.2
+                            )
+                        except asyncio.TimeoutError:
+                            continue
+                        progress_chunk = {
+                            "id": response_id,
+                            "object": "chat.completion.chunk",
+                            "created": created_at,
+                            "model": "CDS_AI",
+                            "choices": [{
+                                "index": 0,
+                                "delta": {},
+                                "finish_reason": None,
+                            }],
+                            "x_clicoding": {"progress": progress},
+                        }
+                        yield "event: progress\ndata: " + json.dumps(
+                            progress_chunk, ensure_ascii=False, separators=(",", ":")
+                        ) + "\n\n"
+
+                    try:
+                        _, _, answer, execution_id = await turn_task
+                    except HTTPException as exc:
+                        error_chunk = {
+                            "error": {
+                                "message": exc.detail,
+                                "type": "server_error",
+                            }
+                        }
+                        yield "data: " + json.dumps(
+                            error_chunk, ensure_ascii=False, separators=(",", ":")
+                        ) + "\n\n"
+                        yield "data: [DONE]\n\n"
+                        return
+
+                    final_chunk = {
+                        "id": response_id,
+                        "object": "chat.completion.chunk",
+                        "created": created_at,
+                        "model": "CDS_AI",
+                        "choices": [{
+                            "index": 0,
+                            "delta": {"content": answer},
+                            "finish_reason": None,
+                        }],
+                        "x_clicoding": {"execution_id": execution_id},
+                    }
+                    finish_chunk = {
+                        "id": response_id,
+                        "object": "chat.completion.chunk",
+                        "created": created_at,
+                        "model": "CDS_AI",
+                        "choices": [{
+                            "index": 0,
+                            "delta": {},
+                            "finish_reason": "stop",
+                        }],
+                    }
+                    for chunk in (final_chunk, finish_chunk):
+                        yield "data: " + json.dumps(
+                            chunk, ensure_ascii=False, separators=(",", ":")
+                        ) + "\n\n"
+                    yield "data: [DONE]\n\n"
+                finally:
+                    if not turn_task.done():
+                        turn_task.cancel()
+                    await asyncio.gather(turn_task, return_exceptions=True)
+
+            return StreamingResponse(
+                specialist_event_stream(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
+                    "Connection": "keep-alive",
+                },
+            )
+
         input_event, assistant_event, answer, execution_id = await run_registered_turn(
             conversation_id, last_user or "", chat_request.task_type, supplied_system,
             force_orchestration=is_specialist and not tool_definitions,
