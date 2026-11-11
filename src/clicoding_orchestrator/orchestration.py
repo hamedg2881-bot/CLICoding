@@ -235,7 +235,9 @@ class MultiModelOrchestrator:
                 + "Create at least one task requiring the vision capability so the "
                 + "multimodal worker receives the actual image content."
             )
-        planning_context = await self._compact_context_for_worker(\n            planning_worker, conversation_context\n        )\n        plan = await planner.create_plan(planning_request, planning_context)
+        planning_context = await self._compact_context_for_worker(
+            planning_worker, conversation_context
+        )\n        plan = await planner.create_plan(planning_request, planning_context)
 
         # Validate capability combinations against real enabled workers before
         # persisting or dispatching the plan. A union of capabilities is not enough:
@@ -271,7 +273,7 @@ class MultiModelOrchestrator:
                 f"Task:\n{task.objective}\n\n"
                 f"Expected output:\n{task.expected_output}\n\n"
                 f"Dependency outputs:\n{dependency_outputs}\n\n"
-                f"Relevant conversation context:\n{conversation_context}"
+                f"Relevant conversation context:\n{task_context}"
             )
             user_message_content: object = user_task_text
             if image_parts and "vision" in worker.capabilities:
