@@ -147,14 +147,15 @@ def test_worker_registry_exposes_and_validates_context_budgets():
 def test_yaml_registry_loads_explicit_context_budgets(tmp_path):
     path = tmp_path / "workers.yaml"
     path.write_text(
-        "workers:\\n"
-        "  - id: chat\\n"
-        "    base_url: http://localhost:8000/v1\\n"
-        "    model: chat-model\\n"
-        "    capabilities: [chat]\\n"
-        "    enabled: true\\n"
-        "    context_window_tokens: 32768\\n"
-        "    max_output_tokens: 4096\\n",
+        """workers:
+  - id: chat
+    base_url: http://localhost:8000/v1
+    model: chat-model
+    capabilities: [chat]
+    enabled: true
+    context_window_tokens: 32768
+    max_output_tokens: 4096
+""",
         encoding="utf-8",
     )
     worker = WorkerRegistry.from_yaml(str(path)).enabled_workers()[0]
