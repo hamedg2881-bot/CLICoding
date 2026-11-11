@@ -92,7 +92,7 @@ def select_compaction_cutoff(
 
 
 _SECRET_ASSIGNMENT = re.compile(
-    r"(?i)(api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|secret|authorization)(\s*[:=]\s*)([^\s,;]+)"
+    r"(?i)(api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|secret|authorization)([\"']?\s*[:=]\s*[\"']?)([^\"'\s,;]+)"
 )
 _BEARER_TOKEN = re.compile(r"(?i)Bearer\s+[A-Za-z0-9._~+/=-]{16,}")
 _GITHUB_TOKEN = re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b")
@@ -107,3 +107,29 @@ def redact_sensitive_text(value: str) -> str:
     redacted = _OPENAI_TOKEN.sub("[REDACTED_API_TOKEN]", redacted)
     redacted = _AWS_ACCESS_KEY.sub("[REDACTED_AWS_KEY]", redacted)
     return redacted
+
+
+
+def redact_sensitive_data(value: Any) -> Any:
+    """Recursively redact credential-like mapping values and nested text."""
+    if isinstance(value, dict):
+        result = {}
+        for key, item in value.items():
+            normalized = str(key).lower().replace("_", "").replace("-", "")
+            if any(
+                marker in normalized
+                for marker in (
+                    "apikey", "accesstoken", "refreshtoken", "token",
+                    "password", "passwd", "secret", "authorization",
+                    "privatekey", "accesskey",
+                )
+            ):
+                result[key] = "[REDACTED]"
+            else:
+                result[key] = redact_sensitive_data(item)
+        return result
+    if isinstance(value, list):
+        return [redact_sensitive_data(item) for item in value]
+    if isinstance(value, str):
+        return redact_sensitive_text(value)
+    return value
