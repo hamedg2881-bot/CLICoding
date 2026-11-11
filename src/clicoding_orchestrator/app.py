@@ -384,6 +384,8 @@ def create_app(
                     )
                 except NoEligibleWorker as exc:
                     raise HTTPException(status_code=503, detail=str(exc)) from exc
+                except ContextBudgetExceeded as exc:
+                    raise HTTPException(status_code=413, detail=str(exc)) from exc
                 except Exception as exc:
                     # Keep the public response generic, but retain the server-side
                     # traceback so upstream/planner failures can be diagnosed.
@@ -440,9 +442,14 @@ def create_app(
                             kwargs["tools"] = list(tool_definitions.values())
                             if tool_choice is not None:
                                 kwargs["tool_choice"] = tool_choice
-                        if generation_options:
-                            kwargs["options"] = generation_options
+                        effective_options = dict(generation_options or {})
+                        if isinstance(selected_gateway, OpenAICompatibleGateway):
+                            effective_options.setdefault("max_tokens", worker.max_output_tokens)
+                        if effective_options:
+                            kwargs["options"] = effective_options
                         completion = await selected_gateway.complete(history, **kwargs)
+                except HTTPException:
+                    raise
                 except GatewayError as exc:
                     raise HTTPException(status_code=502, detail=str(exc)) from exc
                 except Exception as exc:
@@ -516,12 +523,15 @@ def create_app(
             yield "data: " + json.dumps(role_chunk, ensure_ascii=False, separators=(",", ":")) + "\n\n"
             answer_parts: list[str] = []
             try:
+                stream_options = dict(generation_options or {})
+                if isinstance(selected_gateway, OpenAICompatibleGateway):
+                    stream_options.setdefault("max_tokens", worker.max_output_tokens)
                 async with worker_semaphores[runtime_key(worker)]:
                     stream_method = getattr(selected_gateway, "stream", None)
                     if callable(stream_method):
                         stream = (
-                            stream_method(history, options=generation_options)
-                            if generation_options else stream_method(history)
+                            stream_method(history, options=stream_options)
+                            if stream_options else stream_method(history)
                         )
                         async for piece in stream:
                             if not isinstance(piece, str):
@@ -539,8 +549,8 @@ def create_app(
                             yield "data: " + json.dumps(chunk, ensure_ascii=False, separators=(",", ":")) + "\n\n"
                     else:
                         completion = (
-                            await selected_gateway.complete(history, options=generation_options)
-                            if generation_options else await selected_gateway.complete(history)
+                            await selected_gateway.complete(history, options=stream_options)
+                            if stream_options else await selected_gateway.complete(history)
                         )
                         answer_parts.append(completion.content)
                         chunk = {
