@@ -3,8 +3,23 @@
 **Last updated:** 2026-11-11  
 **Canonical repository:** https://github.com/hamedg2881-bot/CLICoding  
 **Product / public assistant ID:** CDS_AI  
-**Current phase:** CDS_AI release hardening (source-only)  
-**Overall state:** The consolidated source candidate implements conversation-first routing, direct-chat SSE, validated streamed function-tool calls, a workstation-side reference tool host, conservative context admission, retry idempotency, and per-user conversation ownership. The last completed CI run before the latest patch was 117 passed, 1 warning; the specialist SSE framing fix and matching regression test are awaiting a fresh run. This is not deployment approval: automatic context compaction, user-facing stop/cancel and edit/regenerate lineage, typed attachment lifecycle, packaged IDE integration, live model/runtime capability validation, offline end-to-end acceptance, and rollback evidence remain open.
+**Current phase:** CDS_AI source hardening  
+**Overall state:** The consolidated source candidate implements conversation-first routing, direct and tool-call SSE, a workstation reference tool host, conservative context admission, retry idempotency, per-user ownership isolation, and API-level active-turn cancellation. The latest CI run passed 119 tests with one Starlette/httpx deprecation warning. Automatic context compaction, client Stop UI, typed attachment lifecycle, packaged IDE integration, live model/runtime validation, offline end-to-end acceptance and rollback remain open.
+
+## Current release candidate — 2026-11-11
+- PR #12, branch `feature/cds-ai-identity-isolation`, head `16dc243fc3cb668e1e00dedb2c4ec4f6abd4f168`.
+- CI: [run 43020242287](https://github.com/hamedg2881-bot/CLICoding/actions/runs/43020242287) — **119 passed, 1 warning**.
+- Product/API identity: `CDS_AI`; legacy CLICoding service, environment and database names remain unchanged for compatibility.
+- Authentication: per-user bearer tokens and optional trusted Open WebUI identity-header mode. Trusted-header mode is safe only behind the documented private proxy boundary.
+- Tool execution: model output is only a request; allow-listed workstation tools enforce workspace scope, approval and idempotency. No arbitrary shell tool is exposed.
+- Context: admission control rejects overflow rather than silently truncating; automatic summarization/compaction is not implemented.
+- Streaming: direct chat and tool-call deltas stream upstream; specialist work still emits a buffered final answer as SSE.
+- Cancellation: authenticated API cancellation is implemented for active direct and conversation-route turns. The task registry is process-local; client Stop controls and external workstation-process cancellation remain open.
+- Runtime sample uses recorded ports 8003/8004/8005, but aliases/capabilities must be verified against live endpoints before enabling workers.
+- No source candidate has been copied to DGX; no DGX file, service, model, container or runtime has been changed.
+
+## Release gates
+See [RELEASE_GATES.md](RELEASE_GATES.md). Source CI does not replace live DGX, packaged IDE, offline installation or rollback acceptance.
 
 ## Current release candidate — 2026-11-11
 - Consolidated source candidate: PR #12, branch `feature/cds-ai-identity-isolation`, head `116fdf94ea4a6c532566ab163860d6565c3ca43c`.
