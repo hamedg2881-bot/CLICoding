@@ -14,6 +14,7 @@ import tempfile
 import time
 from typing import Any, Callable
 
+from clicoding_orchestrator.context import redact_sensitive_data
 from clicoding_orchestrator.tool_protocol import (
     ToolProtocolError,
     validate_tool_calls,
@@ -188,13 +189,13 @@ class WorkspaceToolHost:
             return self._tool_message(call_id, name, cached)
 
         try:
-            result = self._dispatch(name, arguments)
+            result = redact_sensitive_data(self._dispatch(name, arguments))
             self.store.finish(key, result)
         except Exception as exc:
-            result = {
+            result = redact_sensitive_data({
                 "status": "error",
                 "error": f"{type(exc).__name__}: {str(exc)[:1000]}",
-            }
+            })
             try:
                 self.store.finish(key, result, status="failed")
             except ToolExecutionConflict:
