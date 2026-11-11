@@ -22,8 +22,8 @@ class Worker:
     api_key: str | None = None
     timeout_seconds: float = 180.0
     max_concurrency: int = 1
-    context_window_tokens: int = 8192
-    max_output_tokens: int = 1024
+    context_window_tokens: int = 16384
+    max_output_tokens: int = 2048
 
 
 class RegistryError(ValueError):
@@ -105,8 +105,8 @@ class WorkerRegistry:
                 enabled = item.get("enabled", False)
                 priority = int(item.get("priority", 100))
                 max_concurrency = int(item.get("max_concurrency", 1))
-                context_window_tokens = int(item.get("context_window_tokens", 8192))
-                max_output_tokens = int(item.get("max_output_tokens", 1024))
+                context_window_tokens = int(item.get("context_window_tokens", 16384))
+                max_output_tokens = int(item.get("max_output_tokens", 2048))
                 timeout = float(item.get("timeout_seconds", 180))
                 api_key_env = item.get("api_key_env")
             except (KeyError, TypeError, ValueError) as exc:
