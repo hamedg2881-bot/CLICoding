@@ -298,3 +298,10 @@ User supplied a fresh command output from host `spark-7ea3`:
 - Added docs/CHAT_EXPERIENCE_SPEC.md as the product acceptance contract for modern chat quality and IDE parity.
 - Limitations remain explicit: specialist orchestration streams only its final answer; tool-call round-trip, context budgeting/compaction, client-visible cancellation controls, richer attachment storage, and reference IDE adapter are not yet implemented.
 - No DGX transfer or service restart has occurred.
+
+## 2026-11-11 — Gateway streaming tests and IDE tool boundary
+
+- Added gateway-level tests for upstream OpenAI SSE delta parsing and rejection of streams that end without [DONE].
+- Latest code CI run 43012613955 passed: 75 tests passed, 1 warning.
+- Added docs/IDE_TOOL_PROTOCOL.md specifying the workstation-side tool host, typed call/result contract, workspace scope, idempotency, approval, cancellation, and evidence requirements.
+- The tool-call round-trip and workstation agent are design targets only at this point; no execution API has been enabled.
