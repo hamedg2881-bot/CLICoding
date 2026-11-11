@@ -1109,3 +1109,46 @@ def test_openai_api_can_regenerate_a_previous_tool_call(tmp_path):
     events = database.list_events(conversation_id)
     assert [event["role"] for event in events] == ["user", "assistant"]
     assert events[-1]["content"] == "The file says hello."
+
+
+class FailOnSecondGateway:
+    def __init__(self):
+        self.calls = 0
+
+    async def complete(self, messages):
+        self.calls += 1
+        if self.calls == 2:
+            raise GatewayError("regeneration failed")
+        return Completion(content="original answer", model="chat-model")
+
+
+def test_failed_regeneration_preserves_the_previous_assistant_answer(tmp_path):
+    gateway = FailOnSecondGateway()
+    database = Database(str(tmp_path / "regenerate-rollback.sqlite3"))
+    conversation_id = database.create_conversation()["id"]
+    registry = WorkerRegistry([
+        Worker("chat", "http://chat/v1", "chat-model", frozenset({"chat"}))
+    ])
+    app = create_app(
+        settings=Settings(database_path=str(tmp_path / "regenerate-rollback.sqlite3")),
+        gateway=gateway,
+        database=database,
+        registry=registry,
+    )
+    client = TestClient(app)
+    request = {
+        "model": "CDS_AI",
+        "conversation_id": conversation_id,
+        "messages": [{"role": "user", "content": "Keep the original answer"}],
+    }
+    assert client.post("/v1/chat/completions", json=request).status_code == 200
+
+    failed = client.post(
+        "/v1/chat/completions",
+        json=request,
+        headers={"X-CLICoding-Operation": "regenerate"},
+    )
+    assert failed.status_code == 502
+    events = database.list_events(conversation_id)
+    assert [event["role"] for event in events] == ["user", "assistant"]
+    assert events[-1]["content"] == "original answer"
