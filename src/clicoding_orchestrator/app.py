@@ -344,6 +344,14 @@ def create_app(
             owner_id=_owner_scope(request),
         )
 
+    def _owns_execution(request: Request, execution_id: str) -> dict[str, Any] | None:
+        execution = db.get_execution(execution_id)
+        if execution is None or not _owns_conversation(
+            request, execution["conversation_id"]
+        ):
+            return None
+        return execution
+
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok", "component": "conversation-router"}
