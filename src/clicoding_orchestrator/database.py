@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import hashlib
+import json
 from pathlib import Path
 import sqlite3
 import uuid
@@ -67,6 +68,7 @@ class Database:
                     role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'tool')),
                     content TEXT NOT NULL,
                     producer TEXT,
+                    metadata_json TEXT,
                     created_at TEXT NOT NULL,
                     UNIQUE (conversation_id, sequence)
                 );
@@ -124,7 +126,20 @@ class Database:
                     ON sandbox_approvals(execution_id, task_id, created_at);
                 """
             )
+        self._migrate_event_metadata()
         self._migrate_sandbox_approval_languages()
+
+    def _migrate_event_metadata(self) -> None:
+        """Add structured event metadata without rebuilding or losing old conversations."""
+        with self.session() as connection:
+            columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(conversation_events)").fetchall()
+            }
+            if "metadata_json" not in columns:
+                connection.execute(
+                    "ALTER TABLE conversation_events ADD COLUMN metadata_json TEXT"
+                )
 
     def _migrate_sandbox_approval_languages(self) -> None:
         """Expand the SQLite language CHECK without losing existing approvals/results."""
@@ -222,8 +237,21 @@ class Database:
         return row is not None
 
     def append_event(
-        self, conversation_id: str, role: str, content: str, producer: str | None = None
+        self,
+        conversation_id: str,
+        role: str,
+        content: str,
+        producer: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        if role not in {"user", "assistant", "tool"}:
+            raise ValueError("unsupported conversation event role")
+        if not isinstance(content, str):
+            raise TypeError("conversation event content must be text")
+        metadata_json = (
+            json.dumps(metadata, ensure_ascii=False, separators=(",", ":"))
+            if metadata is not None else None
+        )
         now = utc_now()
         event_id = str(uuid.uuid4())
         with self.session() as connection:
@@ -236,10 +264,14 @@ class Database:
             connection.execute(
                 """
                 INSERT INTO conversation_events
-                    (id, conversation_id, sequence, role, content, producer, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (id, conversation_id, sequence, role, content, producer,
+                     metadata_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (event_id, conversation_id, sequence, role, content, producer, now),
+                (
+                    event_id, conversation_id, sequence, role, content, producer,
+                    metadata_json, now,
+                ),
             )
             connection.execute(
                 "UPDATE conversations SET updated_at = ? WHERE id = ?",
@@ -252,6 +284,7 @@ class Database:
             "role": role,
             "content": content,
             "producer": producer,
+            "metadata": metadata,
             "created_at": now,
         }
 
@@ -259,14 +292,34 @@ class Database:
         with self.session() as connection:
             rows = connection.execute(
                 """
-                SELECT id, conversation_id, sequence, role, content, producer, created_at
+                SELECT id, conversation_id, sequence, role, content, producer,
+                       metadata_json, created_at
                 FROM conversation_events
                 WHERE conversation_id = ?
                 ORDER BY sequence ASC
                 """,
                 (conversation_id,),
             ).fetchall()
-        return [dict(row) for row in rows]
+        events = []
+        for row in rows:
+            event = dict(row)
+            raw_metadata = event.pop("metadata_json", None)
+            if raw_metadata:
+                try:
+                    metadata = json.loads(raw_metadata)
+                except json.JSONDecodeError:
+                    raise RuntimeError(
+                        f"Conversation event {event['id']} contains invalid metadata JSON"
+                    )
+                if not isinstance(metadata, dict):
+                    raise RuntimeError(
+                        f"Conversation event {event['id']} metadata must be an object"
+                    )
+                event["metadata"] = metadata
+            else:
+                event["metadata"] = None
+            events.append(event)
+        return events
 
     def get_conversation(self, conversation_id: str) -> dict[str, Any] | None:
         with self.session() as connection:
