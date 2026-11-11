@@ -327,6 +327,31 @@ class Database:
             "created_at": now,
         }
 
+    def delete_events_from(self, conversation_id: str, event_id: str) -> int:
+        """Delete a target event and every later event in one transaction."""
+        with self.session() as connection:
+            target = connection.execute(
+                """
+                SELECT sequence FROM conversation_events
+                WHERE conversation_id = ? AND id = ?
+                """,
+                (conversation_id, event_id),
+            ).fetchone()
+            if target is None:
+                raise ValueError("target event does not exist in this conversation")
+            cursor = connection.execute(
+                """
+                DELETE FROM conversation_events
+                WHERE conversation_id = ? AND sequence >= ?
+                """,
+                (conversation_id, target["sequence"]),
+            )
+            connection.execute(
+                "UPDATE conversations SET updated_at = ? WHERE id = ?",
+                (utc_now(), conversation_id),
+            )
+            return cursor.rowcount
+
     def delete_last_event(self, conversation_id: str, event_id: str) -> None:
         """Delete only the current tail event, preventing concurrent history rewrites."""
         with self.session() as connection:
