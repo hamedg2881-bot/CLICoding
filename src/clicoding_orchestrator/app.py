@@ -819,6 +819,19 @@ def create_app(
                 }, ensure_ascii=False) + "\n\n"
                 yield "data: [DONE]\n\n"
                 return
+            except GatewayError:
+                logger.exception(
+                    "Context compaction failed during streaming (conversation_id=%s)",
+                    conversation_id,
+                )
+                yield "data: " + json.dumps({
+                    "error": {
+                        "message": "The assistant could not safely prepare conversation context.",
+                        "type": "server_error",
+                    }
+                }, ensure_ascii=False) + "\n\n"
+                yield "data: [DONE]\n\n"
+                return
             _append_input_event(
                 db,
                 conversation_id,
@@ -1253,6 +1266,11 @@ def create_app(
                 )
             except ContextBudgetExceeded as exc:
                 raise HTTPException(status_code=413, detail=str(exc)) from exc
+            except GatewayError as exc:
+                raise HTTPException(
+                    status_code=502,
+                    detail="The assistant could not safely prepare conversation context",
+                ) from exc
             return StreamingResponse(
                 stream_direct_turn(
                     conversation_id, last_user, supplied_system, stream_worker,
