@@ -186,6 +186,29 @@ def _append_input_event(
     )
 
 
+def _prepare_regeneration(
+    database: Database,
+    conversation_id: str,
+    role: str,
+    content: str | list[dict[str, Any]] | None,
+    metadata: dict[str, Any] | None,
+) -> None:
+    events = database.list_events(conversation_id)
+    if len(events) < 2 or events[-1]["role"] != "assistant":
+        raise HTTPException(status_code=409, detail="There is no completed assistant turn to regenerate")
+    previous = events[-2]
+    if (
+        previous["role"] != role
+        or previous["content"] != _store_content(content)
+        or previous.get("metadata") != metadata
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Regeneration input does not match the latest completed turn",
+        )
+    database.delete_last_event(conversation_id, events[-1]["id"])
+
+
 def _content_text(content: str | list[dict[str, Any]] | None) -> str:
     if content is None:
         return ""
@@ -408,11 +431,16 @@ def create_app(
         tool_definitions: dict[str, dict[str, Any]] | None = None,
         tool_choice: str | dict[str, Any] | None = None,
         generation_options: dict[str, Any] | None = None,
+        regenerate: bool = False,
     ) -> tuple[dict[str, Any], dict[str, Any], str, str | None]:
         if not db.conversation_exists(conversation_id):
             raise HTTPException(status_code=404, detail="Conversation not found")
         lock = conversation_locks.setdefault(conversation_id, asyncio.Lock())
         async with lock:
+            if regenerate:
+                _prepare_regeneration(
+                    db, conversation_id, input_role, content, input_metadata
+                )
             input_event = _append_input_event(
                 db,
                 conversation_id,
@@ -604,10 +632,22 @@ def create_app(
         tool_choice: str | dict[str, Any] | None = None,
         input_role: str = "user",
         input_metadata: dict[str, Any] | None = None,
+        regenerate: bool = False,
     ):
         """Stream direct chat and validated function-tool deltas; persist only on success."""
         lock = conversation_locks.setdefault(conversation_id, asyncio.Lock())
         async with lock:
+            if regenerate:
+                try:
+                    _prepare_regeneration(
+                        db, conversation_id, input_role, content, input_metadata
+                    )
+                except HTTPException as exc:
+                    yield "data: " + json.dumps({
+                        "error": {"message": exc.detail, "type": "invalid_request_error"}
+                    }, ensure_ascii=False) + "\\n\\n"
+                    yield "data: [DONE]\\n\\n"
+                    return
             events = []
             for event in db.list_events(conversation_id):
                 if event["role"] not in ("user", "assistant", "tool"):
