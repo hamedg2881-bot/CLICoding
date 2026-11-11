@@ -318,3 +318,39 @@ def test_get_or_create_conversation_is_idempotent(tmp_path):
 
     assert first["id"] == second["id"] == "stable-open-webui-session"
     assert first["created_at"] == second["created_at"]
+
+
+def test_orchestration_failure_is_logged_without_exposing_request_content(tmp_path, caplog):
+    import logging
+
+    class BrokenOrchestrator:
+        async def run(
+            self, conversation_id, user_request, conversation_context="", user_content=None
+        ):
+            raise RuntimeError("planner transport failed")
+
+    database = Database(str(tmp_path / "orchestration-error.sqlite3"))
+    app = create_app(
+        settings=Settings(database_path=str(tmp_path / "orchestration-error.sqlite3")),
+        database=database,
+        orchestrator=BrokenOrchestrator(),
+    )
+    client = TestClient(app)
+    private_request = "PRIVATE_REQUEST_CONTENT_MUST_NOT_BE_LOGGED"
+
+    with caplog.at_level(logging.ERROR, logger="clicoding_orchestrator.app"):
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "clicoding",
+                "messages": [{"role": "user", "content": private_request}],
+            },
+        )
+
+    assert response.status_code == 502
+    assert response.json() == {"detail": "Multi-model orchestration failed"}
+    assert "Multi-model orchestration failed" in caplog.text
+    assert "conversation_id=" in caplog.text
+    assert "RuntimeError: planner transport failed" in caplog.text
+    assert private_request not in caplog.text
+    assert any(record.exc_info for record in caplog.records)
