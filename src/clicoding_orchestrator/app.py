@@ -1010,8 +1010,12 @@ def create_app(
                         metadata=metadata or None,
                     )
 
+        operation = http_request.headers.get("x-clicoding-operation", "append").strip().lower()
+        if operation not in {"append", "regenerate"}:
+            raise HTTPException(status_code=400, detail="Unsupported X-CLICoding-Operation")
+        regenerate = operation == "regenerate"
         existing_events = db.list_events(conversation_id)
-        if last_message.role == "tool":
+        if not regenerate and last_message.role == "tool":
             try:
                 validate_tool_result(
                     existing_events,
@@ -1021,7 +1025,7 @@ def create_app(
                 )
             except ToolProtocolError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
-        else:
+        elif not regenerate:
             try:
                 if pending_tool_call(existing_events) is not None:
                     raise ToolProtocolError("the pending tool call must be answered before a new user turn")
@@ -1076,7 +1080,12 @@ def create_app(
         if chat_request.stream and not is_specialist:
             assert stream_worker is not None
             stream_events = []
-            for event in existing_events:
+            stream_source_events = (
+                existing_events[:-1]
+                if regenerate and existing_events and existing_events[-1]["role"] == "assistant"
+                else existing_events
+            )
+            for event in stream_source_events:
                 if event["role"] not in ("user", "assistant", "tool"):
                     continue
                 item = {"role": event["role"], "content": _restore_content(event["content"])}
@@ -1119,6 +1128,7 @@ def create_app(
                         }
                         if last_message.role == "tool" else None
                     ),
+                    regenerate,
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -1139,7 +1149,7 @@ def create_app(
             force_orchestration=is_specialist and not tool_definitions,
             input_role=last_message.role, input_metadata=input_metadata,
             tool_definitions=tool_definitions or None, tool_choice=chat_request.tool_choice,
-            generation_options=generation_options,
+            generation_options=generation_options, regenerate=regenerate,
         )
 
         if chat_request.stream:
