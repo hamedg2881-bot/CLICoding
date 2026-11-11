@@ -16,7 +16,7 @@
 - Added regression tests for token lifecycle, privilege separation, revocation, rate-limit isolation and audit redaction.
 - Workstation tool results are recursively redacted for common credential-shaped values before they are returned to the model/client or persisted in the idempotency ledger.
 - SQLite event sequence allocation now uses an immediate write transaction and is tested across independent Database instances under concurrent appends.
-- Cross-process turn-level serialization and cancellation remain open; the production deployment must remain single-worker until that gate is closed.
+- Durable SQLite-backed cross-process turn leases, renewal, expiry recovery and persisted cancellation are implemented; independent-process and two-app cancellation tests pass CI. Keep production single-worker until live supervisor acceptance.
 - Configuration: CLICODING_RATE_LIMIT_PER_WINDOW (default 120) and CLICODING_RATE_LIMIT_WINDOW_SECONDS (default 60).
 - This is source-level security hardening; production key bootstrap, TLS/proxy configuration, audit retention and operational alerting remain deployment gates.
 - No DGX transfer or service/runtime restart has occurred.
@@ -27,7 +27,7 @@
 **Product / public assistant ID:** CDS_AI  
 **Canonical source repository:** https://github.com/hamedg2881-bot/CLICoding  
 **Current candidate:** `feature/cds-ai-release-integration`, stacked on PR #13  
-**Overall state:** The integration candidate combines the conversation-first CDS_AI core, shared assistant policy, regenerate/edit lineage, API cancellation, safe versioned context compaction, specialist/direct streaming fixes, per-user isolation, workstation tools and conservative context budgeting. GitHub CI is being rerun after the integration. No transfer to DGX or service restart has been performed.
+**Overall state:** The integration candidate combines the conversation-first CDS_AI core, shared assistant policy, regenerate/edit lineage, cross-process turn leases/cancellation, safe versioned context compaction, specialist/direct streaming fixes, per-user isolation, workstation tools and conservative context budgeting. Latest GitHub CI passes 164 tests. No transfer to DGX or service restart has been performed.
 
 ## Current implementation snapshot — 2026-11-11
 - Product identity: `CDS_AI`; legacy CLICoding service/database/environment identifiers remain for compatibility.
@@ -37,7 +37,7 @@
 - Workstation execution: approved, allow-listed reference tool host; no arbitrary shell tool.
 - Worker example uses recorded ports 8003/8004/8005 and leaves all workers disabled. Served aliases and tool-call capability require live verification.
 - Attachments: conversation-scoped PNG/JPEG/GIF/WebP upload, bounded size, MIME sniffing, SHA-256 integrity, private local storage, owner-scoped fetch/delete, and attachment-reference resolution into model vision payloads. Automatic expiry/retention and storage backup/restore policy remain open.
-- Remaining source gates include packaged IDE UI, browser/screenshot visual validation, specialist progress, OS-level process sandboxing, audit retention/alerting, multi-process conversation serialization and cross-platform acceptance.
+- Remaining source gates include packaged IDE UI, browser/screenshot visual validation, specialist context compaction/progress events, OS-level process sandboxing, audit retention/alerting and cross-platform acceptance. Live multi-process supervisor acceptance remains a deployment gate.
 - No DGX host files, services, model runtimes or containers have been changed.
 
 ## Confirmed requirements
