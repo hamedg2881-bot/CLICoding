@@ -1009,3 +1009,103 @@ def test_failed_tool_continuation_retry_reuses_the_exact_tool_result(tmp_path):
     assert [event["role"] for event in events] == ["user", "assistant", "tool", "assistant"]
     assert events[2]["content"] == "same tool result"
     assert gateway.calls == 2
+
+
+def test_openai_api_regenerates_only_the_latest_matching_turn(tmp_path):
+    client, gateway = make_client(tmp_path)
+    database = Database(str(tmp_path / "conversations.sqlite3"))
+    conversation_id = database.create_conversation()["id"]
+    request = {
+        "model": "CDS_AI",
+        "conversation_id": conversation_id,
+        "messages": [{"role": "user", "content": "Explain the design"}],
+    }
+
+    first = client.post("/v1/chat/completions", json=request)
+    assert first.status_code == 200
+    assert first.json()["choices"][0]["message"]["content"] == "answer-1"
+
+    regenerated = client.post(
+        "/v1/chat/completions",
+        json=request,
+        headers={"X-CLICoding-Operation": "regenerate"},
+    )
+    assert regenerated.status_code == 200
+    assert regenerated.json()["choices"][0]["message"]["content"] == "answer-2"
+    events = database.list_events(conversation_id)
+    assert [event["role"] for event in events] == ["user", "assistant"]
+    assert events[-1]["content"] == "answer-2"
+    assert gateway.calls[1] == [{"role": "user", "content": "Explain the design"}]
+
+
+def test_openai_api_rejects_regeneration_for_nonmatching_latest_input(tmp_path):
+    client, _ = make_client(tmp_path)
+    database = Database(str(tmp_path / "conversations.sqlite3"))
+    conversation_id = database.create_conversation()["id"]
+    first = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "CDS_AI",
+            "conversation_id": conversation_id,
+            "messages": [{"role": "user", "content": "Original question"}],
+        },
+    )
+    assert first.status_code == 200
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "CDS_AI",
+            "conversation_id": conversation_id,
+            "messages": [{"role": "user", "content": "Different question"}],
+        },
+        headers={"X-CLICoding-Operation": "regenerate"},
+    )
+    assert response.status_code == 409
+    assert [event["role"] for event in database.list_events(conversation_id)] == [
+        "user", "assistant"
+    ]
+
+
+def test_openai_api_can_regenerate_a_previous_tool_call(tmp_path):
+    gateway = ToolSequenceGateway([{
+        "id": "call_regen_1",
+        "type": "function",
+        "function": {"name": "read_file", "arguments": '{"path":"README.md"}'},
+    }])
+    database = Database(str(tmp_path / "tool-regenerate.sqlite3"))
+    conversation_id = database.create_conversation()["id"]
+    registry = WorkerRegistry([
+        Worker(
+            "tool-worker",
+            "http://tool/v1",
+            "tool-model",
+            frozenset({"chat", "tool_calling"}),
+        )
+    ])
+    app = create_app(
+        settings=Settings(database_path=str(tmp_path / "tool-regenerate.sqlite3")),
+        gateway=gateway,
+        database=database,
+        registry=registry,
+    )
+    client = TestClient(app)
+    request = {
+        "model": "CDS_AI",
+        "conversation_id": conversation_id,
+        "messages": [{"role": "user", "content": "Read README"}],
+        "tools": tool_definitions(),
+    }
+    first = client.post("/v1/chat/completions", json=request)
+    assert first.status_code == 200
+    assert first.json()["choices"][0]["finish_reason"] == "tool_calls"
+
+    regenerated = client.post(
+        "/v1/chat/completions",
+        json=request,
+        headers={"X-CLICoding-Operation": "regenerate"},
+    )
+    assert regenerated.status_code == 200
+    assert regenerated.json()["choices"][0]["message"]["content"] == "The file says hello."
+    events = database.list_events(conversation_id)
+    assert [event["role"] for event in events] == ["user", "assistant"]
+    assert events[-1]["content"] == "The file says hello."
