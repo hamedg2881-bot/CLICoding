@@ -276,3 +276,13 @@ User supplied a fresh command output from host `spark-7ea3`:
 - No real Vision image inference has been run yet. Persian/English OCR, screenshot/UI interpretation, coordinate grounding, and error analysis remain the immediate validation gate.
 - Current context caps are deliberately conservative: GPT-OSS 8K, Coder 8K, Vision 4K. Do not increase them until KV-cache and concurrent-load measurements support it.
 - No model files, containers, or images were deleted; Flash assets/runtime remain outside this experiment and untouched.
+
+## 2026-11-11 — Conversation-first redesign started
+
+- User-approved direction: one shared Conversation Engine for Open WebUI and IDE clients; ordinary chat goes directly to a chat-capable model; Planner is reserved for specialist/multi-step work; tool execution remains host-mediated, allow-listed, workspace-scoped, and approval-gated.
+- Architecture decision recorded as D-015; architecture and roadmap updated in PR #6.
+- PR #6 first vertical slice: ordinary text chat bypasses Planner even when planning is enabled; explicit specialist task hints and image turns retain the existing orchestration path; the explicit orchestrated-turn endpoint can force orchestration.
+- Regression tests added for direct-chat bypass and explicit specialist dispatch. CI is pending at the time of this status entry.
+- PR #5 (bounded Planner output repair) passed CI but is a defensive reliability improvement only; it is not the architecture fix and has not been merged.
+- No changes deployed to DGX. ZIP transfer and service restart remain gated on CI, source review, host-side validation, and explicit user approval.
+- Required next work: typed tool-call contracts; safe host-side tool execution and approvals; shared IDE adapter contract; workstation-side workspace/file/diff/build/test/screenshot loop; natural-language specialist routing; true incremental streaming and cancellation.
