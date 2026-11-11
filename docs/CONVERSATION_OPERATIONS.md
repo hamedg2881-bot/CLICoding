@@ -32,4 +32,4 @@ Editing an earlier user message and truncating all later turns is not yet implem
 
 ## Client integration
 
-The Python workstation client currently exposes ordinary chat/tool loops. It does not yet expose a dedicated regenerate method. OpenAI-compatible clients can send the operation header directly. A packaged Open WebUI filter/IDE UI integration for this header remains an acceptance task.
+The Python workstation client currently exposes ordinary chat/tool loops. It does not yet expose a dedicated regenerate method. For Open WebUI requests carrying both configured chat/user identity headers, CDS_AI also detects regeneration when the submitted non-system transcript exactly matches the stored transcript with only the final assistant event removed. An ordinary repeated prompt that includes the previous assistant answer does not match and remains a new turn. Other OpenAI-compatible clients can send the operation header directly.
