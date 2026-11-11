@@ -201,7 +201,7 @@ def create_app(
 
     app = FastAPI(
         title="CDS_AI Assistant",
-        version="0.3.0",
+        version="0.4.0",
         description=(
             "OpenAI-compatible single-assistant API with persistent conversations "
             "and capability-based internal worker selection."
