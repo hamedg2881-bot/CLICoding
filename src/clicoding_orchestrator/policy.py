@@ -29,9 +29,9 @@ def effective_system_messages(
 ) -> list[dict[str, str]]:
     """Append the CDS_AI policy after client system messages so it cannot be overridden."""
     messages = [
-        {"role": "system", "content": str(item.get("content", ""))}
+        {"role": "system", "content": item["content"]}
         for item in (supplied or [])
-        if item.get("role") == "system"
+        if item.get("role") == "system" and isinstance(item.get("content"), str)
     ]
     messages.append({"role": "system", "content": CDS_AI_SYSTEM_PROMPT})
     return messages
