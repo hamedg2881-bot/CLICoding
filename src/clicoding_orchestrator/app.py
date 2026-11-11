@@ -719,11 +719,13 @@ def create_app(
         input_role: str = "user",
         input_metadata: dict[str, Any] | None = None,
         regenerate: bool = False,
+        edit_event_id: str | None = None,
     ):
         """Stream direct chat and validated function-tool deltas; persist only on success."""
         lock = conversation_locks.setdefault(conversation_id, asyncio.Lock())
         async with lock:
             regeneration_event = None
+            edit_target = None
             if regenerate:
                 try:
                     regeneration_event = _prepare_regeneration(
@@ -735,9 +737,20 @@ def create_app(
                     }, ensure_ascii=False) + "\\n\\n"
                     yield "data: [DONE]\\n\\n"
                     return
-            stored_events = db.list_events(conversation_id)
-            if regeneration_event is not None:
-                stored_events = stored_events[:-1]
+                stored_events = db.list_events(conversation_id)[:-1]
+            elif edit_event_id is not None:
+                try:
+                    edit_target, stored_events = _prepare_edit(
+                        db, conversation_id, edit_event_id
+                    )
+                except HTTPException as exc:
+                    yield "data: " + json.dumps({
+                        "error": {"message": exc.detail, "type": "invalid_request_error"}
+                    }, ensure_ascii=False) + "\\n\\n"
+                    yield "data: [DONE]\\n\\n"
+                    return
+            else:
+                stored_events = db.list_events(conversation_id)
             events = []
             for event in stored_events:
                 if event["role"] not in ("user", "assistant", "tool"):
@@ -754,7 +767,9 @@ def create_app(
             history = (
                 list(system_messages) + events
                 if regeneration_event is not None
-                else list(system_messages) + events + [input_message]
+                else (
+                    list(system_messages) + events + [input_message]
+                )
             )
             try:
                 ensure_context_budget(
@@ -771,7 +786,7 @@ def create_app(
                 }, ensure_ascii=False) + "\n\n"
                 yield "data: [DONE]\n\n"
                 return
-            if regeneration_event is None:
+            if regeneration_event is None and edit_target is None:
                 _append_input_event(
                     db,
                     conversation_id,
@@ -972,7 +987,16 @@ def create_app(
                     {"tool_calls": validated_tool_calls, "finish_reason": "tool_calls"}
                     if validated_tool_calls else None
                 )
-                if regeneration_event is not None:
+                if edit_target is not None:
+                    db.delete_events_from(conversation_id, edit_target["id"])
+                    db.append_event(
+                        conversation_id,
+                        role=input_role,
+                        content=_store_content(content),
+                        producer="user",
+                        metadata=input_metadata,
+                    )
+                elif regeneration_event is not None:
                     db.delete_last_event(conversation_id, regeneration_event["id"])
                 db.append_event(
                     conversation_id,
