@@ -204,3 +204,69 @@ def test_openai_gateway_forwards_generation_options_on_non_streaming_requests(mo
     assert payload["temperature"] == 0.2
     assert payload["max_tokens"] == 64
     assert payload["top_p"] == 0.8
+
+
+def test_openai_gateway_streams_structured_tool_call_deltas(monkeypatch):
+    response = FakeResponse([
+        "data: " + json.dumps({"choices": [{
+            "delta": {"tool_calls": [{
+                "index": 0,
+                "id": "call_123",
+                "type": "function",
+                "function": {"name": "read_", "arguments": '{"path":'},
+            }]},
+            "finish_reason": None,
+        }]}),
+        "data: " + json.dumps({"choices": [{
+            "delta": {"tool_calls": [{
+                "index": 0,
+                "function": {"name": "file", "arguments": '"README.md"}'},
+            }]},
+            "finish_reason": None,
+        }]}),
+        "data: " + json.dumps({"choices": [{
+            "delta": {},
+            "finish_reason": "tool_calls",
+        }]}),
+        "data: [DONE]",
+    ])
+    clients = []
+
+    def make_client(**kwargs):
+        client = FakeAsyncClient(response, **kwargs)
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr("clicoding_orchestrator.gateway.httpx.AsyncClient", make_client)
+    gateway = OpenAICompatibleGateway("http://model/v1", "served-model")
+    tools = [{
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+                "additionalProperties": False,
+            },
+        },
+    }]
+
+    async def collect():
+        return [event async for event in gateway.stream_events(
+            [{"role": "user", "content": "Read README"}],
+            tools=tools,
+            tool_choice="auto",
+            options={"max_tokens": 128},
+        )]
+
+    events = asyncio.run(collect())
+    assert events[0]["tool_calls"][0]["function"]["name"] == "read_"
+    assert events[1]["tool_calls"][0]["function"]["arguments"] == '"README.md"}'
+    assert events[2]["finish_reason"] == "tool_calls"
+    assert events[-1] == {"done": True}
+    payload = clients[0].request[2]["json"]
+    assert payload["tools"] == tools
+    assert payload["parallel_tool_calls"] is False
+    assert payload["tool_choice"] == "auto"
+    assert payload["max_tokens"] == 128
