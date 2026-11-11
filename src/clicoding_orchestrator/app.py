@@ -689,20 +689,31 @@ def create_app(
                 if returned_tool_calls else None
             )
             if edit_target is not None:
-                db.delete_events_from(conversation_id, edit_target["id"])
-                input_event = db.append_event(
+                input_event, assistant_event = db.replace_events_from(
                     conversation_id,
-                    role=input_role,
-                    content=_store_content(content),
-                    producer="user",
-                    metadata=input_metadata,
+                    edit_target["id"],
+                    [
+                        {
+                            "role": input_role,
+                            "content": _store_content(content),
+                            "producer": "user",
+                            "metadata": input_metadata,
+                        },
+                        {
+                            "role": "assistant",
+                            "content": answer,
+                            "producer": producer,
+                            "metadata": assistant_metadata,
+                        },
+                    ],
                 )
-            elif regeneration_event is not None:
-                db.delete_last_event(conversation_id, regeneration_event["id"])
-            assistant_event = db.append_event(
-                conversation_id, role="assistant", content=answer,
-                producer=producer, metadata=assistant_metadata,
-            )
+            else:
+                if regeneration_event is not None:
+                    db.delete_last_event(conversation_id, regeneration_event["id"])
+                assistant_event = db.append_event(
+                    conversation_id, role="assistant", content=answer,
+                    producer=producer, metadata=assistant_metadata,
+                )
             return input_event, assistant_event, answer, execution_id
 
     async def stream_direct_turn(
@@ -988,23 +999,34 @@ def create_app(
                     if validated_tool_calls else None
                 )
                 if edit_target is not None:
-                    db.delete_events_from(conversation_id, edit_target["id"])
+                    db.replace_events_from(
+                        conversation_id,
+                        edit_target["id"],
+                        [
+                            {
+                                "role": input_role,
+                                "content": _store_content(content),
+                                "producer": "user",
+                                "metadata": input_metadata,
+                            },
+                            {
+                                "role": "assistant",
+                                "content": "".join(answer_parts),
+                                "producer": worker.id,
+                                "metadata": assistant_metadata,
+                            },
+                        ],
+                    )
+                else:
+                    if regeneration_event is not None:
+                        db.delete_last_event(conversation_id, regeneration_event["id"])
                     db.append_event(
                         conversation_id,
-                        role=input_role,
-                        content=_store_content(content),
-                        producer="user",
-                        metadata=input_metadata,
+                        role="assistant",
+                        content="".join(answer_parts),
+                        producer=worker.id,
+                        metadata=assistant_metadata,
                     )
-                elif regeneration_event is not None:
-                    db.delete_last_event(conversation_id, regeneration_event["id"])
-                db.append_event(
-                    conversation_id,
-                    role="assistant",
-                    content="".join(answer_parts),
-                    producer=worker.id,
-                    metadata=assistant_metadata,
-                )
                 final_chunk = {
                     "id": response_id,
                     "object": "chat.completion.chunk",
