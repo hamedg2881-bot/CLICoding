@@ -1,4 +1,7 @@
+import asyncio
 import json
+
+import httpx
 from fastapi.testclient import TestClient
 
 from clicoding_orchestrator.app import create_app
@@ -1341,3 +1344,252 @@ def test_openai_chat_always_receives_shared_cds_ai_policy(tmp_path):
     assert "right-to-left" in gateway.calls[0][1]["content"]
     assert gateway.calls[0][-1]["role"] == "user"
     assert response.json()["system_messages_applied"] == 2
+
+
+
+def test_long_conversation_is_compacted_without_deleting_original_events(tmp_path):
+    class SummaryGateway:
+        def __init__(self):
+            self.calls = []
+
+        async def complete(self, messages, **kwargs):
+            self.calls.append(messages)
+            if "Summarize the earlier conversation" in messages[0]["content"]:
+                return Completion(
+                    content=(
+                        "Goals: maintain the user's project context. "
+                        "Decisions: previous requirements were reviewed. "
+                        "Completed work: older turns were summarized. "
+                        "Open tasks: respond to the latest request."
+                    ),
+                    model="summary-model",
+                )
+            return Completion(content="answer after compaction", model="chat-model")
+
+    gateway = SummaryGateway()
+    database = Database(str(tmp_path / "compaction.sqlite3"))
+    conversation_id = database.create_conversation()["id"]
+    for index in range(7):
+        database.append_event(conversation_id, "user", f"question-{index} " + ("u" * 400))
+        database.append_event(conversation_id, "assistant", f"answer-{index} " + ("a" * 400))
+    app = create_app(
+        settings=Settings(database_path=str(tmp_path / "compaction.sqlite3")),
+        gateway=gateway,
+        database=database,
+        registry=WorkerRegistry([
+            Worker(
+                "chat", "http://chat/v1", "chat-model", frozenset({"chat"}),
+                context_window_tokens=3072, max_output_tokens=256,
+            )
+        ]),
+    )
+    response = TestClient(app).post(
+        "/v1/chat/completions",
+        json={
+            "model": "CDS_AI",
+            "conversation_id": conversation_id,
+            "messages": [{"role": "user", "content": "current request"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "answer after compaction"
+    assert len(gateway.calls) == 2
+    summary = database.get_latest_summary(conversation_id)
+    assert summary is not None
+    assert summary["through_sequence"] == 10
+    assert "previous requirements were reviewed" in summary["summary"]
+    generation_history = gateway.calls[1]
+    assert any(
+        message["role"] == "system" and "Earlier conversation summary" in message["content"]
+        for message in generation_history
+    )
+    joined = json.dumps(generation_history, ensure_ascii=False)
+    assert "question-5" in joined and "question-6" in joined
+    assert "current request" in joined
+    assert len(database.list_events(conversation_id)) == 16
+
+
+def test_streaming_turn_reuses_saved_context_summary(tmp_path):
+    class SummaryStreamingGateway:
+        def __init__(self):
+            self.summary_calls = 0
+            self.stream_messages = None
+
+        async def complete(self, messages, **kwargs):
+            if "Summarize the earlier conversation" in messages[0]["content"]:
+                self.summary_calls += 1
+                return Completion(content="Summary of earlier decisions.", model="summary-model")
+            raise AssertionError("streaming path must not use buffered generation")
+
+        async def stream(self, messages):
+            self.stream_messages = messages
+            yield "streamed "
+            yield "answer"
+
+    gateway = SummaryStreamingGateway()
+    database = Database(str(tmp_path / "stream-compaction.sqlite3"))
+    conversation_id = database.create_conversation()["id"]
+    for index in range(7):
+        database.append_event(conversation_id, "user", f"question-{index} " + ("u" * 400))
+        database.append_event(conversation_id, "assistant", f"answer-{index} " + ("a" * 400))
+    app = create_app(
+        settings=Settings(database_path=str(tmp_path / "stream-compaction.sqlite3")),
+        gateway=gateway,
+        database=database,
+        registry=WorkerRegistry([
+            Worker(
+                "chat", "http://chat/v1", "chat-model", frozenset({"chat"}),
+                context_window_tokens=3072, max_output_tokens=256,
+            )
+        ]),
+    )
+    response = TestClient(app).post(
+        "/v1/chat/completions",
+        json={
+            "model": "CDS_AI",
+            "conversation_id": conversation_id,
+            "messages": [{"role": "user", "content": "current request"}],
+            "stream": True,
+        },
+    )
+    assert response.status_code == 200
+    assert "streamed " in response.text and "answer" in response.text
+    assert response.text.endswith("data: [DONE]\n\n")
+    assert gateway.summary_calls == 1
+    assert any(
+        message["role"] == "system" and "Earlier conversation summary" in message["content"]
+        for message in gateway.stream_messages
+    )
+
+
+def test_cancel_endpoint_cancels_an_active_openai_turn(tmp_path):
+    class BlockingGateway:
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.cancelled = asyncio.Event()
+
+        async def complete(self, messages, **kwargs):
+            self.started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                self.cancelled.set()
+                raise
+
+    gateway = BlockingGateway()
+    database = Database(str(tmp_path / "cancel-openai.sqlite3"))
+    conversation_id = database.create_conversation()["id"]
+    app = create_app(
+        settings=Settings(database_path=str(tmp_path / "cancel-openai.sqlite3")),
+        gateway=gateway,
+        database=database,
+        registry=WorkerRegistry([
+            Worker("chat", "http://chat/v1", "chat-model", frozenset({"chat"}))
+        ]),
+    )
+
+    async def exercise():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            turn = asyncio.create_task(client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "CDS_AI",
+                    "conversation_id": conversation_id,
+                    "messages": [{"role": "user", "content": "Wait"}],
+                },
+            ))
+            await asyncio.wait_for(gateway.started.wait(), timeout=3)
+            cancelled = await client.post(f"/api/v1/conversations/{conversation_id}/cancel")
+            assert cancelled.status_code == 200
+            assert cancelled.json() == {"cancelled": True}
+            response = await asyncio.wait_for(turn, timeout=3)
+            assert response.status_code == 409
+
+    asyncio.run(exercise())
+    assert gateway.cancelled.is_set()
+    assert [event["role"] for event in database.list_events(conversation_id)] == ["user"]
+
+
+def test_cancel_endpoint_cancels_an_active_conversation_turn_route(tmp_path):
+    class BlockingGateway:
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.cancelled = asyncio.Event()
+
+        async def complete(self, messages, **kwargs):
+            self.started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                self.cancelled.set()
+                raise
+
+    gateway = BlockingGateway()
+    database = Database(str(tmp_path / "cancel-turn.sqlite3"))
+    conversation_id = database.create_conversation()["id"]
+    app = create_app(
+        settings=Settings(database_path=str(tmp_path / "cancel-turn.sqlite3")),
+        gateway=gateway,
+        database=database,
+        registry=WorkerRegistry([
+            Worker("chat", "http://chat/v1", "chat-model", frozenset({"chat"}))
+        ]),
+    )
+
+    async def exercise():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            turn = asyncio.create_task(client.post(
+                f"/api/v1/conversations/{conversation_id}/turns",
+                json={"content": "Wait", "task_type": "chat"},
+            ))
+            await asyncio.wait_for(gateway.started.wait(), timeout=3)
+            cancelled = await client.post(f"/api/v1/conversations/{conversation_id}/cancel")
+            assert cancelled.status_code == 200
+            assert cancelled.json() == {"cancelled": True}
+            response = await asyncio.wait_for(turn, timeout=3)
+            assert response.status_code == 409
+
+    asyncio.run(exercise())
+    assert gateway.cancelled.is_set()
+    assert [event["role"] for event in database.list_events(conversation_id)] == ["user"]
+
+
+def test_specialist_stream_uses_valid_sse_delimiters(tmp_path):
+    class RecordingOrchestrator:
+        async def run(self, conversation_id, user_request, context, user_content=None):
+            from types import SimpleNamespace
+            return SimpleNamespace(answer="specialist-result", execution_id="specialist-execution")
+
+    database = Database(str(tmp_path / "specialist-stream.sqlite3"))
+    app = create_app(
+        settings=Settings(database_path=str(tmp_path / "specialist-stream.sqlite3")),
+        database=database,
+        registry=WorkerRegistry([
+            Worker("chat", "http://chat/v1", "chat-model", frozenset({"chat"}))
+        ]),
+        orchestrator=RecordingOrchestrator(),
+    )
+    response = TestClient(app).post(
+        "/v1/chat/completions",
+        json={
+            "model": "CDS_AI",
+            "task_type": "coding",
+            "messages": [{"role": "user", "content": "Implement this"}],
+            "stream": True,
+        },
+    )
+    assert response.status_code == 200
+    assert response.text.endswith("data: [DONE]\n\n")
+    frames = [frame for frame in response.text.split("\n\n") if frame]
+    assert len(frames) == 4
+    payloads = [
+        json.loads(frame.removeprefix("data: "))
+        for frame in frames if frame.startswith("data: {")
+    ]
+    assert payloads[1]["choices"][0]["delta"]["content"] == "specialist-result"
+    assert payloads[2]["choices"][0]["finish_reason"] == "stop"
