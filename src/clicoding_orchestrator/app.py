@@ -1130,8 +1130,8 @@ def create_app(
                     },
                 ]
                 for chunk in chunks:
-                    yield "data: " + json.dumps(chunk, ensure_ascii=False, separators=(",", ":")) + "\\n\\n"
-                yield "data: [DONE]\\n\\n"
+                    yield "data: " + json.dumps(chunk, ensure_ascii=False, separators=(",", ":")) + "\n\n"
+                yield "data: [DONE]\n\n"
 
             return StreamingResponse(
                 event_stream(),
