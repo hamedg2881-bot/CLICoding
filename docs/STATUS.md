@@ -328,3 +328,14 @@ User supplied a fresh command output from host `spark-7ea3`:
 - Automatic history summarization/compaction is not implemented. Token estimation is not tokenizer-specific and must be replaced/refined per actual runtime before larger context windows are enabled.
 - Latest CI evidence for the workstation adapter before context-budgeting work: run 43015872942, **98 passed, 1 warning**. Context-budgeting branch is awaiting its own CI run.
 - No transfer to DGX Spark or changes to any DGX runtime/service have been made.
+
+
+## 2026-11-11 — Incremental tool-call SSE
+
+- Added structured upstream SSE parsing for partial OpenAI function-call deltas.
+- The OpenAI-compatible API now forwards `delta.tool_calls`, reassembles and validates the completed function call, and persists it only after a successful stream.
+- Streamed tool-result continuation is supported; tool messages remain correlated to the exact pending call.
+- Direct streaming still propagates client cancellation and does not persist a partial assistant event.
+- Parallel tool calls remain disabled; one outstanding tool call per assistant turn is enforced.
+- The Python workstation reference client currently uses buffered HTTP tool rounds; Open WebUI-compatible API clients can use streamed tool-call deltas.
+- Live DGX runtime compatibility remains unverified and no production worker has been marked `tool_calling`.
