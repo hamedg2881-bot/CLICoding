@@ -976,6 +976,19 @@ def create_app(
                 }, ensure_ascii=False) + "\n\n"
                 yield "data: [DONE]\n\n"
                 return
+            except GatewayError:
+                logger.exception(
+                    "Context compaction failed during streaming (conversation_id=%s)",
+                    conversation_id,
+                )
+                yield "data: " + json.dumps({
+                    "error": {
+                        "message": "The assistant could not safely prepare conversation context.",
+                        "type": "server_error",
+                    }
+                }, ensure_ascii=False) + "\n\n"
+                yield "data: [DONE]\n\n"
+                return
             if regeneration_event is None and edit_target is None:
                 _append_input_event(
                     db,
