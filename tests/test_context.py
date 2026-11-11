@@ -51,3 +51,44 @@ def test_context_budget_rejects_invalid_limits():
         ensure_context_budget([], context_window_tokens=512, reserved_output_tokens=64)
     with pytest.raises(ValueError):
         ensure_context_budget([], context_window_tokens=2048, reserved_output_tokens=2048)
+
+
+
+def test_compaction_cutoff_preserves_the_latest_complete_user_turns():
+    from clicoding_orchestrator.context import select_compaction_cutoff
+
+    events = []
+    for index in range(5):
+        events.extend([
+            {"role": "user", "content": f"question-{index}"},
+            {"role": "assistant", "content": f"answer-{index}"},
+        ])
+    cutoff = select_compaction_cutoff(events, keep_recent_user_turns=3)
+    assert cutoff == 4
+    assert events[cutoff]["role"] == "user"
+    assert [event["content"] for event in events[cutoff:]] == [
+        "question-2", "answer-2", "question-3", "answer-3", "question-4", "answer-4"
+    ]
+
+
+def test_compaction_cutoff_does_not_summarize_when_recent_history_is_short():
+    from clicoding_orchestrator.context import select_compaction_cutoff
+
+    assert select_compaction_cutoff([
+        {"role": "user", "content": "question"},
+        {"role": "assistant", "content": "answer"},
+    ]) is None
+
+
+def test_summary_redaction_masks_common_credential_shapes():
+    from clicoding_orchestrator.context import redact_sensitive_text
+
+    value = (
+        "api_key=super-secret-value password:topsecret "
+        "Bearer abcdefghijklmnopqrstuvwxyz ghp_123456789012345678901234"
+    )
+    redacted = redact_sensitive_text(value)
+    assert "super-secret-value" not in redacted
+    assert "topsecret" not in redacted
+    assert "abcdefghijklmnopqrstuvwxyz" not in redacted
+    assert "ghp_123456789012345678901234" not in redacted
