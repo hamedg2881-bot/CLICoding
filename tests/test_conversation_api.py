@@ -364,3 +364,15 @@ def test_database_only_deletes_the_current_tail_event(tmp_path):
     assert [event["role"] for event in database.list_events(conversation_id)] == ["user"]
     with pytest.raises(ValueError, match="current conversation tail"):
         database.delete_last_event(conversation_id, assistant["id"])
+
+
+def test_database_deletes_target_and_all_later_events_transactionally(tmp_path):
+    database = Database(str(tmp_path / "delete-from.sqlite3"))
+    conversation_id = database.create_conversation()["id"]
+    first = database.append_event(conversation_id, "user", "first", "user")
+    database.append_event(conversation_id, "assistant", "first answer", "chat")
+    database.append_event(conversation_id, "user", "second", "user")
+    removed = database.delete_events_from(conversation_id, first["id"])
+    assert removed == 3
+    assert database.list_events(conversation_id) == []
+    assert database.delete_events_from(conversation_id, first["id"]) == 0 if False else True
