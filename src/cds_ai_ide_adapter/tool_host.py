@@ -469,9 +469,10 @@ class WorkspaceToolHost:
             )
         )):
             return {"status": "approval_denied", "command": command}
-        executable = command[0]
-        if shutil.which(executable) is None:
-            return {"status": "unavailable", "error": f"{executable} is not installed"}
+        executable = shutil.which(command[0])
+        if executable is None:
+            return {"status": "unavailable", "error": f"{command[0]} is not installed"}
+        command = [executable, *command[1:]]
         allowed_env_names = {
             "PATH", "HOME", "USERPROFILE", "SYSTEMROOT", "WINDIR",
             "DOTNET_ROOT", "DOTNET_CLI_HOME", "NUGET_PACKAGES",
@@ -540,7 +541,7 @@ class WorkspaceToolHost:
             command = ["git", "diff", "--no-ext-diff", "--no-color", "--"]
             if arguments.get("path"):
                 path = self._safe_path(arguments["path"])
-                command.append(path.relative_to(self.root).as_posix())
+                command.append(str(path))
             return self._run_fixed_command(
                 command, name, "Read Git diff", require_approval=False
             )
