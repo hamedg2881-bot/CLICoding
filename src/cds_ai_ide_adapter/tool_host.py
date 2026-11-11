@@ -149,6 +149,9 @@ class WorkspaceToolHost:
         self.root = root
         self.workspace_id = workspace_id
         self.store = store
+        store_path = Path(store.path).resolve()
+        if store_path == root or root in store_path.parents:
+            raise ValueError("tool idempotency store must be outside the active workspace")
         self.approval = approval
         self.max_file_bytes = max_file_bytes
         self.max_output_chars = max_output_chars
@@ -368,14 +371,16 @@ class WorkspaceToolHost:
         listing = self._list_files(directory)
         matches: list[dict[str, Any]] = []
         scanned = 0
+        scanned_bytes = 0
         for relative in listing["files"]:
             scanned += 1
-            if scanned > 500:
+            if scanned > 200 or scanned_bytes >= 20_000_000:
                 break
             try:
                 item = self._read_file(relative)
             except (OSError, ValueError, PermissionError):
                 continue
+            scanned_bytes += item["bytes"]
             for line_number, line in enumerate(item["content"].splitlines(), start=1):
                 if query in line:
                     matches.append({
@@ -388,7 +393,7 @@ class WorkspaceToolHost:
         return {
             "status": "ok",
             "matches": matches,
-            "truncated": listing["truncated"] or scanned > 500,
+            "truncated": listing["truncated"] or scanned > 200 or scanned_bytes >= 20_000_000,
         }
 
     def _write_file(
@@ -404,6 +409,8 @@ class WorkspaceToolHost:
         if exists:
             if not target.is_file():
                 raise ValueError("target must be a regular file")
+            if target.stat().st_size > 10_000_000:
+                raise ValueError("existing file is too large to replace safely")
             if expected_sha256 is None:
                 raise ValueError("expected_sha256 is required before overwriting an existing file")
             before_sha = hashlib.sha256(target.read_bytes()).hexdigest()
@@ -434,6 +441,8 @@ class WorkspaceToolHost:
                 stream.write(content)
                 stream.flush()
                 os.fsync(stream.fileno())
+            if target.is_symlink():
+                raise ValueError("symbolic links are not allowed in workspace tool paths")
             os.replace(temporary, target)
         finally:
             if os.path.exists(temporary):
@@ -446,16 +455,20 @@ class WorkspaceToolHost:
         }
 
     def _run_fixed_command(
-        self, command: list[str], tool_name: str, summary: str
+        self,
+        command: list[str],
+        tool_name: str,
+        summary: str,
+        require_approval: bool = True,
     ) -> dict[str, Any]:
-        if self.approval is None or not self.approval(
+        if require_approval and (self.approval is None or not self.approval(
             ToolApproval(
                 tool_name=tool_name,
                 workspace_id=self.workspace_id,
                 summary=summary,
                 details={"command": command, "cwd": str(self.root)},
             )
-        ):
+        )):
             return {"status": "approval_denied", "command": command}
         executable = command[0]
         if shutil.which(executable) is None:
@@ -522,13 +535,16 @@ class WorkspaceToolHost:
                 ["git", "status", "--short", "--branch"],
                 name,
                 "Read Git status",
+                require_approval=False,
             )
         if name == "workspace_git_diff":
             command = ["git", "diff", "--no-ext-diff", "--no-color", "--"]
             if arguments.get("path"):
                 path = self._safe_path(arguments["path"])
                 command.append(path.relative_to(self.root).as_posix())
-            return self._run_fixed_command(command, name, "Read Git diff")
+            return self._run_fixed_command(
+                command, name, "Read Git diff", require_approval=False
+            )
         if name in {"workspace_dotnet_build", "workspace_dotnet_test"}:
             project = arguments.get("project")
             command = ["dotnet", "build" if name.endswith("build") else "test"]
