@@ -20,8 +20,8 @@ from .tool_protocol import (
 from .config import Settings
 from .policy import effective_system_messages
 from .context import (
-    ContextBudgetExceeded, ensure_context_budget, redact_sensitive_text,
-    select_compaction_cutoff,
+    ContextBudgetExceeded, ensure_context_budget, redact_sensitive_data,
+    redact_sensitive_text, select_compaction_cutoff,
 )
 from .database import Database
 from .gateway import GatewayError, ModelGateway, OpenAICompatibleGateway
@@ -388,8 +388,12 @@ def create_app(
                 content = redact_sensitive_text(content if isinstance(content, str) else "")
             item = {"role": event["role"], "content": content}
             if event.get("metadata"):
-                item.update(event["metadata"])
-                if event["role"] == "assistant" and event["metadata"].get("tool_calls"):
+                metadata = (
+                    redact_sensitive_data(event["metadata"])
+                    if for_summary else event["metadata"]
+                )
+                item.update(metadata)
+                if event["role"] == "assistant" and metadata.get("tool_calls"):
                     item["content"] = None
             return item
 
