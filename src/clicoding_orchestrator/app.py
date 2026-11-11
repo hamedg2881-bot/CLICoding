@@ -308,31 +308,31 @@ def create_app(
             if matched_user is not None:
                 request.state.principal_id = matched_user
             elif config.api_key and hmac.compare_digest(token, config.api_key):
-                request.state.principal_id = "admin"
-                request.state.is_admin = True
+                if config.user_api_keys:
+                    request.state.principal_id = "admin"
+                    request.state.is_admin = True
+                elif config.trust_user_header:
+                    # Open WebUI can supply its authenticated user ID through a
+                    # server-side header template. Trust it only behind a private,
+                    # trusted proxy that strips client-supplied identity headers.
+                    header_user = request.headers.get("x-clicoding-user-id", "").strip()
+                    if header_user:
+                        if len(header_user) > 128 or any(ch.isspace() for ch in header_user):
+                            return JSONResponse(
+                                status_code=400,
+                                content={"detail": "Invalid trusted user identity header"},
+                            )
+                        request.state.principal_id = header_user
+                    else:
+                        request.state.principal_id = "shared"
+                else:
+                    request.state.principal_id = "shared"
             else:
                 return JSONResponse(
                     status_code=401,
                     content={"detail": "Invalid or missing bearer token"},
                     headers={"WWW-Authenticate": "Bearer"},
                 )
-
-            # Open WebUI can supply its authenticated user ID through a server-side
-            # header template. This is trusted only when explicitly enabled; the
-            # service must then be reachable exclusively through a trusted proxy.
-            if (
-                config.trust_user_header
-                and not request.state.is_admin
-                and not config.user_api_keys
-            ):
-                header_user = request.headers.get("x-clicoding-user-id", "").strip()
-                if header_user:
-                    if len(header_user) > 128 or any(ch.isspace() for ch in header_user):
-                        return JSONResponse(
-                            status_code=400,
-                            content={"detail": "Invalid trusted user identity header"},
-                        )
-                    request.state.principal_id = header_user
         return await call_next(request)
 
     def _owner_scope(request: Request) -> str | None:
