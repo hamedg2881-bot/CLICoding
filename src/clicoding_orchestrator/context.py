@@ -92,14 +92,12 @@ def select_compaction_cutoff(
 
 
 _SECRET_ASSIGNMENT = re.compile(
-    r"(?i)\b(api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|secret|authorization)"
-    r"(\s*[:=]\s*)([^\s,;\\"']+)"
+    r"(?i)(api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|secret|authorization)(\s*[:=]\s*)([^\s,;]+)"
 )
-_BEARER_TOKEN = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{16,}")
+_BEARER_TOKEN = re.compile(r"(?i)Bearer\s+[A-Za-z0-9._~+/=-]{16,}")
 _GITHUB_TOKEN = re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b")
 _OPENAI_TOKEN = re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b")
 _AWS_ACCESS_KEY = re.compile(r"\bAKIA[0-9A-Z]{16}\b")
-
 
 def redact_sensitive_text(value: str) -> str:
     """Redact common credential-shaped values before storing generated summaries."""
