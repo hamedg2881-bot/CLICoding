@@ -94,3 +94,81 @@ def test_openai_gateway_rejects_incomplete_sse_stream(monkeypatch):
 
     with pytest.raises(GatewayError, match="before"):
         asyncio.run(collect())
+
+
+class FakeJSONResponse:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self.payload
+
+
+class FakeCompleteClient:
+    def __init__(self, response, **kwargs):
+        self.response = response
+        self.request = None
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
+
+    async def post(self, url, **kwargs):
+        self.request = (url, kwargs)
+        return self.response
+
+
+def test_openai_gateway_forwards_tools_and_parses_tool_call_response(monkeypatch):
+    tool_calls = [{
+        "id": "call_123",
+        "type": "function",
+        "function": {"name": "read_file", "arguments": '{"path":"README.md"}'},
+    }]
+    response = FakeJSONResponse({
+        "model": "served-model",
+        "choices": [{
+            "message": {"role": "assistant", "content": None, "tool_calls": tool_calls},
+            "finish_reason": "tool_calls",
+        }],
+    })
+    clients = []
+
+    def make_client(**kwargs):
+        client = FakeCompleteClient(response, **kwargs)
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr("clicoding_orchestrator.gateway.httpx.AsyncClient", make_client)
+    gateway = OpenAICompatibleGateway("http://model/v1", "served-model")
+    tools = [{
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+                "additionalProperties": False,
+            },
+        },
+    }]
+
+    completion = asyncio.run(gateway.complete(
+        [{"role": "user", "content": "Read README"}],
+        tools=tools,
+        tool_choice="auto",
+    ))
+
+    assert completion.content == ""
+    assert completion.tool_calls == tool_calls
+    assert completion.finish_reason == "tool_calls"
+    url, request = clients[0].request
+    assert url == "http://model/v1/chat/completions"
+    assert request["json"]["tools"] == tools
+    assert request["json"]["tool_choice"] == "auto"
+    assert request["json"]["parallel_tool_calls"] is False
