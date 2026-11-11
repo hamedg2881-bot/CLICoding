@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from .context import ContextBudgetExceeded, ensure_context_budget, estimate_message_tokens, redact_sensitive_text
 from .database import Database
@@ -218,6 +218,7 @@ class MultiModelOrchestrator:
         user_request: str,
         conversation_context: str = "",
         user_content: str | list[dict[str, Any]] | None = None,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> OrchestrationResult:
         planning_worker = self.router.planning_worker()
 
@@ -269,11 +270,30 @@ class MultiModelOrchestrator:
         persisted = self.database.create_execution(conversation_id, plan.model_dump())
         execution_id = persisted["id"]
 
+        def report_progress(event_type: str, **details: Any) -> None:
+            if progress_callback is None:
+                return
+            try:
+                progress_callback({
+                    "type": event_type,
+                    "execution_id": execution_id,
+                    **details,
+                })
+            except Exception:
+                # Progress delivery must never fail or cancel the underlying work.
+                return
+
+        report_progress(
+            "plan.created",
+            task_count=len(plan.tasks),
+        )
+
         async def run_task(task, dependency_outputs: dict[str, str]) -> str:
             worker = self.router.select_capabilities(set(task.required_capabilities))
             self.database.update_execution_task(
                 execution_id, task.task_id, "running", worker_id=worker.id
             )
+            report_progress("task.started", task_id=task.task_id)
             fixed_task_context = (
                 f"Original user request (authoritative; preserve all explicit requirements):\n{user_request}\n\n"
                 f"Overall goal:\n{plan.goal}\n\n"
@@ -360,6 +380,7 @@ class MultiModelOrchestrator:
                     execution_id, task.task_id, "succeeded",
                     output=output, worker_id=worker.id
                 )
+                report_progress("task.succeeded", task_id=task.task_id)
                 return output
             except Exception as exc:
                 self.database.update_execution_task(
@@ -386,6 +407,12 @@ class MultiModelOrchestrator:
             else "failed"
         )
         self.database.finish_execution(execution_id, status)
+        for task_id, result in execution.results.items():
+            if result.status == "failed":
+                report_progress("task.failed", task_id=task_id)
+            elif result.status in {"blocked", "cancelled"}:
+                report_progress("task.blocked", task_id=task_id)
+        report_progress("execution.completed", status=status)
 
         successful = [
             f"[{task_id}] {result.output}"
