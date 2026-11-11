@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 from clicoding_orchestrator.app import create_app
 from clicoding_orchestrator.config import Settings
 from clicoding_orchestrator.database import Database
+from clicoding_orchestrator.policy import CDS_AI_SYSTEM_PROMPT
 from clicoding_orchestrator.gateway import Completion
 from clicoding_orchestrator.registry import Worker, WorkerRegistry
 
