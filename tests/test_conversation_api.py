@@ -523,3 +523,86 @@ def test_cancel_from_second_app_instance_reaches_active_turn(tmp_path):
         )
 
     asyncio.run(scenario())
+
+
+def test_specialist_stream_includes_live_progress_events(tmp_path):
+    import asyncio
+    import httpx
+    from types import SimpleNamespace
+
+    async def scenario():
+        database_path = str(tmp_path / "specialist-progress.sqlite3")
+        database = Database(database_path)
+        registry = WorkerRegistry([
+            Worker(
+                "planner", "http://planner/v1", "planner",
+                frozenset({"planning"}), priority=1,
+            ),
+            Worker(
+                "coder", "http://coder/v1", "coder",
+                frozenset({"coding"}),
+            ),
+        ])
+
+        class ProgressOrchestrator:
+            async def run(
+                self, conversation_id, user_request, conversation_context="",
+                user_content=None, progress_callback=None,
+            ):
+                assert progress_callback is not None
+                progress_callback({
+                    "type": "plan.created",
+                    "execution_id": "execution-progress",
+                    "task_count": 1,
+                })
+                progress_callback({
+                    "type": "task.started",
+                    "execution_id": "execution-progress",
+                    "task_id": "implement",
+                })
+                progress_callback({
+                    "type": "task.succeeded",
+                    "execution_id": "execution-progress",
+                    "task_id": "implement",
+                })
+                progress_callback({
+                    "type": "execution.completed",
+                    "execution_id": "execution-progress",
+                    "status": "succeeded",
+                })
+                return SimpleNamespace(
+                    execution_id="execution-progress",
+                    answer="The specialist task completed successfully.",
+                )
+
+        app = create_app(
+            settings=Settings(database_path=database_path),
+            database=database,
+            registry=registry,
+            orchestrator=ProgressOrchestrator(),
+        )
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "CDS_AI",
+                    "task_type": "coding",
+                    "stream": True,
+                    "messages": [{
+                        "role": "user",
+                        "content": "Implement the requested feature",
+                    }],
+                },
+            )
+
+        assert response.status_code == 200
+        assert "event: progress" in response.text
+        assert '"type":"task.started"' in response.text
+        assert '"type":"execution.completed"' in response.text
+        assert "The specialist task completed successfully." in response.text
+        assert "data: [DONE]" in response.text
+
+    asyncio.run(scenario())
