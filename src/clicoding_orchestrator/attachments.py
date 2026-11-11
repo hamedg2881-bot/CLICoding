@@ -31,7 +31,7 @@ def sniff_image_type(data: bytes) -> tuple[str, str]:
 
 
 def safe_filename(value: str | None) -> str:
-    candidate = Path(value or "image").name
+    candidate = (value or "image").replace("\\", "/").split("/")[-1]
     cleaned = "".join(
         character for character in candidate
         if character.isprintable() and character not in '/\\\"'
