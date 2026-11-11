@@ -158,6 +158,34 @@ def _restore_content(content: str) -> str | list[dict[str, Any]]:
     return value if isinstance(value, list) else content
 
 
+def _append_input_event(
+    database: Database,
+    conversation_id: str,
+    role: str,
+    content: str | list[dict[str, Any]] | None,
+    producer: str,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Reuse an identical unfinished input event after a failed or cancelled request."""
+    stored_content = _store_content(content)
+    events = database.list_events(conversation_id)
+    if events:
+        last = events[-1]
+        if (
+            last["role"] == role
+            and last["content"] == stored_content
+            and last.get("metadata") == metadata
+        ):
+            return last
+    return database.append_event(
+        conversation_id,
+        role=role,
+        content=stored_content,
+        producer=producer,
+        metadata=metadata,
+    )
+
+
 def _content_text(content: str | list[dict[str, Any]] | None) -> str:
     if content is None:
         return ""
@@ -326,12 +354,13 @@ def create_app(
             raise HTTPException(status_code=404, detail="Conversation not found")
         lock = conversation_locks.setdefault(conversation_id, asyncio.Lock())
         async with lock:
-            input_event = db.append_event(
+            input_event = _append_input_event(
+                db,
                 conversation_id,
-                role=input_role,
-                content=_store_content(content),
-                producer="user" if input_role == "user" else "tool-client",
-                metadata=input_metadata,
+                input_role,
+                content,
+                "user" if input_role == "user" else "tool-client",
+                input_metadata,
             )
             events = []
             for event in db.list_events(conversation_id):
@@ -549,12 +578,13 @@ def create_app(
                 }, ensure_ascii=False) + "\n\n"
                 yield "data: [DONE]\n\n"
                 return
-            db.append_event(
+            _append_input_event(
+                db,
                 conversation_id,
-                role=input_role,
-                content=_store_content(content),
-                producer="user" if input_role == "user" else "tool-client",
-                metadata=input_metadata,
+                input_role,
+                content,
+                "user" if input_role == "user" else "tool-client",
+                input_metadata,
             )
             role_chunk = {
                 "id": response_id,
