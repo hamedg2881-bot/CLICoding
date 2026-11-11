@@ -596,8 +596,10 @@ def create_app(
                                     if not isinstance(deltas, list):
                                         raise GatewayError("Upstream returned invalid tool-call deltas")
                                     for delta in deltas:
+                                        if not isinstance(delta, dict):
+                                            raise GatewayError("Upstream returned an invalid tool-call delta")
                                         index = delta.get("index", 0)
-                                        if not isinstance(index, int) or index < 0:
+                                        if not isinstance(index, int) or isinstance(index, bool) or index < 0:
                                             raise GatewayError("Upstream returned an invalid tool-call index")
                                         current = tool_calls_by_index.setdefault(
                                             index,
@@ -607,14 +609,22 @@ def create_app(
                                                 "function": {"name": "", "arguments": ""},
                                             },
                                         )
+                                        if len(tool_calls_by_index) > 1:
+                                            raise GatewayError("Only one tool call is supported per assistant turn")
                                         if delta.get("id"):
                                             current["id"] = delta["id"]
                                         if delta.get("type"):
                                             current["type"] = delta["type"]
                                         function_delta = delta.get("function") or {}
+                                        if not isinstance(function_delta, dict):
+                                            raise GatewayError("Upstream returned an invalid function delta")
                                         if function_delta.get("name"):
+                                            if not isinstance(function_delta["name"], str):
+                                                raise GatewayError("Upstream returned an invalid function name delta")
                                             current["function"]["name"] += function_delta["name"]
                                         if function_delta.get("arguments"):
+                                            if not isinstance(function_delta["arguments"], str):
+                                                raise GatewayError("Upstream returned invalid function arguments")
                                             current["function"]["arguments"] += function_delta["arguments"]
                                     chunk = {
                                         "id": response_id,
