@@ -333,7 +333,6 @@ class WorkspaceToolHost:
             dirs[:] = [
                 name for name in dirs
                 if name not in self.IGNORED_DIRECTORIES
-                and not name.startswith(".")
                 and not (current_path / name).is_symlink()
             ]
             for name in files:
