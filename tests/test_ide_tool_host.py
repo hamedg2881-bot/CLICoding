@@ -131,12 +131,13 @@ def test_workspace_write_defaults_to_denied_and_checks_stale_hash(tmp_path):
     assert target.read_text(encoding="utf-8") == "current"
 
 
-def test_workspace_tool_catalog_has_no_general_shell_tool():
-    root = __import__("pathlib").Path.cwd()
+def test_workspace_tool_catalog_has_no_general_shell_tool(tmp_path):
+    root = tmp_path / "workspace"
+    root.mkdir()
     host = WorkspaceToolHost(
         root,
         "catalog-test",
-        ToolExecutionStore(":memory:") if False else ToolExecutionStore("/tmp/cds-ai-test-ledger.sqlite3"),
+        ToolExecutionStore(tmp_path / "catalog-ledger.sqlite3"),
     )
     names = {item["function"]["name"] for item in host.definitions}
     assert "workspace_read_file" in names
