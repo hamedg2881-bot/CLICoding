@@ -35,13 +35,15 @@
 - [x] Writes and build/test require explicit approval; tool idempotency ledger is durable.
 - [x] Summary invalidation when edited/regenerated/deleted history intersects covered events.
 - [ ] Close filesystem path-validation TOCTOU races with platform-appropriate safe APIs.
-- [ ] Expand secret detection and redact tool outputs before persistence/transmission.
+- [x] Recursively redact common credential-shaped values from workstation tool results before persistence/transmission.
+- [ ] Broaden secret scanning for nonstandard credentials, connection strings and high-entropy values.
 - [ ] OS-level process sandboxing and Windows/macOS/Linux adapter tests.
 - [x] Durable per-principal API rate limits backed by SQLite transactions.
 - [x] Administrator token issue/list/revoke API; only token hashes are stored and plaintext is returned once.
 - [x] Paginated administrator-only audit export without request bodies or bearer-token values.
 - [ ] Audit retention/export signing and alerting policy.
-- [ ] Multi-process conversation locking or explicitly enforce a single-process deployment.
+- [x] Serialize event-sequence allocation across SQLite connections with immediate write transactions.
+- [ ] Add cross-process conversation turn locks/cancellation or enforce a single-worker deployment; current per-conversation locks and active-turn cancellation are process-local.
 - [ ] Prove trusted Open WebUI headers are stripped/reinjected by the actual private proxy; otherwise use per-user tokens.
 
 ## Live DGX runtime acceptance

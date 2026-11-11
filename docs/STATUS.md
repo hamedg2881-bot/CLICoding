@@ -5,6 +5,9 @@
 - Added per-principal fixed-window rate limiting using SQLite transactions with an immediate write lock, so concurrent application processes share the same admission counter.
 - Added request correlation IDs and an administrator-only paginated audit endpoint. Audit records contain principal, route, method, status and timestamp only; request bodies, prompts, bearer tokens and credentials are not recorded.
 - Added regression tests for token lifecycle, privilege separation, revocation, rate-limit isolation and audit redaction.
+- Workstation tool results are recursively redacted for common credential-shaped values before they are returned to the model/client or persisted in the idempotency ledger.
+- SQLite event sequence allocation now uses an immediate write transaction and is tested across independent Database instances under concurrent appends.
+- Cross-process turn-level serialization and cancellation remain open; the production deployment must remain single-worker until that gate is closed.
 - Configuration: CLICODING_RATE_LIMIT_PER_WINDOW (default 120) and CLICODING_RATE_LIMIT_WINDOW_SECONDS (default 60).
 - This is source-level security hardening; production key bootstrap, TLS/proxy configuration, audit retention and operational alerting remain deployment gates.
 - No DGX transfer or service/runtime restart has occurred.

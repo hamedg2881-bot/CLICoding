@@ -6,6 +6,8 @@
 
 The DGX hosts CDS_AI inference and conversation orchestration. This adapter runs on the developer workstation and is bound to one explicitly selected workspace root. It never accepts a workspace path from model-generated arguments and exposes no general-purpose shell tool.
 
+Tool results are recursively redacted for common credential-shaped values before being cached or returned. This is defense in depth, not a guarantee that every proprietary or nonstandard secret format is detected; never expose secret-bearing files to the agent.
+
 The adapter's idempotency SQLite file must be stored outside the workspace. The workspace root is resolved at startup and every file path is checked as a relative path under that root. Symlinks, traversal, common credential files, and secret directories are blocked.
 
 ## Included tools
