@@ -1187,7 +1187,7 @@ def test_openwebui_regeneration_is_detected_from_exact_submitted_history(tmp_pat
             "model": "CDS_AI",
             "messages": [
                 {"role": "user", "content": "Repeat this question"},
-                {"role": "assistant", "content": "answer-2"},
+                {"role": "assistant", "content": "reply-2"},
                 {"role": "user", "content": "Repeat this question"},
             ],
         },
@@ -1196,6 +1196,6 @@ def test_openwebui_regeneration_is_detected_from_exact_submitted_history(tmp_pat
     assert third.status_code == 200
     assert gateway.calls[2] == [
         {"role": "user", "content": "Repeat this question"},
-        {"role": "assistant", "content": "answer-2"},
+        {"role": "assistant", "content": "reply-2"},
         {"role": "user", "content": "Repeat this question"},
     ]
