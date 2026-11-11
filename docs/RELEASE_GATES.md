@@ -45,7 +45,7 @@
 - [ ] Audit retention/export signing and alerting policy.
 - [x] Serialize event-sequence allocation across SQLite connections with immediate write transactions.
 - [x] Durable SQLite-backed cross-process conversation turn leases with atomic acquisition, periodic renewal, expiry recovery, and cancellation requests observed by the owning API process; direct streaming and buffered/specialist turn paths share the lease gate. The lease monitor fails closed on storage/renewal errors, and caller disconnects cancel the child turn.
-- [ ] Verify the cross-process lease and two-app cancellation tests in CI; retain single-worker deployment until live multi-process acceptance is complete.
+- [x] Cross-process lease exclusion/recovery and two-app cancellation tests pass in CI; retain single-worker deployment until live multi-process acceptance is complete.
 - [ ] Prove trusted Open WebUI headers are stripped/reinjected by the actual private proxy; otherwise use per-user tokens.
 
 ## Live DGX runtime acceptance
