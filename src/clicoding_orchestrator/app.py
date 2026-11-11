@@ -307,6 +307,7 @@ def create_app(
             )
             if matched_user is not None:
                 request.state.principal_id = matched_user
+                request.state.is_admin = matched_user == "admin"
             elif config.api_key and hmac.compare_digest(token, config.api_key):
                 if config.trust_user_header:
                     # Open WebUI can supply its authenticated user ID through a
