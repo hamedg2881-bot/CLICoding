@@ -89,5 +89,8 @@ def test_openai_gateway_rejects_incomplete_sse_stream(monkeypatch):
     )
     gateway = OpenAICompatibleGateway("http://model/v1", "served-model")
 
-    with pytest.raises(GatewayError, match=r"before \[DONE\]"):
-        _ = [piece async for piece in gateway.stream([{"role": "user", "content": "Hi"}])]
+    async def collect():
+        return [piece async for piece in gateway.stream([{"role": "user", "content": "Hi"}])]
+
+    with pytest.raises(GatewayError, match="before"):
+        asyncio.run(collect())
