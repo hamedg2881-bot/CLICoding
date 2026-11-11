@@ -1,6 +1,8 @@
 # CDS_AI — Offline AI Development Assistant
 
-**Assistant identity:** CDS_AI. **Source repository:** CLICoding.\n\n**Project status:** Conversation persistence, capability routing, planner-backed multi-model execution, and an OpenAI-compatible API are implemented and CI-tested. Open WebUI integration and DGX deployment validation remain pending.  
+**Assistant identity:** CDS_AI. **Source repository:** CLICoding.
+
+**Project status:** Conversation persistence, capability routing, planner-backed multi-model execution, and an OpenAI-compatible API are implemented and CI-tested. Open WebUI integration and DGX deployment validation remain pending.  
 **Operating mode:** Internet unavailable during development; internal LAN available.  
 **IDE policy:** IDE-agnostic.  
 **Canonical project repository:** https://github.com/hamedg2881-bot/CLICoding
