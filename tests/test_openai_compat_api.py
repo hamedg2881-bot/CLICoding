@@ -1716,3 +1716,66 @@ def test_attachment_upload_rejects_mime_mismatch_and_oversized_body(tmp_path):
     )
     assert oversized.status_code == 413
     assert database.get_attachment(conversation_id, "00000000-0000-0000-0000-000000000000") is None
+
+
+
+def test_specialist_orchestration_uses_compacted_context(tmp_path):
+    class SummaryGateway:
+        def __init__(self):
+            self.calls = []
+
+        async def complete(self, messages, **kwargs):
+            self.calls.append(messages)
+            return Completion(
+                content="Summary: prior goals and project decisions.",
+                model="summary-model",
+            )
+
+    class RecordingOrchestrator:
+        def __init__(self):
+            self.context = None
+
+        async def run(self, conversation_id, user_request, context, user_content=None):
+            from types import SimpleNamespace
+            self.context = context
+            return SimpleNamespace(answer="specialist completed", execution_id="specialist-id")
+
+    gateway = SummaryGateway()
+    orchestrator = RecordingOrchestrator()
+    database = Database(str(tmp_path / "specialist-compaction.sqlite3"))
+    conversation_id = database.create_conversation()["id"]
+    for index in range(7):
+        database.append_event(conversation_id, "user", f"question-{index} " + ("u" * 400))
+        database.append_event(conversation_id, "assistant", f"answer-{index} " + ("a" * 400))
+    app = create_app(
+        settings=Settings(database_path=str(tmp_path / "specialist-compaction.sqlite3")),
+        gateway=gateway,
+        database=database,
+        registry=WorkerRegistry([
+            Worker(
+                "coding", "http://coding/v1", "coding-model",
+                frozenset({"chat", "coding"}),
+                context_window_tokens=3072,
+                max_output_tokens=256,
+            )
+        ]),
+        orchestrator=orchestrator,
+    )
+    response = TestClient(app).post(
+        "/v1/chat/completions",
+        json={
+            "model": "CDS_AI",
+            "conversation_id": conversation_id,
+            "task_type": "coding",
+            "messages": [{"role": "user", "content": "current request"}],
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "specialist completed"
+    assert len(gateway.calls) == 1
+    assert orchestrator.context is not None
+    assert "Earlier conversation summary" in orchestrator.context
+    assert "question-5" in orchestrator.context
+    assert "question-6" in orchestrator.context
+    assert "current request" in orchestrator.context
+    assert database.get_latest_summary(conversation_id)["through_sequence"] == 10
