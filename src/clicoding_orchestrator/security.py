@@ -93,11 +93,10 @@ class SecurityStore:
     def _hash(token: str) -> str:
         return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
-    def has_active_tokens(self) -> bool:
+    def has_issued_tokens(self) -> bool:
+        """Keep authentication enabled after the first token is issued, even if all are revoked."""
         with self._session() as connection:
-            row = connection.execute(
-                "SELECT 1 FROM api_tokens WHERE revoked_at IS NULL LIMIT 1"
-            ).fetchone()
+            row = connection.execute("SELECT 1 FROM api_tokens LIMIT 1").fetchone()
         return row is not None
 
     def authenticate_token(self, token: str) -> str | None:
