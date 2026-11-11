@@ -105,10 +105,10 @@ def test_openai_chat_applies_system_messages_and_imports_initial_history(tmp_pat
     assert response.status_code == 200
     assert gateway.calls[0] == [
         {"role": "system", "content": "Be concise"},
+        {"role": "system", "content": CDS_AI_SYSTEM_PROMPT},
         {"role": "user", "content": "Earlier question"},
         {"role": "assistant", "content": "Earlier answer"},
         {"role": "user", "content": "Current question"},
-        {"role": "system", "content": CDS_AI_SYSTEM_PROMPT},
     ]
 
 
@@ -264,7 +264,7 @@ def test_openai_image_payload_is_forwarded_to_vision_worker_and_persisted(tmp_pa
     )
 
     assert response.status_code == 200
-    assert gateway.calls[0][-2]["content"] == content
+    assert gateway.calls[0][-1]["content"] == content
     conversation_id = response.json()["conversation_id"]
     saved = database.list_events(conversation_id)
     assert saved[0]["content"].startswith("__CLICODING_MULTIMODAL_V1__")
@@ -507,7 +507,10 @@ def test_direct_chat_streams_incremental_deltas_and_persists_complete_answer(tmp
     assert '"content":"world"' in response.text
     assert '"finish_reason":"stop"' in response.text
     assert response.text.endswith("data: [DONE]\n\n")
-    assert gateway.messages == [{"role": "user", "content": "Say hello"}]
+    assert gateway.messages == [
+        {"role": "system", "content": CDS_AI_SYSTEM_PROMPT},
+        {"role": "user", "content": "Say hello"},
+    ]
 
     with database.session() as connection:
         row = connection.execute(
@@ -1333,7 +1336,8 @@ def test_openai_chat_always_receives_shared_cds_ai_policy(tmp_path):
     )
     assert response.status_code == 200
     assert gateway.calls[0][0] == {"role": "system", "content": "Client context"}
-    assert gateway.calls[0][-1]["role"] == "system"
-    assert "You are CDS_AI" in gateway.calls[0][-1]["content"]
-    assert "right-to-left" in gateway.calls[0][-1]["content"]
+    assert gateway.calls[0][1]["role"] == "system"
+    assert "You are CDS_AI" in gateway.calls[0][1]["content"]
+    assert "right-to-left" in gateway.calls[0][1]["content"]
+    assert gateway.calls[0][-1]["role"] == "user"
     assert response.json()["system_messages_applied"] == 2
