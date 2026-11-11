@@ -90,3 +90,24 @@ def test_summary_redaction_masks_common_credential_shapes():
     assert "topsecret" not in redacted
     assert "abcdefghijklmnopqrstuvwxyz" not in redacted
     assert "ghp_123456789012345678901234" not in redacted
+
+
+
+def test_summary_redaction_handles_json_assignments_and_nested_tool_metadata():
+    from clicoding_orchestrator.context import redact_sensitive_data, redact_sensitive_text
+
+    text = redact_sensitive_text('{"api_key":"json-secret-value","password":"another-secret"}')
+    assert "json-secret-value" not in text
+    assert "another-secret" not in text
+
+    metadata = {
+        "tool_calls": [{
+            "function": {
+                "name": "configure",
+                "arguments": '{"access_token":"nested-secret","safe":"kept"}',
+            }
+        }]
+    }
+    redacted = redact_sensitive_data(metadata)
+    assert "nested-secret" not in redacted["tool_calls"][0]["function"]["arguments"]
+    assert "kept" in redacted["tool_calls"][0]["function"]["arguments"]
