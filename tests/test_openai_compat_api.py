@@ -354,3 +354,96 @@ def test_orchestration_failure_is_logged_without_exposing_request_content(tmp_pa
     assert "RuntimeError: planner transport failed" in caplog.text
     assert private_request not in caplog.text
     assert any(record.exc_info for record in caplog.records)
+
+
+def test_ordinary_chat_bypasses_planner_even_when_orchestration_is_enabled(tmp_path):
+    class PlannerMustNotRun:
+        async def run(self, *args, **kwargs):
+            raise AssertionError("ordinary chat must not invoke the Planner")
+
+    gateway = FakeGateway()
+    database = Database(str(tmp_path / "conversation-first.sqlite3"))
+    registry = WorkerRegistry(
+        [
+            Worker(
+                "internal-chat",
+                "http://internal/v1",
+                "private-model-name",
+                frozenset({"chat"}),
+            )
+        ]
+    )
+    app = create_app(
+        settings=Settings(
+            database_path=str(tmp_path / "conversation-first.sqlite3"),
+            enable_planning=True,
+        ),
+        gateway=gateway,
+        database=database,
+        registry=registry,
+        orchestrator=PlannerMustNotRun(),
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "clicoding",
+            "messages": [{"role": "user", "content": "سلام"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "reply-1"
+    assert response.json()["x_clicoding"]["orchestrated"] is False
+    assert response.json()["x_clicoding"]["execution_id"] is None
+    assert gateway.calls == [[{"role": "user", "content": "سلام"}]]
+
+
+def test_explicit_specialist_task_uses_orchestrator(tmp_path):
+    class RecordingOrchestrator:
+        def __init__(self):
+            self.calls = []
+
+        async def run(self, conversation_id, user_request, context, user_content=None):
+            self.calls.append((conversation_id, user_request, context, user_content))
+            from types import SimpleNamespace
+            return SimpleNamespace(answer="specialist-result", execution_id="execution-123")
+
+    orchestrator = RecordingOrchestrator()
+    gateway = FakeGateway()
+    database = Database(str(tmp_path / "specialist-route.sqlite3"))
+    registry = WorkerRegistry(
+        [
+            Worker(
+                "internal-chat",
+                "http://internal/v1",
+                "private-model-name",
+                frozenset({"chat"}),
+            )
+        ]
+    )
+    app = create_app(
+        settings=Settings(database_path=str(tmp_path / "specialist-route.sqlite3")),
+        gateway=gateway,
+        database=database,
+        registry=registry,
+        orchestrator=orchestrator,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "clicoding",
+            "task_type": "coding",
+            "messages": [{"role": "user", "content": "Implement this function"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "specialist-result"
+    assert response.json()["x_clicoding"]["orchestrated"] is True
+    assert response.json()["x_clicoding"]["execution_id"] == "execution-123"
+    assert len(orchestrator.calls) == 1
+    assert gateway.calls == []
