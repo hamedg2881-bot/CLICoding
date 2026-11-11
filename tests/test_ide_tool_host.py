@@ -31,19 +31,19 @@ def test_workspace_read_list_and_search_are_scoped_and_hide_secret_files(tmp_pat
     (root / ".env").write_text("TOKEN=do-not-read", encoding="utf-8")
     (root / ".env.example").write_text("TOKEN=placeholder", encoding="utf-8")
 
-    listed = result(host.execute_tool_call(call("workspace_list_files", {})))
+    listed = result(host.execute_tool_call(call("workspace_list_files", {}, "list_1")))
     assert "README.md" in listed["files"]
     assert ".env" not in listed["files"]
     assert ".env.example" in listed["files"]
 
-    read = result(host.execute_tool_call(call("workspace_read_file", {"path": "README.md"})))
+    read = result(host.execute_tool_call(call("workspace_read_file", {"path": "README.md"}, "read_1")))
     assert read["content"].startswith("CDS_AI project")
     assert read["sha256"] == hashlib.sha256(
         (root / "README.md").read_bytes()
     ).hexdigest()
 
     searched = result(host.execute_tool_call(call(
-        "workspace_search_text", {"query": "second"}
+        "workspace_search_text", {"query": "second"}, "search_1"
     )))
     assert searched["matches"][0]["path"] == "README.md"
     assert searched["matches"][0]["line"] == 2
