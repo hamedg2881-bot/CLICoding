@@ -707,9 +707,18 @@ def create_app(
                         },
                     ],
                 )
+            elif regeneration_event is not None:
+                assistant_event = db.replace_events_from(
+                    conversation_id,
+                    regeneration_event["id"],
+                    [{
+                        "role": "assistant",
+                        "content": answer,
+                        "producer": producer,
+                        "metadata": assistant_metadata,
+                    }],
+                )[0]
             else:
-                if regeneration_event is not None:
-                    db.delete_last_event(conversation_id, regeneration_event["id"])
                 assistant_event = db.append_event(
                     conversation_id, role="assistant", content=answer,
                     producer=producer, metadata=assistant_metadata,
@@ -1017,9 +1026,18 @@ def create_app(
                             },
                         ],
                     )
+                elif regeneration_event is not None:
+                    db.replace_events_from(
+                        conversation_id,
+                        regeneration_event["id"],
+                        [{
+                            "role": "assistant",
+                            "content": "".join(answer_parts),
+                            "producer": worker.id,
+                            "metadata": assistant_metadata,
+                        }],
+                    )
                 else:
-                    if regeneration_event is not None:
-                        db.delete_last_event(conversation_id, regeneration_event["id"])
                     db.append_event(
                         conversation_id,
                         role="assistant",
