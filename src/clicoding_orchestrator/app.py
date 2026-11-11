@@ -1996,6 +1996,19 @@ def create_app(
                         ) + "\n\n"
                         yield "data: [DONE]\n\n"
                         return
+                    except Exception:
+                        logger.exception(
+                            "Specialist progress stream failed (conversation_id=%s)",
+                            conversation_id,
+                        )
+                        yield "data: " + json.dumps({
+                            "error": {
+                                "message": "The specialist execution stream was interrupted.",
+                                "type": "server_error",
+                            }
+                        }, ensure_ascii=False) + "\n\n"
+                        yield "data: [DONE]\n\n"
+                        return
 
                     final_chunk = {
                         "id": response_id,
