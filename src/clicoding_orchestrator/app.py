@@ -18,6 +18,7 @@ from .tool_protocol import (
 )
 
 from .config import Settings
+from .policy import effective_system_messages
 from .context import ContextBudgetExceeded, ensure_context_budget
 from .database import Database
 from .gateway import GatewayError, ModelGateway, OpenAICompatibleGateway
