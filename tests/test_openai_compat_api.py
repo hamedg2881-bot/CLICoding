@@ -916,7 +916,7 @@ class FailOnceGateway:
     def __init__(self):
         self.calls = 0
 
-    async def complete(self, messages):
+    async def complete(self, messages, *, tools=None, tool_choice=None, options=None):
         self.calls += 1
         if self.calls == 1:
             raise GatewayError("temporary upstream failure")
