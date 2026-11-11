@@ -85,10 +85,12 @@ def test_tool_result_must_match_the_one_pending_call_and_can_only_complete_once(
     completed = events + [{
         "role": "tool",
         "metadata": {"tool_call_id": "call_123", "name": "read_file"},
+        "content": "result",
     }]
     assert pending_tool_call(completed) is None
+    validate_tool_result(completed, "call_123", "read_file", "result")
     with pytest.raises(ToolProtocolError, match="no pending"):
-        validate_tool_result(completed, "call_123", "read_file")
+        validate_tool_result(completed, "call_123", "read_file", "different result")
 
 
 def test_rejects_mismatched_tool_result_identity():
