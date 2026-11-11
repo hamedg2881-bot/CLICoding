@@ -511,3 +511,171 @@ def test_direct_chat_streams_incremental_deltas_and_persists_complete_answer(tmp
     assert [event["role"] for event in conversation["events"]] == ["user", "assistant"]
     assert conversation["events"][-1]["content"] == "Hello world"
     assert conversation["events"][-1]["producer"] == "internal-chat"
+
+
+class ToolSequenceGateway:
+    def __init__(self, tool_calls):
+        self.tool_calls = tool_calls
+        self.calls = []
+
+    async def complete(self, messages, *, tools=None, tool_choice=None):
+        self.calls.append({
+            "messages": messages,
+            "tools": tools,
+            "tool_choice": tool_choice,
+        })
+        if len(self.calls) == 1:
+            return Completion(
+                content="",
+                model="tool-model",
+                tool_calls=self.tool_calls,
+                finish_reason="tool_calls",
+            )
+        return Completion(content="The file says hello.", model="tool-model")
+
+
+def tool_definitions():
+    return [{
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": "Read a file in the active workspace",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string", "minLength": 1}},
+                "required": ["path"],
+                "additionalProperties": False,
+            },
+        },
+    }]
+
+
+def test_openai_tool_call_round_trip_persists_and_validates_tool_result(tmp_path):
+    tool_calls = [{
+        "id": "call_123",
+        "type": "function",
+        "function": {"name": "read_file", "arguments": '{"path":"README.md"}'},
+    }]
+    gateway = ToolSequenceGateway(tool_calls)
+    database = Database(str(tmp_path / "tools.sqlite3"))
+    registry = WorkerRegistry([
+        Worker(
+            "tool-worker",
+            "http://tool-model/v1",
+            "tool-model",
+            frozenset({"chat", "tool_calling"}),
+        )
+    ])
+    app = create_app(
+        settings=Settings(database_path=str(tmp_path / "tools.sqlite3")),
+        gateway=gateway,
+        database=database,
+        registry=registry,
+    )
+    client = TestClient(app)
+    tools = tool_definitions()
+
+    first = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "CDS_AI",
+            "messages": [{"role": "user", "content": "Read README.md"}],
+            "tools": tools,
+            "tool_choice": "auto",
+        },
+    )
+    assert first.status_code == 200
+    first_body = first.json()
+    assert first_body["choices"][0]["finish_reason"] == "tool_calls"
+    assert first_body["choices"][0]["message"]["content"] is None
+    assert first_body["choices"][0]["message"]["tool_calls"] == tool_calls
+    conversation_id = first_body["conversation_id"]
+
+    stored = database.list_events(conversation_id)
+    assert stored[-1]["metadata"]["tool_calls"] == tool_calls
+    assert stored[-1]["role"] == "assistant"
+
+    second = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "CDS_AI",
+            "conversation_id": conversation_id,
+            "messages": [{
+                "role": "tool",
+                "tool_call_id": "call_123",
+                "name": "read_file",
+                "content": "hello",
+            }],
+            "tools": tools,
+        },
+    )
+    assert second.status_code == 200
+    assert second.json()["choices"][0]["message"]["content"] == "The file says hello."
+    assert second.json()["choices"][0]["finish_reason"] == "stop"
+
+    continuation = gateway.calls[1]["messages"]
+    assert continuation[-2]["role"] == "assistant"
+    assert continuation[-2]["content"] is None
+    assert continuation[-2]["tool_calls"] == tool_calls
+    assert continuation[-1] == {
+        "role": "tool",
+        "content": "hello",
+        "tool_call_id": "call_123",
+        "name": "read_file",
+    }
+
+
+def test_openai_api_rejects_tool_results_without_a_matching_pending_call(tmp_path):
+    client, _ = make_client(tmp_path)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "CDS_AI",
+            "messages": [{
+                "role": "tool",
+                "tool_call_id": "call_123",
+                "name": "read_file",
+                "content": "untrusted result",
+            }],
+            "tools": tool_definitions(),
+        },
+    )
+    assert response.status_code == 400
+
+
+def test_openai_api_requires_a_tool_capable_worker_before_dispatch(tmp_path):
+    gateway = FakeGateway()
+    database = Database(str(tmp_path / "no-tools.sqlite3"))
+    registry = WorkerRegistry([
+        Worker("chat-only", "http://chat/v1", "chat", frozenset({"chat"}))
+    ])
+    app = create_app(
+        settings=Settings(database_path=str(tmp_path / "no-tools.sqlite3")),
+        gateway=gateway,
+        database=database,
+        registry=registry,
+    )
+    response = TestClient(app).post(
+        "/v1/chat/completions",
+        json={
+            "model": "CDS_AI",
+            "messages": [{"role": "user", "content": "Read README"}],
+            "tools": tool_definitions(),
+        },
+    )
+    assert response.status_code == 503
+    assert gateway.calls == []
+
+
+def test_openai_api_rejects_streaming_tool_calls_until_sse_tool_deltas_are_supported(tmp_path):
+    client, _ = make_client(tmp_path)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "CDS_AI",
+            "messages": [{"role": "user", "content": "Read README"}],
+            "tools": tool_definitions(),
+            "stream": True,
+        },
+    )
+    assert response.status_code == 400
