@@ -1190,3 +1190,64 @@ def test_long_conversation_is_summarized_without_dropping_recent_turns(tmp_path)
     assert "question-4" in joined_history
     assert "current request" in joined_history
     assert len(database.list_events(conversation_id)) == 12
+
+
+
+def test_streaming_chat_reuses_compacted_context_without_resummarizing(tmp_path):
+    class SummaryStreamingGateway:
+        def __init__(self):
+            self.summary_calls = 0
+            self.stream_messages = None
+
+        async def complete(self, messages, **kwargs):
+            if "Summarize the earlier conversation" in messages[0]["content"]:
+                self.summary_calls += 1
+                return Completion(
+                    content="Summary: previous project goals and decisions.",
+                    model="summary-model",
+                )
+            raise AssertionError("direct streaming must not call buffered completion")
+
+        async def stream(self, messages):
+            self.stream_messages = messages
+            yield "streamed "
+            yield "answer"
+
+    gateway = SummaryStreamingGateway()
+    database = Database(str(tmp_path / "stream-compaction.sqlite3"))
+    conversation_id = database.create_conversation()["id"]
+    for index in range(5):
+        database.append_event(conversation_id, "user", f"question-{index} " + ("u" * 400))
+        database.append_event(conversation_id, "assistant", f"answer-{index} " + ("a" * 400))
+    app = create_app(
+        settings=Settings(database_path=str(tmp_path / "stream-compaction.sqlite3")),
+        gateway=gateway,
+        database=database,
+        registry=WorkerRegistry([
+            Worker(
+                "chat", "http://chat/v1", "chat-model", frozenset({"chat"}),
+                context_window_tokens=2048, max_output_tokens=256,
+            )
+        ]),
+    )
+
+    response = TestClient(app).post(
+        "/v1/chat/completions",
+        json={
+            "model": "CDS_AI",
+            "conversation_id": conversation_id,
+            "messages": [{"role": "user", "content": "current request"}],
+            "stream": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert "streamed " in response.text
+    assert "answer" in response.text
+    assert response.text.endswith("data: [DONE]\n\n")
+    assert gateway.summary_calls == 1
+    assert gateway.stream_messages is not None
+    assert any(
+        message["role"] == "system" and "Earlier conversation summary" in message["content"]
+        for message in gateway.stream_messages
+    )
