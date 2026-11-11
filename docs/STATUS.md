@@ -339,3 +339,12 @@ User supplied a fresh command output from host `spark-7ea3`:
 - Parallel tool calls remain disabled; one outstanding tool call per assistant turn is enforced.
 - The Python workstation reference client currently uses buffered HTTP tool rounds; Open WebUI-compatible API clients can use streamed tool-call deltas.
 - Live DGX runtime compatibility remains unverified and no production worker has been marked `tool_calling`.
+
+## 2026-11-11 — Identity and conversation ownership
+
+- Added `owner_id` to conversations with a backward-compatible migration; pre-existing records remain in the `shared` namespace.
+- Added per-user bearer token mapping through `CLICODING_USER_API_KEYS` (JSON object of stable user IDs to unique 32+ character tokens); reserved principal `admin` is administrative.
+- Added optional Open WebUI trusted-user-header mode through `CLICODING_TRUST_USER_HEADER=true`. This is explicitly a trusted-network mode, not cryptographic identity; it requires a private proxy that strips client-supplied identity headers.
+- Conversation creation/read/turns, OpenAI-compatible continuation, execution reads, and sandbox approval/result routes now enforce owner scope. Worker diagnostics are admin-only.
+- No automatic reassignment of legacy shared conversations; administrator migration is required before multi-user rollout.
+- Remaining identity/security gates: verify Open WebUI identity headers in a real multi-user deployment, token rotation/revocation, rate limits, and audit export.
