@@ -158,6 +158,42 @@ def _restore_content(content: str) -> str | list[dict[str, Any]]:
     return value if isinstance(value, list) else content
 
 
+def _normalize_request_history(messages: list[ChatMessage]) -> list[dict[str, Any]]:
+    normalized = []
+    for message in messages:
+        if message.role == "system":
+            continue
+        item: dict[str, Any] = {"role": message.role, "content": message.content}
+        if message.tool_call_id is not None:
+            item["tool_call_id"] = message.tool_call_id
+        if message.tool_calls is not None:
+            item["tool_calls"] = message.tool_calls
+            item["content"] = None
+        if message.name is not None:
+            item["name"] = message.name
+        normalized.append(item)
+    return normalized
+
+
+def _normalize_stored_history(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized = []
+    for event in events:
+        item: dict[str, Any] = {
+            "role": event["role"],
+            "content": _restore_content(event["content"]),
+        }
+        metadata = event.get("metadata") or {}
+        if metadata.get("tool_calls") is not None:
+            item["tool_calls"] = metadata["tool_calls"]
+            item["content"] = None
+        if metadata.get("tool_call_id") is not None:
+            item["tool_call_id"] = metadata["tool_call_id"]
+        if metadata.get("name") is not None:
+            item["name"] = metadata["name"]
+        normalized.append(item)
+    return normalized
+
+
 def _append_input_event(
     database: Database,
     conversation_id: str,
@@ -1029,11 +1065,24 @@ def create_app(
                         metadata=metadata or None,
                     )
 
-        operation = http_request.headers.get("x-clicoding-operation", "append").strip().lower()
+        raw_operation = http_request.headers.get("x-clicoding-operation")
+        operation = raw_operation.strip().lower() if raw_operation is not None else "append"
         if operation not in {"append", "regenerate"}:
             raise HTTPException(status_code=400, detail="Unsupported X-CLICoding-Operation")
-        regenerate = operation == "regenerate"
         existing_events = db.list_events(conversation_id)
+        regenerate = operation == "regenerate"
+        if (
+            raw_operation is None
+            and external_conversation_id is not None
+            and existing_events
+            and existing_events[-1]["role"] == "assistant"
+        ):
+            # Open WebUI regeneration removes the previous assistant answer from
+            # the submitted transcript. Exact transcript matching avoids treating
+            # an ordinary repeated prompt as regeneration.
+            submitted_history = _normalize_request_history(chat_request.messages)
+            stored_history = _normalize_stored_history(existing_events)
+            regenerate = submitted_history == stored_history[:-1]
         if not regenerate and last_message.role == "tool":
             try:
                 validate_tool_result(
