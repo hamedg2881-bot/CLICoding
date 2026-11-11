@@ -17,6 +17,17 @@ class FakePlanningGateway:
         return Completion(content=self.content, model="fake-planner")
 
 
+class SequencePlanningGateway:
+    def __init__(self, *contents):
+        self.contents = list(contents)
+        self.calls = []
+
+    async def complete(self, messages):
+        self.calls.append(messages)
+        content = self.contents.pop(0)
+        return Completion(content=content, model="fake-planner")
+
+
 def valid_plan(capability="coding"):
     return {
         "goal": "Implement a small feature safely",
@@ -47,6 +58,27 @@ def test_structured_planner_parses_plan_and_passes_context():
     asyncio.run(scenario())
 
 
+def test_structured_planner_repairs_plan_when_required_tasks_are_missing():
+    async def scenario():
+        incomplete = json.dumps(
+            {
+                "goal": "Respond to the greeting",
+                "acceptance_criteria": ["Reply in Persian"],
+            }
+        )
+        gateway = SequencePlanningGateway(incomplete, json.dumps(valid_plan("chat")))
+        planner = StructuredPlanner(gateway, {"chat", "coding"})
+        plan = await planner.create_plan("سلام")
+
+        assert plan.tasks[0].required_capabilities == ["chat"]
+        assert len(gateway.calls) == 2
+        repair_prompt = gateway.calls[1][-1]["content"]
+        assert "non-empty tasks array" in repair_prompt
+        assert "Required JSON Schema" in repair_prompt
+
+    asyncio.run(scenario())
+
+
 def test_structured_planner_rejects_unregistered_capability():
     async def scenario():
         planner = StructuredPlanner(
@@ -58,11 +90,13 @@ def test_structured_planner_rejects_unregistered_capability():
     asyncio.run(scenario())
 
 
-def test_structured_planner_rejects_invalid_json():
+def test_structured_planner_rejects_invalid_json_after_one_repair():
     async def scenario():
-        planner = StructuredPlanner(FakePlanningGateway("not json"), {"coding"})
-        with pytest.raises(PlanningError, match="invalid execution plan"):
+        gateway = SequencePlanningGateway("not json", "still not json")
+        planner = StructuredPlanner(gateway, {"coding"})
+        with pytest.raises(PlanningError, match="invalid execution plan after one repair"):
             await planner.create_plan("Do work")
+        assert len(gateway.calls) == 2
 
     asyncio.run(scenario())
 
