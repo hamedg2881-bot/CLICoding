@@ -140,3 +140,25 @@ def test_rate_limits_are_isolated_between_user_tokens(tmp_path):
     assert client.get("/v1/models", headers=alice_headers).status_code == 200
     assert client.get("/v1/models", headers=alice_headers).status_code == 429
     assert client.get("/v1/models", headers=bob_headers).status_code == 200
+
+
+def test_revoking_last_dynamic_token_does_not_disable_authentication(tmp_path):
+    settings = Settings(database_path=str(tmp_path / "auth-latch.sqlite3"))
+    client = TestClient(create_app(settings=settings))
+
+    # First-run local bootstrap mode is retained until a token is issued.
+    issued = client.post(
+        "/api/v1/admin/tokens",
+        json={"owner_id": "first-user", "label": "Initial user"},
+    )
+    assert issued.status_code == 201
+    token = issued.json()
+    user_headers = {"Authorization": f"Bearer {token['token']}"}
+    assert client.get("/v1/models", headers=user_headers).status_code == 200
+
+    # Revoking the last token must not reopen unauthenticated admin access.
+    assert SecurityStore(settings.database_path).revoke_token(token["id"]) is True
+    assert client.get("/v1/models").status_code == 401
+    assert client.post("/api/v1/admin/tokens", json={
+        "owner_id": "attacker", "label": "Unauthenticated escalation"
+    }).status_code == 401
