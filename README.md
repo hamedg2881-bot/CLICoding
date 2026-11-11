@@ -2,7 +2,7 @@
 
 **Assistant identity:** CDS_AI. **Source repository:** CLICoding.
 
-**Project status:** CDS_AI identity, shared policy, conversation-first routing, direct and tool-call streaming, regenerate/edit operations, active-turn cancellation, versioned context compaction, per-user ownership, and workstation reference tools are implemented in the integration candidate. Typed attachment lifecycle, packaged IDE UI, specialist progress streaming, OS-level sandboxing, and live DGX/offline acceptance remain release gates.  
+**Project status:** CDS_AI identity, shared policy, conversation-first routing, direct and tool-call streaming, regenerate/edit operations, active-turn cancellation, versioned context compaction, per-user ownership, and workstation reference tools are implemented in the integration candidate. Automatic attachment retention/backup, packaged IDE UI, specialist progress streaming, OS-level sandboxing, and live DGX/offline acceptance remain release gates.  
 **Operating mode:** Internet unavailable during development; internal LAN available.  
 **IDE policy:** IDE-agnostic.  
 **Canonical project repository:** https://github.com/hamedg2881-bot/CLICoding
