@@ -286,7 +286,7 @@ def create_app(
     async def optional_bearer_auth(request: Request, call_next):
         # Health remains available to local service monitors. User tokens provide
         # isolated conversation namespaces; a global key is an admin/service key.
-        request.state.principal_id = "anonymous"
+        request.state.principal_id = "shared"
         request.state.is_admin = False
         if request.url.path != "/health" and (config.api_key or config.user_api_keys):
             supplied = request.headers.get("authorization", "")
