@@ -579,7 +579,8 @@ def test_specialist_context_compaction_is_worker_budgeted(tmp_path):
             worker, long_context, reserved_input_tokens=256
         )
 
-        assert compacted == "Compact factual continuity summary."
+        assert compacted.count("Compact factual continuity summary.") == len(calls)
+        assert "Conversation fact" not in compacted
         assert len(calls) > 1
         assert all(
             "untrusted data" in message[0]["content"]
