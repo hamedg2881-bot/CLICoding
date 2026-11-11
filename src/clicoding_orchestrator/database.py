@@ -374,6 +374,24 @@ class Database:
             events.append(event)
         return events
 
+    def invalidate_summaries_from_sequence(
+        self,
+        conversation_id: str,
+        from_sequence: int,
+    ) -> int:
+        """Invalidate derived summaries that include an event being rewritten."""
+        if not isinstance(from_sequence, int) or isinstance(from_sequence, bool) or from_sequence < 1:
+            raise ValueError("from_sequence must be a positive event sequence")
+        with self.session() as connection:
+            cursor = connection.execute(
+                """
+                DELETE FROM conversation_summaries
+                WHERE conversation_id = ? AND through_sequence >= ?
+                """,
+                (conversation_id, from_sequence),
+            )
+            return cursor.rowcount
+
     def get_latest_summary(self, conversation_id: str) -> dict[str, Any] | None:
         with self.session() as connection:
             row = connection.execute(
