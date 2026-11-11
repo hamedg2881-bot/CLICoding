@@ -5,7 +5,7 @@ import json
 import httpx
 from fastapi.testclient import TestClient
 
-from clicoding_orchestrator.app import create_app
+from clicoding_orchestrator.app import _restore_content, create_app
 from clicoding_orchestrator.config import Settings
 from clicoding_orchestrator.database import Database
 from clicoding_orchestrator.gateway import Completion, GatewayError
