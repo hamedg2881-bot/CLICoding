@@ -23,9 +23,12 @@ class ModelGateway(Protocol):
         *,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, Any] | None = None,
+        options: dict[str, Any] | None = None,
     ) -> Completion: ...
 
-    def stream(self, messages: list[dict[str, object]]) -> AsyncIterator[str]: ...
+    def stream(
+        self, messages: list[dict[str, object]], *, options: dict[str, Any] | None = None
+    ) -> AsyncIterator[str]: ...
 
 
 class GatewayError(RuntimeError):
@@ -59,6 +62,7 @@ class OpenAICompatibleGateway:
         *,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, Any] | None = None,
+        options: dict[str, Any] | None = None,
     ) -> Completion:
         payload: dict[str, Any] = {
             "model": self.model,
@@ -70,6 +74,15 @@ class OpenAICompatibleGateway:
             payload["parallel_tool_calls"] = False
         if tool_choice is not None:
             payload["tool_choice"] = tool_choice
+        if options:
+            allowed_options = {
+                "temperature", "max_tokens", "top_p",
+                "presence_penalty", "frequency_penalty", "stop",
+            }
+            unknown = set(options) - allowed_options
+            if unknown:
+                raise GatewayError(f"Unsupported generation options: {sorted(unknown)}")
+            payload.update(options)
         try:
             async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
                 response = await client.post(self.url, json=payload, headers=self._headers())
@@ -101,9 +114,23 @@ class OpenAICompatibleGateway:
             finish_reason=finish_reason,
         )
 
-    async def stream(self, messages: list[dict[str, object]]) -> AsyncIterator[str]:
+    async def stream(
+        self,
+        messages: list[dict[str, object]],
+        *,
+        options: dict[str, Any] | None = None,
+    ) -> AsyncIterator[str]:
         """Yield actual assistant text deltas from an upstream OpenAI SSE stream."""
-        payload = {"model": self.model, "messages": messages, "stream": True}
+        payload: dict[str, Any] = {"model": self.model, "messages": messages, "stream": True}
+        if options:
+            allowed_options = {
+                "temperature", "max_tokens", "top_p",
+                "presence_penalty", "frequency_penalty", "stop",
+            }
+            unknown = set(options) - allowed_options
+            if unknown:
+                raise GatewayError(f"Unsupported generation options: {sorted(unknown)}")
+            payload.update(options)
         saw_done = False
         try:
             async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
