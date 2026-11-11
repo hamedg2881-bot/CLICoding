@@ -273,6 +273,7 @@ def create_app(
         content: str | list[dict[str, Any]],
         task_type: str,
         system_messages: list[dict[str, str]] | None = None,
+        force_orchestration: bool = False,
     ) -> tuple[dict[str, Any], dict[str, Any], str, str | None]:
         if not db.conversation_exists(conversation_id):
             raise HTTPException(status_code=404, detail="Conversation not found")
@@ -304,8 +305,13 @@ def create_app(
                 )
             execution_id: str | None = None
 
-            if multi_model is not None:
-                # The Orchestrator owns planning and internal worker handoffs.
+            if multi_model is not None and (
+                force_orchestration
+                or task_type != "chat"
+                or _has_images(vision_content)
+            ):
+                # Specialist work is orchestrated; ordinary chat stays on the
+                # direct conversation path and never depends on Planner output.
                 # The public API continues to expose one assistant identity.
                 context_messages = list(system_messages or []) + events[:-1]
                 context = "\n\n".join(
@@ -375,7 +381,8 @@ def create_app(
     )
     async def create_turn(conversation_id: str, request: TurnRequest) -> TurnResponse:
         user_event, assistant_event, answer, execution_id = await run_turn(
-            conversation_id, request.content, request.task_type
+            conversation_id, request.content, request.task_type,
+            force_orchestration=True,
         )
         return TurnResponse(
             conversation_id=conversation_id,
@@ -429,7 +436,10 @@ def create_app(
                     )
 
         user_event, assistant_event, answer, execution_id = await run_turn(
-            conversation_id, last_user, chat_request.task_type, supplied_system
+            conversation_id, last_user, chat_request.task_type, supplied_system,
+            force_orchestration=(
+                chat_request.task_type != "chat" or _has_images(last_user)
+            ),
         )
 
         response_id = f"chatcmpl-{uuid.uuid4().hex}"
@@ -490,7 +500,7 @@ def create_app(
                 "producer": assistant_event["producer"],
                 "system_messages_applied": len(supplied_system),
                 "execution_id": execution_id,
-                "orchestrated": multi_model is not None,
+                "orchestrated": execution_id is not None,
             },
         }
 
