@@ -15,6 +15,9 @@ workers:
     enabled: false
     priority: 10
     max_concurrency: 1
+    # Conservative fallback limits; set these to verified runtime values.
+    context_window_tokens: 8192
+    max_output_tokens: 1024
     timeout_seconds: 120
     # api_key_env: CLICODING_FAST_API_KEY
 
@@ -26,6 +29,8 @@ workers:
     enabled: false
     priority: 10
     max_concurrency: 1
+    context_window_tokens: 8192
+    max_output_tokens: 1024
     timeout_seconds: 240
     # api_key_env: CLICODING_CODER_API_KEY
 
@@ -37,5 +42,7 @@ workers:
     enabled: false
     priority: 10
     max_concurrency: 1
+    context_window_tokens: 8192
+    max_output_tokens: 1024
     timeout_seconds: 180
     # api_key_env: CLICODING_VISION_API_KEY
