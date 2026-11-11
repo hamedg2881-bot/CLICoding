@@ -857,11 +857,40 @@ def create_app(
             ):
                 # Specialist work is orchestrated; ordinary chat stays on the
                 # direct conversation path and never depends on Planner output.
-                # The public API continues to expose one assistant identity.
-                context_messages = (
-                    list(system_messages or []) + events
-                    if edit_target is not None
-                    else list(system_messages or []) + events[:-1]
+                # Compact the same durable history before handing it to Planner/agents.
+                required_context_capabilities = (
+                    {"vision"} if _has_images(vision_content) else {task_type}
+                )
+                try:
+                    context_worker = router.select_capabilities(
+                        required_context_capabilities
+                    )
+                except NoEligibleWorker:
+                    try:
+                        context_worker = router.select_capabilities({"chat"})
+                    except NoEligibleWorker as exc:
+                        raise HTTPException(
+                            status_code=503,
+                            detail="No enabled worker can prepare specialist conversation context",
+                        ) from exc
+                context_gateway = gateway or OpenAICompatibleGateway(
+                    base_url=context_worker.base_url,
+                    model=context_worker.model,
+                    api_key=context_worker.api_key,
+                    timeout_seconds=context_worker.timeout_seconds,
+                )
+                specialist_input = (
+                    {"role": input_role, "content": content, **(input_metadata or {})}
+                    if edit_target is not None else None
+                )
+                context_messages = await prepare_context_history(
+                    conversation_id,
+                    list(system_messages or []),
+                    stored_events,
+                    specialist_input,
+                    context_worker,
+                    context_gateway,
+                    context_worker.max_output_tokens,
                 )
                 context = "\n\n".join(
                     f"{message['role']}: {_content_text(message['content'])}"
