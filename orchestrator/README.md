@@ -1,196 +1,92 @@
-# CLICoding Orchestrator — conversation and worker-routing slice
+# CDS_AI Orchestrator
 
-This service owns the canonical conversation history and selects internal workers by
-capability. The client talks to one stable Orchestrator endpoint; worker IDs are not
-client-selectable model names.
+This service is the single public conversation gateway for **CDS_AI**. Open WebUI and workstation/IDE clients connect to the Orchestrator; model workers remain private behind it.
 
-## Stack
+## Current architecture
 
-- Python 3.11+
-- FastAPI / Uvicorn
-- SQLite for durable conversation events
-- httpx for OpenAI-compatible chat-completions
-- YAML worker configuration
+- **Public identity:** `CDS_AI`. Internal worker IDs and served model aliases are never exposed through `/v1/models`.
+- **Conversation-first routing:** ordinary chat goes directly to a chat-capable worker and does not invoke Planner. Explicit coding/review/vision or forced multi-step work uses the specialist orchestrator.
+- **Streaming:** direct chat and OpenAI function-tool deltas stream from upstream SSE. Specialist execution currently returns a buffered final answer with valid SSE framing; it does not yet emit live progress events.
+- **History:** SQLite-backed conversations, tool-call metadata, summaries, retry idempotency, latest-turn regenerate, guarded edit/resubmit and active-turn cancellation.
+- **Context:** per-worker admission/output limits and versioned model-assisted compaction. Token estimation is conservative and not tokenizer-specific; live model limits must be verified before increasing context sizes.
+- **Tools:** typed OpenAI tool-call round-trip. The workstation-side Python reference adapter owns workspace tools, approval and execution. The DGX Orchestrator does not mount developer workspaces and exposes no arbitrary shell tool.
+- **Images:** conversation-scoped PNG/JPEG/GIF/WebP attachments with bounded upload, signature checks, SHA-256 integrity and owner-scoped retrieval/deletion.
+- **Security:** per-user bearer identities, durable token issue/list/revoke, per-principal SQLite rate limits, request IDs and administrator-only audit export. Trusted identity headers are safe only behind a private proxy that strips/reinjects them.
+- **Storage:** SQLite event sequence allocation is serialized across connections. Conversation locks and active-turn cancellation remain process-local; run exactly one Uvicorn worker until distributed turn locking is implemented.
 
-No LangGraph or LiteLLM dependency is required for this slice.
+## Install and run locally
 
-## Run locally
+Python 3.11+ is required.
 
 ```bash
 python -m venv .venv
 . .venv/bin/activate
 pip install -e '.[test]'
 cp .env.example .env
-# Configure CLICODING_WORKERS_FILE or the legacy single-upstream variables. Set CLICODING_ENABLE_PLANNING=true to enable the opt-in multi-model orchestration route.
-uvicorn clicoding_orchestrator.app:create_app --factory --app-dir src --host 127.0.0.1 --port 8090
+# Edit .env and configure a strong CLICODING_API_KEY before any LAN exposure.
+uvicorn clicoding_orchestrator.app:create_app --factory --app-dir src --host 127.0.0.1 --port 8090 --workers 1
 ```
 
-The example command binds to loopback. The optional `CLICODING_API_KEY` setting enables Bearer authentication on every endpoint except `/health`. Before LAN exposure, configure a long random key and internal TLS. This is shared-key authentication only; user/tenant isolation, quotas, and request-rate limits are not implemented.
+For a LAN deployment, bind only to the required private interface, use internal TLS or a trusted reverse proxy, and configure a strong bootstrap admin credential. Never expose model-worker ports directly.
 
-## Worker configuration
+## Authentication and operations
 
-Copy `config/workers.example.yaml` to a private local `workers.yaml`, then set
-`CLICODING_WORKERS_FILE=/absolute/path/to/workers.yaml` in the service environment.
-Replace endpoint and model aliases with values verified in your environment. Workers are
-disabled in the example until explicitly enabled by the operator.
+- `CLICODING_API_KEY`: bootstrap shared/admin bearer key. Keep it in the service secret environment, not in Git.
+- `CLICODING_USER_API_KEYS`: optional JSON object mapping stable user IDs to unique bearer tokens. The reserved user ID `admin` is administrative.
+- `CLICODING_TRUST_USER_HEADER=true`: optional Open WebUI identity-header mode. Enable only if a private trusted proxy prevents users from supplying or changing `X-CLICoding-User-ID` themselves. Otherwise issue per-user tokens.
+- `CLICODING_RATE_LIMIT_PER_WINDOW` and `CLICODING_RATE_LIMIT_WINDOW_SECONDS`: fixed-window per-principal request limit; defaults are 120 requests per 60 seconds.
+- `CLICODING_ATTACHMENT_STORAGE_DIR` and `CLICODING_MAX_ATTACHMENT_BYTES`: private image storage and upload bound.
+- `/health` is public for local monitoring. All other endpoints require authentication once a bootstrap or issued token exists. Authentication remains enabled after issued tokens are revoked.
+- Administrator token endpoints: `POST/GET /api/v1/admin/tokens`, `DELETE /api/v1/admin/tokens/{token_id}`. The plaintext token is returned only once; only its SHA-256 hash is stored.
+- Administrator audit export: `GET /api/v1/admin/audit?limit=100`. It records method, route, principal, status, request ID and timestamp, not request bodies, prompts or bearer tokens.
 
-Each worker declares an internal ID, OpenAI-compatible base URL, served model alias,
-capabilities, enabled state, priority, timeout, and maximum concurrency. The registry
-loader only reads configuration; it does not discover, download, install, load, wake,
-sleep, or otherwise mutate runtimes. Credentials should come from environment-backed
-secret injection rather than being committed in YAML.
+## Public OpenAI-compatible API
 
-With planning disabled, deterministic routing accepts a task hint of `chat`, `coding`, `review`, or `vision` and selects the enabled worker with the required capability and lowest numeric priority (worker ID breaks ties). With planning enabled, the Planner generates a validated task graph and the Orchestrator dispatches each task to a worker that supports all requested capabilities.
+- `GET /v1/models` — returns only the public model `CDS_AI`.
+- `POST /v1/chat/completions` — chat, multimodal image references, direct streaming and validated tool-call messages.
+- `X-CLICoding-Chat-ID` and `X-CLICoding-User-ID` — optional Open WebUI custom headers for stable per-user chat mapping when trusted-header mode is correctly secured.
+- The returned `conversation_id` should be persisted and sent on subsequent requests by generic OpenAI clients.
 
-## OpenAI-compatible client API
-
-The public client surface exposes one alias only:
-
-```http
-GET /v1/models
-POST /v1/chat/completions
-```
-
-The only public model ID is `clicoding`. Internal worker IDs and upstream model aliases
-are not returned by `/v1/models`. The chat endpoint supports non-streaming JSON and buffered Server-Sent Events, with
-`system`, `user`, and `assistant` messages plus base64 inline image content.
-
-Example request:
+Example:
 
 ```json
 {
-  "model": "clicoding",
+  "model": "CDS_AI",
   "messages": [{"role": "user", "content": "Hello"}],
-  "stream": false
+  "stream": true
 }
 ```
 
-The response includes the standard chat-completion fields plus a CLICoding extension:
+Do not configure Open WebUI to connect directly to a worker. It must connect to the Orchestrator's `/v1` endpoint and expose only `CDS_AI`.
 
-```json
-{
-  "model": "clicoding",
-  "conversation_id": "server-generated-id",
-  "choices": [{"message": {"role": "assistant", "content": "Hello"}}]
-}
-```
+## Conversation and attachment API
 
-For reliable canonical history, the client adapter must store the returned
-`conversation_id` with its chat and send it back on every subsequent request. If no
-conversation ID is supplied, the API creates a new canonical conversation and imports
-the supplied prior text turns on that first request. A generic OpenAI client that discards
-unknown response fields will not automatically preserve this mapping; client integration
-must be explicitly tested before connecting Open WebUI.
+- `POST /api/v1/conversations`
+- `GET /api/v1/conversations/{conversation_id}`
+- `POST /api/v1/conversations/{conversation_id}/cancel`
+- `POST /api/v1/conversations/{conversation_id}/attachments`
+- `GET /api/v1/conversations/{conversation_id}/attachments/{attachment_id}`
+- `DELETE /api/v1/conversations/{conversation_id}/attachments/{attachment_id}`
 
-The API rejects unknown public model aliases and unsupported message content. It does
-not yet support tools/function calls, audio, regenerate/edit semantics, or idempotency
-keys. When `stream=true`, it emits OpenAI-compatible Server-Sent Events after the
-orchestration has completed. This is buffered SSE compatibility, not token-by-token
-generation; the client receives the answer only after the workers and synthesis finish.
+All conversation and attachment operations enforce the authenticated owner scope. Legacy conversations remain in the `shared` namespace until explicitly migrated.
 
-### Open WebUI 0.13.x connection
+## Workstation and IDE tools
 
-Create an OpenAI-compatible connection with:
+Install the project on the developer workstation and use `cds_ai_ide_adapter.CDSAIClient` with a `WorkspaceToolHost` bound to one explicitly selected workspace. File writes and .NET build/test require approval; Git status/diff are fixed read-only commands. No general-purpose shell tool is exposed. Tool results are redacted for common credential-shaped values, but this is defense in depth and not a guarantee that every secret format is detected.
 
-- Base URL: `http://172.18.0.1:8090/v1` (for the documented DGX Docker bridge setup;
-  use the reachable private host address in other deployments).
-- API key: the value of `CLICODING_API_KEY` from the private service environment.
-- Public model: `clicoding` only.
+The adapter is currently a Python reference library, not a packaged VS Code, Visual Studio, Rider or JetBrains extension. Browser automation, Playwright screenshots, visual correction and cross-platform process sandboxing remain release gates.
 
-In that connection's custom headers, configure both values exactly as follows:
+## Backup and restore
 
-| Header | Value |
-| --- | --- |
-| `X-CLICoding-Chat-ID` | `{{CHAT_ID}}` |
-| `X-CLICoding-User-ID` | `{{USER_ID}}` |
+Install the package to obtain the `cds-ai-backup` command. See [docs/BACKUP_RESTORE.md](../docs/BACKUP_RESTORE.md) for verified SQLite/attachment backup, integrity checking, restore and rollback procedures. Stop CDS_AI before restore. Backups contain sensitive conversation data and must be encrypted at rest by the operator.
 
-Open WebUI 0.13.x removes its internal `metadata` object from the JSON body before
-proxying an OpenAI-compatible request. Its custom-header templates can forward the
-chat and user identifiers without changing Open WebUI itself. The Orchestrator derives
-a deterministic, per-user conversation ID from those two values, so subsequent turns
-reuse the same canonical conversation. Requests from generic OpenAI clients may
-continue to use the explicit `conversation_id` response extension.
+## Validation and release status
 
-Do not enable direct worker connections in Open WebUI. It should expose only the
-`clicoding` public alias; worker IDs and model aliases remain internal.
-
-## Internal conversation API
-
-Create a conversation:
-
-```http
-POST /api/v1/conversations
-```
-
-Append a turn:
-
-```http
-POST /api/v1/conversations/{conversation_id}/turns
-Content-Type: application/json
-
-{"content":"Review this code","task_type":"review"}
-```
-
-Omit `task_type` for ordinary chat. The same canonical conversation history is assembled
-for every selected worker, so a coding worker can continue after a chat worker without a
-new conversation.
-
-Retrieve canonical history:
-
-```http
-GET /api/v1/conversations/{conversation_id}
-```
-
-List worker configuration for operator diagnostics (never returns API keys):
-
-```http
-GET /api/v1/workers
-```
-
-Health:
-
-```http
-GET /health
-```
-
-## Opt-in multi-model orchestration
-
-Set `CLICODING_ENABLE_PLANNING=true` to enable planner-backed orchestration on the standard `/v1/chat/completions` endpoint and the internal conversation-turn API. It uses a worker declaring the `planning` capability (or falls back to a `chat` worker), validates the generated task graph, persists the execution and tasks before dispatch, and routes each task to a worker that supports all of its declared capabilities. Multiple successful task results are synthesized by a `chat` worker.
-
-```http
-POST /api/v1/conversations/{conversation_id}/orchestrated-turns
-Content-Type: application/json
-
-{"content":"Review the code and inspect this design"}
-```
-
-Inspect durable execution state with:
-
-```http
-GET /api/v1/conversations/{conversation_id}/executions/{execution_id}
-```
-
-When enabled, `/v1/chat/completions` uses the same planner-backed orchestration path; when disabled, it retains deterministic single-worker routing. The OpenAI-compatible response still exposes only the `clicoding` assistant identity and includes the canonical `conversation_id`; `x_clicoding.execution_id` identifies the internal execution. This remains a development slice. A strong `CLICODING_API_KEY` and internal TLS are required before LAN exposure; user/tenant isolation and quotas remain unimplemented.
-
-## Current limitations
-
-- The OpenAI-compatible text endpoint is implemented, but Open WebUI integration is not yet validated. Its adapter must persist and resend the returned `conversation_id`; do not assume generic clients preserve custom response fields.
-- With planning disabled, task type is a deterministic API hint. With planning enabled, semantic decomposition, validated dependency graphs, parallel execution, and synthesis are available through the planner-backed orchestration path.
-- Worker `max_concurrency` limits are enforced with process-local semaphores across concurrent requests. They are not distributed across multiple service processes.
-- Non-streaming text chat only; image/audio payload transport is not implemented. Tool/function calling is also not implemented.
-- One process is expected. Per-conversation in-process locks do not coordinate multiple
-  service processes.
-- Bearer authentication is optional and must be configured with `CLICODING_API_KEY` before LAN exposure. It is one shared key, not user/tenant isolation. TLS, quotas, and request-rate limits are not implemented.
-- Failed upstream requests leave the user event recorded. Idempotency keys and safe client
-  retry semantics are still required; regenerate/edit/resend behavior is not yet defined.
-- No tool broker, approval workflow, distributed queue, or resource-aware runtime scheduler.
-
-## Tests
+Run tests with:
 
 ```bash
 pip install -e '.[test]'
 pytest
 ```
 
-Tests cover persistence, worker capability selection, disabled-worker exclusion, and
-conversation continuity across a chat-to-coding worker handoff.
+GitHub Actions validates source-level behavior only. Live DGX model aliases, tool-call parser compatibility, vision quality, context limits, latency, concurrency and unified-memory headroom must be tested on the actual DGX runtimes before deployment. The integration candidate is source-only; do not transfer or restart services until all source gates are reviewed and the user explicitly approves deployment.
