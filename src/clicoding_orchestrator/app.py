@@ -108,6 +108,20 @@ class OpenAIChatRequest(BaseModel):
     tools: list[dict[str, Any]] | None = None
     tool_choice: str | dict[str, Any] | None = None
 
+    @field_validator("stop")
+    @classmethod
+    def validate_stop(cls, value):
+        if value is None:
+            return None
+        values = [value] if isinstance(value, str) else value
+        if (
+            not isinstance(values, list)
+            or not 1 <= len(values) <= 4
+            or any(not isinstance(item, str) or not item or len(item) > 256 for item in values)
+        ):
+            raise ValueError("stop must be a string or 1-4 non-empty strings of at most 256 characters")
+        return value
+
 
 logger = logging.getLogger(__name__)
 
