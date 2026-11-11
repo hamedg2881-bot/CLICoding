@@ -448,3 +448,66 @@ def test_explicit_specialist_task_uses_orchestrator(tmp_path):
     assert response.json()["x_clicoding"]["execution_id"] == "execution-123"
     assert len(orchestrator.calls) == 1
     assert gateway.calls == []
+
+
+def test_direct_chat_streams_incremental_deltas_and_persists_complete_answer(tmp_path):
+    class StreamingGateway:
+        def __init__(self):
+            self.messages = []
+
+        async def complete(self, messages):
+            raise AssertionError("streaming chat must not call buffered completion")
+
+        async def stream(self, messages):
+            self.messages = messages
+            yield "Hello"
+            yield " "
+            yield "world"
+
+    gateway = StreamingGateway()
+    database = Database(str(tmp_path / "streaming.sqlite3"))
+    registry = WorkerRegistry(
+        [
+            Worker(
+                "internal-chat",
+                "http://internal/v1",
+                "private-model-name",
+                frozenset({"chat"}),
+            )
+        ]
+    )
+    app = create_app(
+        settings=Settings(database_path=str(tmp_path / "streaming.sqlite3")),
+        gateway=gateway,
+        database=database,
+        registry=registry,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "clicoding",
+            "messages": [{"role": "user", "content": "Say hello"}],
+            "stream": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert '"content":"Hello"' in response.text
+    assert '"content":" "' in response.text
+    assert '"content":"world"' in response.text
+    assert '"finish_reason":"stop"' in response.text
+    assert response.text.endswith("data: [DONE]\n\n")
+    assert gateway.messages == [{"role": "user", "content": "Say hello"}]
+
+    with database.session() as connection:
+        row = connection.execute(
+            "SELECT id FROM conversations ORDER BY updated_at DESC LIMIT 1"
+        ).fetchone()
+        conversation_id = row["id"]
+    conversation = database.get_conversation(conversation_id)
+    assert [event["role"] for event in conversation["events"]] == ["user", "assistant"]
+    assert conversation["events"][-1]["content"] == "Hello world"
+    assert conversation["events"][-1]["producer"] == "internal-chat"
