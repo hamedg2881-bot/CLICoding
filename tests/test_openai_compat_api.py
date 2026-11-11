@@ -1,4 +1,7 @@
+import asyncio
 import json
+
+import httpx
 from fastapi.testclient import TestClient
 
 from clicoding_orchestrator.app import create_app
@@ -1009,3 +1012,58 @@ def test_failed_tool_continuation_retry_reuses_the_exact_tool_result(tmp_path):
     assert [event["role"] for event in events] == ["user", "assistant", "tool", "assistant"]
     assert events[2]["content"] == "same tool result"
     assert gateway.calls == 2
+
+
+
+def test_cancel_endpoint_stops_an_active_non_streaming_turn(tmp_path):
+    class BlockingGateway:
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.cancelled = asyncio.Event()
+
+        async def complete(self, messages, *, tools=None, tool_choice=None, options=None):
+            self.started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                self.cancelled.set()
+                raise
+
+    gateway = BlockingGateway()
+    database = Database(str(tmp_path / "cancel.sqlite3"))
+    conversation_id = database.create_conversation()["id"]
+    registry = WorkerRegistry([
+        Worker("chat", "http://chat/v1", "chat-model", frozenset({"chat"}))
+    ])
+    app = create_app(
+        settings=Settings(database_path=str(tmp_path / "cancel.sqlite3")),
+        gateway=gateway,
+        database=database,
+        registry=registry,
+    )
+
+    async def exercise_cancel():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            turn = asyncio.create_task(client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "CDS_AI",
+                    "conversation_id": conversation_id,
+                    "messages": [{"role": "user", "content": "Please wait"}],
+                },
+            ))
+            await asyncio.wait_for(gateway.started.wait(), timeout=3)
+            cancelled = await client.post(
+                f"/api/v1/conversations/{conversation_id}/cancel"
+            )
+            assert cancelled.status_code == 200
+            assert cancelled.json() == {"cancelled": True}
+            response = await asyncio.wait_for(turn, timeout=3)
+            assert response.status_code == 409
+            assert "cancelled" in response.json()["detail"].lower()
+
+    asyncio.run(exercise_cancel())
+    assert gateway.cancelled.is_set()
+    events = database.list_events(conversation_id)
+    assert [event["role"] for event in events] == ["user"]
