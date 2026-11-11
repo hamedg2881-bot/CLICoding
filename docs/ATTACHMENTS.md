@@ -54,4 +54,4 @@ Both operations require conversation ownership. Retrieval verifies stored size a
 - The server checks MIME signatures, configured size limits and SHA-256 integrity.
 - Context summarization replaces old image payloads with a reference note; original conversation events and attachment files are not silently removed.
 
-Automatic expiry/retention, storage backup/restore, content decoding validation and malware scanning remain release gates. Back up the attachment directory together with the SQLite database. Do not expose the attachment directory as a public static web root.
+Verified SQLite and attachment backup/restore is available through the packaged `cds-ai-backup` CLI; see [BACKUP_RESTORE.md](BACKUP_RESTORE.md). It includes only files referenced by the database snapshot and verifies size/SHA-256 before publishing or restoring a backup. Stop CDS_AI before restore. Automatic expiry/retention, image decoding/content validation and malware scanning remain release gates. Do not expose the attachment directory as a public static web root.
