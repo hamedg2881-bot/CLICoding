@@ -152,6 +152,7 @@ def test_yaml_registry_loads_explicit_context_budgets(tmp_path):
         "    base_url: http://localhost:8000/v1\\n"
         "    model: chat-model\\n"
         "    capabilities: [chat]\\n"
+        "    enabled: true\\n"
         "    context_window_tokens: 32768\\n"
         "    max_output_tokens: 4096\\n",
         encoding="utf-8",
