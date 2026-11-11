@@ -402,11 +402,17 @@ def create_app(
                 execution_id = result.execution_id
             else:
                 try:
-                    required_capability = (
-                        "tool_calling" if tool_definitions is not None
-                        else ("vision" if _has_images(vision_content) else task_type)
+                    required_capabilities = (
+                        {"tool_calling"}
+                        if tool_definitions is not None
+                        else ({"vision"} if _has_images(vision_content) else {task_type})
                     )
-                    worker = router.select_capabilities({required_capability})
+                    if tool_definitions is not None:
+                        if task_type != "chat":
+                            required_capabilities.add(task_type)
+                        if _has_images(vision_content):
+                            required_capabilities.add("vision")
+                    worker = router.select_capabilities(required_capabilities)
                 except NoEligibleWorker as exc:
                     raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -904,6 +910,11 @@ def create_app(
                 {"tool_calling"} if tool_definitions
                 else ({"vision"} if _has_images(last_user) else {chat_request.task_type})
             )
+            if tool_definitions:
+                if chat_request.task_type != "chat":
+                    required.add(chat_request.task_type)
+                if _has_images(last_user):
+                    required.add("vision")
             try:
                 stream_worker = router.select_capabilities(required)
             except NoEligibleWorker as exc:
