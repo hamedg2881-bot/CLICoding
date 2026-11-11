@@ -316,3 +316,15 @@ User supplied a fresh command output from host `spark-7ea3`:
 - GitHub Actions run **43013958446** on head `80a3366890e68688b81edc2d4cd40f02c1922370`: **76 passed, 1 warning**.
 - No source files have been transferred to DGX Spark; no host services, model runtimes, or worker configurations have been changed.
 - Remaining release blockers include structured tool-call round-tripping and a workstation tool host, per-user authorization/ownership enforcement, context budgeting and compaction, explicit cancellation/retry/regeneration, attachment lifecycle hardening, reference IDE adapter, and Open WebUI/IDE end-to-end acceptance.
+
+## 2026-11-11 — Workstation adapter and context admission control
+
+- Added the Python reference package `cds_ai_ide_adapter`: workspace-bound file listing/read/search, approved atomic file writes with SHA-256 optimistic concurrency, fixed Git status/diff, and approved fixed .NET build/test commands.
+- Added a local SQLite idempotency ledger. Successful tool results are cached; a reused call ID with different arguments is rejected; interrupted side effects are not automatically re-executed.
+- Added `CDSAIClient` to run the non-streaming tool loop on the workstation. DGX remains an inference/orchestration endpoint and receives no workspace mount or shell authority.
+- Workstation tests cover traversal, symlink escape, secret-file blocking, approval denial, write idempotency, command argument arrays, restricted environment, and an end-to-end tool round-trip through the API.
+- Added per-worker `context_window_tokens` and `max_output_tokens` limits. Context admission uses a conservative UTF-8 estimate and fixed image reservation; over-budget requests are rejected with HTTP 413 rather than silently truncated. Direct streaming is preflighted before SSE and rechecked under the conversation lock.
+- Supported OpenAI generation options (temperature, max_tokens, top_p, presence/frequency penalties, bounded stop sequences) are forwarded to direct chat and tool-call workers; output limits are enforced per worker. Specialist user-supplied generation options are explicitly rejected for now rather than silently ignored.
+- Automatic history summarization/compaction is not implemented. Token estimation is not tokenizer-specific and must be replaced/refined per actual runtime before larger context windows are enabled.
+- Latest CI evidence for the workstation adapter before context-budgeting work: run 43015872942, **98 passed, 1 warning**. Context-budgeting branch is awaiting its own CI run.
+- No transfer to DGX Spark or changes to any DGX runtime/service have been made.
