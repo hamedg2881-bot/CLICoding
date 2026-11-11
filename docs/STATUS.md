@@ -286,3 +286,15 @@ User supplied a fresh command output from host `spark-7ea3`:
 - PR #5 (bounded Planner output repair) passed CI but is a defensive reliability improvement only; it is not the architecture fix and has not been merged.
 - No changes deployed to DGX. ZIP transfer and service restart remain gated on CI, source review, host-side validation, and explicit user approval.
 - Required next work: typed tool-call contracts; safe host-side tool execution and approvals; shared IDE adapter contract; workstation-side workspace/file/diff/build/test/screenshot loop; natural-language specialist routing; true incremental streaming and cancellation.
+
+## 2026-11-11 — Modern chat interaction slice
+
+- Extended the OpenAI-compatible model gateway with upstream SSE delta streaming.
+- Direct chat now forwards actual incremental text deltas to clients; it does not wait for the complete model answer before sending the first content chunk.
+- Conversation user event is persisted before generation; assistant event is persisted only after a complete successful stream. Interrupted streams are not recorded as completed assistant messages.
+- Client cancellation propagates through async stream iteration so the upstream HTTP stream is closed and the worker semaphore is released.
+- Added regression coverage for incremental delta chunks and final conversation persistence.
+- CI run 43012306383 passed: 73 tests passed, 1 warning. Earlier implementation runs 43012195870 and 43012270120 also passed.
+- Added docs/CHAT_EXPERIENCE_SPEC.md as the product acceptance contract for modern chat quality and IDE parity.
+- Limitations remain explicit: specialist orchestration streams only its final answer; tool-call round-trip, context budgeting/compaction, client-visible cancellation controls, richer attachment storage, and reference IDE adapter are not yet implemented.
+- No DGX transfer or service restart has occurred.
