@@ -97,7 +97,9 @@ class MultiModelOrchestrator:
             chunks.append("".join(current))
         return chunks
 
-    async def _compact_context_for_worker(\n        self, worker: Worker, context: str, reserved_input_tokens: int = 0\n    ) -> str:
+    async def _compact_context_for_worker(
+        self, worker: Worker, context: str, reserved_input_tokens: int = 0
+    ) -> str:
         """Create a worker-budgeted continuity summary without mutating canonical history."""
         if not context:
             return ""
@@ -131,7 +133,7 @@ class MultiModelOrchestrator:
         except ContextBudgetExceeded:
             pass
 
-        input_budget = worker.context_window_tokens - worker.max_output_tokens
+        input_budget = effective_window - worker.max_output_tokens
         chunk_bytes = max(256, (input_budget - 256) * 2)
         current = context
         for _round in range(3):
@@ -161,7 +163,7 @@ class MultiModelOrchestrator:
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": current},
                     ],
-                    context_window_tokens=worker.context_window_tokens,
+                    context_window_tokens=effective_window,
                     reserved_output_tokens=worker.max_output_tokens,
                 )
                 return current
@@ -244,7 +246,7 @@ class MultiModelOrchestrator:
                 + "multimodal worker receives the actual image content."
             )
         planning_context = await self._compact_context_for_worker(
-            planning_worker, conversation_context
+            planning_worker, conversation_context, reserved_input_tokens=1024
         )
         plan = await planner.create_plan(planning_request, planning_context)
 
