@@ -1189,4 +1189,4 @@ def test_long_conversation_is_summarized_without_dropping_recent_turns(tmp_path)
     assert "question-3" in joined_history
     assert "question-4" in joined_history
     assert "current request" in joined_history
-    assert len(database.list_events(conversation_id)) == 11
+    assert len(database.list_events(conversation_id)) == 12
