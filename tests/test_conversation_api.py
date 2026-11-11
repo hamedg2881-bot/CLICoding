@@ -393,3 +393,22 @@ def test_conversation_summary_rejects_non_monotonic_or_unknown_boundaries(tmp_pa
         database.save_summary(conversation_id, 1, "Older summary", "model")
     with pytest.raises(ValueError, match="existing conversation event"):
         database.save_summary(conversation_id, 99, "Unknown boundary", "model")
+
+
+
+def test_rewriting_conversation_history_invalidates_only_affected_summaries(tmp_path):
+    database = Database(str(tmp_path / "summary-invalidation.sqlite3"))
+    conversation_id = database.create_conversation()["id"]
+    for index in range(6):
+        database.append_event(
+            conversation_id,
+            "user" if index % 2 == 0 else "assistant",
+            f"event-{index}",
+        )
+    database.save_summary(conversation_id, 2, "summary through 2", "model")
+    database.save_summary(conversation_id, 4, "summary through 4", "model")
+
+    deleted = database.invalidate_summaries_from_sequence(conversation_id, 4)
+
+    assert deleted == 1
+    assert database.get_latest_summary(conversation_id)["through_sequence"] == 2
