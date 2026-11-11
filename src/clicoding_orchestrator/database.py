@@ -77,6 +77,20 @@ class Database:
                 CREATE INDEX IF NOT EXISTS ix_events_conversation_sequence
                     ON conversation_events(conversation_id, sequence);
 
+                CREATE TABLE IF NOT EXISTS conversation_summaries (
+                    id TEXT PRIMARY KEY,
+                    conversation_id TEXT NOT NULL
+                        REFERENCES conversations(id) ON DELETE CASCADE,
+                    through_sequence INTEGER NOT NULL,
+                    summary TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE (conversation_id, through_sequence)
+                );
+
+                CREATE INDEX IF NOT EXISTS ix_summaries_conversation_sequence
+                    ON conversation_summaries(conversation_id, through_sequence);
+
                 CREATE TABLE IF NOT EXISTS executions (
                     id TEXT PRIMARY KEY,
                     conversation_id TEXT NOT NULL
@@ -359,6 +373,71 @@ class Database:
                 event["metadata"] = None
             events.append(event)
         return events
+
+    def get_latest_summary(self, conversation_id: str) -> dict[str, Any] | None:
+        with self.session() as connection:
+            row = connection.execute(
+                """
+                SELECT id, conversation_id, through_sequence, summary, model, created_at
+                FROM conversation_summaries
+                WHERE conversation_id = ?
+                ORDER BY through_sequence DESC
+                LIMIT 1
+                """,
+                (conversation_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def save_summary(
+        self,
+        conversation_id: str,
+        through_sequence: int,
+        summary: str,
+        model: str,
+    ) -> dict[str, Any]:
+        if not isinstance(through_sequence, int) or isinstance(through_sequence, bool) or through_sequence < 1:
+            raise ValueError("through_sequence must be a positive event sequence")
+        if not isinstance(summary, str) or not summary.strip() or len(summary) > 24000:
+            raise ValueError("summary must contain 1 to 24000 characters")
+        if not isinstance(model, str) or not model.strip() or len(model) > 256:
+            raise ValueError("model must contain 1 to 256 characters")
+        summary_id = str(uuid.uuid4())
+        now = utc_now()
+        with self.session() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if connection.execute(
+                "SELECT 1 FROM conversations WHERE id = ?", (conversation_id,)
+            ).fetchone() is None:
+                raise ValueError("conversation does not exist")
+            event = connection.execute(
+                "SELECT 1 FROM conversation_events WHERE conversation_id = ? AND sequence = ?",
+                (conversation_id, through_sequence),
+            ).fetchone()
+            if event is None:
+                raise ValueError("summary boundary must reference an existing conversation event")
+            latest = connection.execute(
+                "SELECT through_sequence FROM conversation_summaries "
+                "WHERE conversation_id = ? ORDER BY through_sequence DESC LIMIT 1",
+                (conversation_id,),
+            ).fetchone()
+            if latest is not None and through_sequence <= latest["through_sequence"]:
+                raise ValueError("summary boundary must advance beyond the previous summary")
+            connection.execute(
+                """
+                INSERT INTO conversation_summaries
+                    (id, conversation_id, through_sequence, summary, model, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (summary_id, conversation_id, through_sequence, summary, model, now),
+            )
+        return {
+            "id": summary_id,
+            "conversation_id": conversation_id,
+            "through_sequence": through_sequence,
+            "summary": summary,
+            "model": model,
+            "created_at": now,
+        }
 
     def get_conversation(
         self, conversation_id: str, owner_id: str | None = None
