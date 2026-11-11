@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from typing import Any
 
 
@@ -69,3 +70,40 @@ def ensure_context_budget(
     if estimate > input_budget:
         raise ContextBudgetExceeded(estimate, input_budget)
     return estimate
+
+
+
+def select_compaction_cutoff(
+    events: list[dict[str, Any]],
+    *,
+    keep_recent_user_turns: int = 3,
+) -> int | None:
+    """Return a boundary before the oldest retained recent user turn."""
+    if keep_recent_user_turns < 1:
+        raise ValueError("keep_recent_user_turns must be positive")
+    user_positions = [
+        index for index, event in enumerate(events)
+        if event.get("role") == "user"
+    ]
+    if len(user_positions) <= keep_recent_user_turns:
+        return None
+    cutoff = user_positions[-keep_recent_user_turns]
+    return cutoff if cutoff > 0 else None
+
+
+_SECRET_ASSIGNMENT = re.compile(
+    r"(?i)(api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|secret|authorization)(\s*[:=]\s*)([^\s,;]+)"
+)
+_BEARER_TOKEN = re.compile(r"(?i)Bearer\s+[A-Za-z0-9._~+/=-]{16,}")
+_GITHUB_TOKEN = re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b")
+_OPENAI_TOKEN = re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b")
+_AWS_ACCESS_KEY = re.compile(r"\bAKIA[0-9A-Z]{16}\b")
+
+def redact_sensitive_text(value: str) -> str:
+    """Redact common credential-shaped values before storing generated summaries."""
+    redacted = _SECRET_ASSIGNMENT.sub(r"\\1\\2[REDACTED]", value)
+    redacted = _BEARER_TOKEN.sub("Bearer [REDACTED]", redacted)
+    redacted = _GITHUB_TOKEN.sub("[REDACTED_GITHUB_TOKEN]", redacted)
+    redacted = _OPENAI_TOKEN.sub("[REDACTED_API_TOKEN]", redacted)
+    redacted = _AWS_ACCESS_KEY.sub("[REDACTED_AWS_KEY]", redacted)
+    return redacted
