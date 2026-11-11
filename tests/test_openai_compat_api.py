@@ -679,3 +679,149 @@ def test_openai_api_rejects_streaming_tool_calls_until_sse_tool_deltas_are_suppo
         },
     )
     assert response.status_code == 400
+
+
+class OptionsGateway:
+    def __init__(self):
+        self.options = None
+        self.calls = 0
+
+    async def complete(self, messages, *, options=None):
+        self.calls += 1
+        self.options = options
+        return Completion(content="option-aware reply", model="chat-model")
+
+
+def test_openai_api_forwards_supported_generation_options(tmp_path):
+    gateway = OptionsGateway()
+    database = Database(str(tmp_path / "options.sqlite3"))
+    registry = WorkerRegistry([
+        Worker(
+            "chat",
+            "http://chat/v1",
+            "chat-model",
+            frozenset({"chat"}),
+            context_window_tokens=4096,
+            max_output_tokens=512,
+        )
+    ])
+    app = create_app(
+        settings=Settings(database_path=str(tmp_path / "options.sqlite3")),
+        gateway=gateway,
+        database=database,
+        registry=registry,
+    )
+    response = TestClient(app).post(
+        "/v1/chat/completions",
+        json={
+            "model": "CDS_AI",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "temperature": 0.2,
+            "max_tokens": 256,
+            "top_p": 0.8,
+            "presence_penalty": 0.1,
+            "frequency_penalty": -0.2,
+            "stop": ["END"],
+        },
+    )
+    assert response.status_code == 200
+    assert gateway.options == {
+        "temperature": 0.2,
+        "max_tokens": 256,
+        "top_p": 0.8,
+        "presence_penalty": 0.1,
+        "frequency_penalty": -0.2,
+        "stop": ["END"],
+    }
+
+
+def test_openai_api_rejects_output_limit_above_worker_budget(tmp_path):
+    gateway = OptionsGateway()
+    database = Database(str(tmp_path / "output-limit.sqlite3"))
+    registry = WorkerRegistry([
+        Worker(
+            "chat",
+            "http://chat/v1",
+            "chat-model",
+            frozenset({"chat"}),
+            context_window_tokens=4096,
+            max_output_tokens=512,
+        )
+    ])
+    app = create_app(
+        settings=Settings(database_path=str(tmp_path / "output-limit.sqlite3")),
+        gateway=gateway,
+        database=database,
+        registry=registry,
+    )
+    response = TestClient(app).post(
+        "/v1/chat/completions",
+        json={
+            "model": "CDS_AI",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "max_tokens": 1024,
+        },
+    )
+    assert response.status_code == 400
+    assert gateway.calls == 0
+
+
+def test_openai_api_rejects_context_overflow_without_truncating(tmp_path):
+    gateway = OptionsGateway()
+    database = Database(str(tmp_path / "context-limit.sqlite3"))
+    registry = WorkerRegistry([
+        Worker(
+            "chat",
+            "http://chat/v1",
+            "chat-model",
+            frozenset({"chat"}),
+            context_window_tokens=2048,
+            max_output_tokens=256,
+        )
+    ])
+    app = create_app(
+        settings=Settings(database_path=str(tmp_path / "context-limit.sqlite3")),
+        gateway=gateway,
+        database=database,
+        registry=registry,
+    )
+    response = TestClient(app).post(
+        "/v1/chat/completions",
+        json={
+            "model": "CDS_AI",
+            "messages": [{"role": "user", "content": "x" * 5000}],
+        },
+    )
+    assert response.status_code == 413
+    assert gateway.calls == 0
+
+
+def test_openai_api_preflights_context_overflow_before_streaming(tmp_path):
+    gateway = OptionsGateway()
+    database = Database(str(tmp_path / "stream-context-limit.sqlite3"))
+    registry = WorkerRegistry([
+        Worker(
+            "chat",
+            "http://chat/v1",
+            "chat-model",
+            frozenset({"chat"}),
+            context_window_tokens=2048,
+            max_output_tokens=256,
+        )
+    ])
+    app = create_app(
+        settings=Settings(database_path=str(tmp_path / "stream-context-limit.sqlite3")),
+        gateway=gateway,
+        database=database,
+        registry=registry,
+    )
+    response = TestClient(app).post(
+        "/v1/chat/completions",
+        json={
+            "model": "CDS_AI",
+            "messages": [{"role": "user", "content": "x" * 5000}],
+            "stream": True,
+        },
+    )
+    assert response.status_code == 413
+    assert gateway.calls == 0
