@@ -379,3 +379,60 @@ def test_database_deletes_target_and_all_later_events_transactionally(tmp_path):
     assert database.list_events(conversation_id) == []
     with pytest.raises(ValueError, match="target event does not exist"):
         database.delete_events_from(conversation_id, first["id"])
+
+def test_conversation_summary_is_versioned_and_never_rewrites_original_events(tmp_path):
+    database = Database(str(tmp_path / "summaries.sqlite3"))
+    conversation_id = database.create_conversation()["id"]
+    for role, content in [
+        ("user", "first question"),
+        ("assistant", "first answer"),
+        ("user", "second question"),
+        ("assistant", "second answer"),
+    ]:
+        database.append_event(conversation_id, role, content)
+
+    first = database.save_summary(
+        conversation_id, 2, "Summary of first turn", "summary-model"
+    )
+    assert database.get_latest_summary(conversation_id) == first
+    second = database.save_summary(
+        conversation_id, 4, "Updated summary of both turns", "summary-model"
+    )
+    assert database.get_latest_summary(conversation_id) == second
+    assert [event["content"] for event in database.list_events(conversation_id)] == [
+        "first question", "first answer", "second question", "second answer"
+    ]
+
+
+def test_conversation_summary_rejects_non_monotonic_or_unknown_boundaries(tmp_path):
+    import pytest
+
+    database = Database(str(tmp_path / "summary-boundary.sqlite3"))
+    conversation_id = database.create_conversation()["id"]
+    database.append_event(conversation_id, "user", "question")
+    database.append_event(conversation_id, "assistant", "answer")
+    database.save_summary(conversation_id, 2, "Summary", "model")
+
+    with pytest.raises(ValueError, match="advance"):
+        database.save_summary(conversation_id, 1, "Older summary", "model")
+    with pytest.raises(ValueError, match="existing conversation event"):
+        database.save_summary(conversation_id, 99, "Unknown boundary", "model")
+
+
+
+def test_rewriting_conversation_history_invalidates_only_affected_summaries(tmp_path):
+    database = Database(str(tmp_path / "summary-invalidation.sqlite3"))
+    conversation_id = database.create_conversation()["id"]
+    for index in range(6):
+        database.append_event(
+            conversation_id,
+            "user" if index % 2 == 0 else "assistant",
+            f"event-{index}",
+        )
+    database.save_summary(conversation_id, 2, "summary through 2", "model")
+    database.save_summary(conversation_id, 4, "summary through 4", "model")
+
+    deleted = database.invalidate_summaries_from_sequence(conversation_id, 4)
+
+    assert deleted == 1
+    assert database.get_latest_summary(conversation_id)["through_sequence"] == 2
