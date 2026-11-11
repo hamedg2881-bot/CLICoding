@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 from clicoding_orchestrator.app import create_app
 from clicoding_orchestrator.config import Settings
 from clicoding_orchestrator.database import Database
-from clicoding_orchestrator.gateway import Completion
+from clicoding_orchestrator.gateway import Completion, GatewayError
 from clicoding_orchestrator.registry import Worker, WorkerRegistry
 
 
@@ -910,3 +910,102 @@ def test_openai_api_preflights_context_overflow_before_streaming(tmp_path):
     )
     assert response.status_code == 413
     assert gateway.calls == 0
+
+
+class FailOnceGateway:
+    def __init__(self):
+        self.calls = 0
+
+    async def complete(self, messages):
+        self.calls += 1
+        if self.calls == 1:
+            raise GatewayError("temporary upstream failure")
+        return Completion(content="retry succeeded", model="chat-model")
+
+
+def test_failed_user_turn_retry_reuses_the_unfinished_input_event(tmp_path):
+    gateway = FailOnceGateway()
+    database = Database(str(tmp_path / "retry.sqlite3"))
+    conversation_id = "retry-user-turn"
+    database.get_or_create_conversation(conversation_id)
+    registry = WorkerRegistry([
+        Worker("chat", "http://chat/v1", "chat-model", frozenset({"chat"}))
+    ])
+    app = create_app(
+        settings=Settings(database_path=str(tmp_path / "retry.sqlite3")),
+        gateway=gateway,
+        database=database,
+        registry=registry,
+    )
+    client = TestClient(app)
+    request = {
+        "model": "CDS_AI",
+        "conversation_id": conversation_id,
+        "messages": [{"role": "user", "content": "same request"}],
+    }
+
+    failed = client.post("/v1/chat/completions", json=request)
+    assert failed.status_code == 502
+    assert [event["role"] for event in database.list_events(conversation_id)] == ["user"]
+
+    retried = client.post("/v1/chat/completions", json=request)
+    assert retried.status_code == 200
+    assert retried.json()["choices"][0]["message"]["content"] == "retry succeeded"
+    events = database.list_events(conversation_id)
+    assert [event["role"] for event in events] == ["user", "assistant"]
+    assert gateway.calls == 2
+
+
+def test_failed_tool_continuation_retry_reuses_the_exact_tool_result(tmp_path):
+    gateway = FailOnceGateway()
+    database = Database(str(tmp_path / "retry-tool.sqlite3"))
+    conversation_id = "retry-tool-turn"
+    database.get_or_create_conversation(conversation_id)
+    call = {
+        "id": "call_retry_1",
+        "type": "function",
+        "function": {"name": "read_file", "arguments": '{"path":"README.md"}'},
+    }
+    database.append_event(conversation_id, "user", "Read README", "user")
+    database.append_event(
+        conversation_id,
+        "assistant",
+        "",
+        "chat-model",
+        metadata={"tool_calls": [call], "finish_reason": "tool_calls"},
+    )
+    registry = WorkerRegistry([
+        Worker(
+            "tool-worker",
+            "http://tool/v1",
+            "tool-model",
+            frozenset({"chat", "tool_calling"}),
+        )
+    ])
+    app = create_app(
+        settings=Settings(database_path=str(tmp_path / "retry-tool.sqlite3")),
+        gateway=gateway,
+        database=database,
+        registry=registry,
+    )
+    client = TestClient(app)
+    request = {
+        "model": "CDS_AI",
+        "conversation_id": conversation_id,
+        "messages": [{
+            "role": "tool",
+            "tool_call_id": "call_retry_1",
+            "name": "read_file",
+            "content": "same tool result",
+        }],
+        "tools": tool_definitions(),
+    }
+
+    failed = client.post("/v1/chat/completions", json=request)
+    assert failed.status_code == 502
+    retried = client.post("/v1/chat/completions", json=request)
+    assert retried.status_code == 200
+    events = database.list_events(conversation_id)
+    assert [event["role"] for event in events] == ["user", "assistant", "tool", "assistant"]
+    assert events[2]["content"] == "same tool result"
+    assert gateway.calls == 2
