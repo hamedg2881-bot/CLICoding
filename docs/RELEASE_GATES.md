@@ -44,7 +44,8 @@
 - [x] Paginated administrator-only audit export without request bodies or bearer-token values.
 - [ ] Audit retention/export signing and alerting policy.
 - [x] Serialize event-sequence allocation across SQLite connections with immediate write transactions.
-- [ ] Add cross-process conversation turn locks/cancellation or enforce a single-worker deployment; current per-conversation locks and active-turn cancellation are process-local.
+- [x] Durable SQLite-backed cross-process conversation turn leases with atomic acquisition, periodic renewal, expiry recovery, and cancellation requests observed by the owning API process; direct streaming and buffered/specialist turn paths share the lease gate. The lease monitor fails closed on storage/renewal errors, and caller disconnects cancel the child turn.
+- [ ] Verify cross-process turn lease/cancellation behavior in CI and add an API-level two-app cancellation acceptance test before relaxing the single-worker deployment restriction.
 - [ ] Prove trusted Open WebUI headers are stripped/reinjected by the actual private proxy; otherwise use per-user tokens.
 
 ## Live DGX runtime acceptance
