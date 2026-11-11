@@ -375,4 +375,5 @@ def test_database_deletes_target_and_all_later_events_transactionally(tmp_path):
     removed = database.delete_events_from(conversation_id, first["id"])
     assert removed == 3
     assert database.list_events(conversation_id) == []
-    assert database.delete_events_from(conversation_id, first["id"]) == 0 if False else True
+    with pytest.raises(ValueError, match="target event does not exist"):
+        database.delete_events_from(conversation_id, first["id"])
