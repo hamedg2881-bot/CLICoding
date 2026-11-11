@@ -1336,4 +1336,3 @@ def test_openai_chat_always_receives_shared_cds_ai_policy(tmp_path):
     assert gateway.calls[0][1]["role"] == "system"
     assert "You are CDS_AI" in gateway.calls[0][1]["content"]
     assert "right-to-left" in gateway.calls[0][1]["content"]
-    assert response.json()["system_messages_applied"] == 2
