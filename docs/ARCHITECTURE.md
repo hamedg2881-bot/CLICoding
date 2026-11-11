@@ -123,3 +123,30 @@ LiteLLM is a candidate OpenAI-compatible transport/gateway layer only. It is not
 
 The user-facing client connects to one stable Orchestrator endpoint and one assistant alias. It must not connect directly to worker model runtimes or expose their model IDs in the normal user experience. Any LiteLLM instance is downstream/internal. The Orchestrator owns worker selection and handoffs, while client conversation identifiers are mapped to canonical Orchestrator conversation IDs.
 
+## Conversation-first execution model (supersedes planner-first request flow)
+
+The public assistant is conversation-first. The Conversation Engine owns canonical conversation history, identity, turn serialization, context assembly, and response persistence. A normal text turn is sent directly to the selected chat-capable model and does not invoke the Planner.
+
+Specialist execution is an opt-in branch selected by an explicit capability/task hint or modality:
+- ordinary chat: direct chat-capable model response;
+- coding/review: specialist orchestration path;
+- image input: vision-capable specialist path;
+- multi-step work: Planner and durable task executor only when decomposition is justified.
+
+The Planner is not the conversation manager and is never a mandatory preprocessor for every user message. It is a specialist planning component. Tool calls must be represented as validated, allow-listed requests; the host executes them only after policy and approval checks. The model never receives direct filesystem, shell, network, or workspace authority.
+
+The same Conversation Engine and stable assistant identity serve both Open WebUI and IDE adapters. IDE clients may provide an explicit task/capability hint, but must not address worker endpoints directly. Workstation-side tools remain on the developer workstation; the DGX hosts model inference and shared orchestration services.
+
+### Required invariants
+
+1. A plain-text chat turn must succeed without Planner availability.
+2. A specialist route must be selected only from validated task hints, modality, or a separately tested routing decision.
+3. Conversation history is persisted independently of the model/worker that produced each turn.
+4. Invalid planner output cannot enter execution or corrupt the conversation event history.
+5. Tool execution is allow-listed, workspace-scoped, auditable, and approval-gated where required.
+6. OpenAI-compatible chat transport and IDE adapters share the same conversation and policy contracts.
+7. Streaming must represent actual incremental output before it is described as token streaming; buffered SSE is not token streaming.
+
+### Migration rule
+
+Do not remove the existing durable planner/executor, approval, or sandbox capabilities. Move them behind the specialist/tool-execution boundary. Migrate in small vertical slices with tests proving direct chat, specialist routing, context continuity, tool safety, and IDE compatibility. No DGX deployment is implied by a GitHub change.
