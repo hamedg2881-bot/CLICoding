@@ -58,6 +58,7 @@ def test_conversation_history_survives_worker_handoff(tmp_path):
     assert second.json()["producer"] == "coder-worker"
 
     assert gateway.calls[1] == [
+        {"role": "system", "content": CDS_AI_SYSTEM_PROMPT},
         {"role": "user", "content": "Hello"},
         {"role": "assistant", "content": "answer-1"},
         {"role": "user", "content": "Fix the Python function"},
