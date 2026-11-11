@@ -32,12 +32,12 @@
 ## Current implementation snapshot — 2026-11-11
 - Product identity: `CDS_AI`; legacy CLICoding service/database/environment identifiers remain for compatibility.
 - Conversation lifecycle: persistent history, exact retry idempotency, latest-turn regenerate and guarded edit/resubmit operations are present in PR #13; the integration candidate adds an authenticated active-turn cancellation endpoint.
-- Context lifecycle: direct chat and tool-call turns use model-assisted compaction with versioned summaries. Original events remain intact; recent three user turns are retained; summaries are invalidated when rewritten history intersects their coverage. Specialist orchestration compaction remains open.
+- Context lifecycle: direct chat and tool-call turns use model-assisted compaction with versioned summaries. Original events remain intact; recent three user turns are retained; summaries are invalidated when rewritten history intersects their coverage. Specialist planning, each task worker and final synthesis now receive independently budgeted context summaries when needed; canonical history is not rewritten.
 - Streaming: direct chat and tool-call deltas stream; specialist output remains buffered before SSE. SSE framing regression tests cover specialist and operation-error paths.
 - Workstation execution: approved, allow-listed reference tool host; no arbitrary shell tool.
 - Worker example uses recorded ports 8003/8004/8005 and leaves all workers disabled. Served aliases and tool-call capability require live verification.
 - Attachments: conversation-scoped PNG/JPEG/GIF/WebP upload, bounded size, MIME sniffing, SHA-256 integrity, private local storage, owner-scoped fetch/delete, and attachment-reference resolution into model vision payloads. Automatic expiry/retention and storage backup/restore policy remain open.
-- Remaining source gates include packaged IDE UI, browser/screenshot visual validation, specialist context compaction/progress events, OS-level process sandboxing, audit retention/alerting and cross-platform acceptance. Live multi-process supervisor acceptance remains a deployment gate.
+- Remaining source gates include packaged IDE UI, browser/screenshot visual validation, specialist progress events, OS-level process sandboxing, audit retention/alerting and cross-platform acceptance. Live multi-process supervisor acceptance remains a deployment gate.
 - No DGX host files, services, model runtimes or containers have been changed.
 
 ## Confirmed requirements
