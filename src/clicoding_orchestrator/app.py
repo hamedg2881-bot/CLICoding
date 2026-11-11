@@ -18,6 +18,7 @@ from .tool_protocol import (
 )
 
 from .config import Settings
+from .context import ContextBudgetExceeded, ensure_context_budget
 from .database import Database
 from .gateway import GatewayError, ModelGateway, OpenAICompatibleGateway
 from .registry import RegistryError, Worker, WorkerRegistry, runtime_key
@@ -97,8 +98,12 @@ class OpenAIChatRequest(BaseModel):
     conversation_id: str | None = None
     task_type: Literal["chat", "coding", "review", "vision"] = "chat"
     stream: bool = False
-    temperature: float | None = None
-    max_tokens: int | None = Field(default=None, gt=0)
+    temperature: float | None = Field(default=None, ge=0, le=2)
+    max_tokens: int | None = Field(default=None, gt=0, le=131072)
+    top_p: float | None = Field(default=None, gt=0, le=1)
+    presence_penalty: float | None = Field(default=None, ge=-2, le=2)
+    frequency_penalty: float | None = Field(default=None, ge=-2, le=2)
+    stop: str | list[str] | None = None
     user: str | None = None
     tools: list[dict[str, Any]] | None = None
     tool_choice: str | dict[str, Any] | None = None
@@ -301,6 +306,7 @@ def create_app(
         input_metadata: dict[str, Any] | None = None,
         tool_definitions: dict[str, dict[str, Any]] | None = None,
         tool_choice: str | dict[str, Any] | None = None,
+        generation_options: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], str, str | None]:
         if not db.conversation_exists(conversation_id):
             raise HTTPException(status_code=404, detail="Conversation not found")
@@ -395,14 +401,34 @@ def create_app(
                     timeout_seconds=worker.timeout_seconds,
                 )
                 try:
-                    async with worker_semaphores[runtime_key(worker)]:
-                        if tool_definitions is not None:
-                            completion = await selected_gateway.complete(
-                                history, tools=list(tool_definitions.values()),
-                                tool_choice=tool_choice,
+                    if generation_options and "max_tokens" in generation_options:
+                        if generation_options["max_tokens"] > worker.max_output_tokens:
+                            raise HTTPException(
+                                status_code=400,
+                                detail="max_tokens exceeds the selected worker output limit",
                             )
-                        else:
-                            completion = await selected_gateway.complete(history)
+                    reserve_output = (
+                        generation_options.get("max_tokens", worker.max_output_tokens)
+                        if generation_options else worker.max_output_tokens
+                    )
+                    try:
+                        ensure_context_budget(
+                            history,
+                            context_window_tokens=worker.context_window_tokens,
+                            reserved_output_tokens=reserve_output,
+                        )
+                    except ContextBudgetExceeded as exc:
+                        raise HTTPException(status_code=413, detail=str(exc)) from exc
+
+                    async with worker_semaphores[runtime_key(worker)]:
+                        kwargs: dict[str, Any] = {}
+                        if tool_definitions is not None:
+                            kwargs["tools"] = list(tool_definitions.values())
+                            if tool_choice is not None:
+                                kwargs["tool_choice"] = tool_choice
+                        if generation_options:
+                            kwargs["options"] = generation_options
+                        completion = await selected_gateway.complete(history, **kwargs)
                 except GatewayError as exc:
                     raise HTTPException(status_code=502, detail=str(exc)) from exc
                 except Exception as exc:
@@ -447,6 +473,7 @@ def create_app(
         selected_gateway: ModelGateway,
         response_id: str,
         created_at: int,
+        generation_options: dict[str, Any] | None = None,
     ):
         """Stream a direct-chat turn and persist its assistant event only on success."""
         lock = conversation_locks.setdefault(conversation_id, asyncio.Lock())
@@ -478,7 +505,11 @@ def create_app(
                 async with worker_semaphores[runtime_key(worker)]:
                     stream_method = getattr(selected_gateway, "stream", None)
                     if callable(stream_method):
-                        async for piece in stream_method(history):
+                        stream = (
+                            stream_method(history, options=generation_options)
+                            if generation_options else stream_method(history)
+                        )
+                        async for piece in stream:
                             if not isinstance(piece, str):
                                 raise GatewayError("Upstream stream yielded a non-text delta")
                             if not piece:
@@ -493,7 +524,10 @@ def create_app(
                             }
                             yield "data: " + json.dumps(chunk, ensure_ascii=False, separators=(",", ":")) + "\n\n"
                     else:
-                        completion = await selected_gateway.complete(history)
+                        completion = (
+                            await selected_gateway.complete(history, options=generation_options)
+                            if generation_options else await selected_gateway.complete(history)
+                        )
                         answer_parts.append(completion.content)
                         chunk = {
                             "id": response_id,
@@ -651,6 +685,7 @@ def create_app(
                 stream_direct_turn(
                     conversation_id, last_user, supplied_system, stream_worker,
                     stream_gateway, response_id, created_at,
+                    generation_options,
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -671,11 +706,27 @@ def create_app(
                 "tool_call_id": last_message.tool_call_id,
                 **({"name": last_message.name} if last_message.name else {}),
             }
+        generation_options = {
+            key: value for key, value in {
+                "temperature": chat_request.temperature,
+                "max_tokens": chat_request.max_tokens,
+                "top_p": chat_request.top_p,
+                "presence_penalty": chat_request.presence_penalty,
+                "frequency_penalty": chat_request.frequency_penalty,
+                "stop": chat_request.stop,
+            }.items() if value is not None
+        }
+        if is_specialist and not tool_definitions and generation_options:
+            raise HTTPException(
+                status_code=400,
+                detail="generation options are currently supported on direct chat and tool-call turns",
+            )
         input_event, assistant_event, answer, execution_id = await run_turn(
             conversation_id, last_user or "", chat_request.task_type, supplied_system,
             force_orchestration=is_specialist and not tool_definitions,
             input_role=last_message.role, input_metadata=input_metadata,
             tool_definitions=tool_definitions or None, tool_choice=chat_request.tool_choice,
+            generation_options=generation_options,
         )
 
         if chat_request.stream:
