@@ -61,6 +61,16 @@ class Database:
                     updated_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS conversation_turn_leases (
+                    conversation_id TEXT PRIMARY KEY
+                        REFERENCES conversations(id) ON DELETE CASCADE,
+                    owner_token TEXT NOT NULL,
+                    lease_expires_at TEXT NOT NULL,
+                    cancel_requested INTEGER NOT NULL DEFAULT 0
+                        CHECK (cancel_requested IN (0, 1)),
+                    updated_at TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS conversation_events (
                     id TEXT PRIMARY KEY,
                     conversation_id TEXT NOT NULL
@@ -962,3 +972,96 @@ class Database:
         result = dict(row)
         result["result"] = json.loads(result.pop("result_json"))
         return result
+
+    def acquire_conversation_turn(
+        self, conversation_id: str, owner_token: str, lease_seconds: int = 30
+    ) -> bool:
+        """Atomically acquire a cross-process conversation turn lease."""
+        if not owner_token or len(owner_token) > 128:
+            raise ValueError("owner_token must contain 1 to 128 characters")
+        if not isinstance(lease_seconds, int) or lease_seconds < 5 or lease_seconds > 300:
+            raise ValueError("lease_seconds must be between 5 and 300")
+        now = datetime.now(timezone.utc)
+        now_text = now.isoformat()
+        expires = (now + timedelta(seconds=lease_seconds)).isoformat()
+        with self.session() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            conversation = connection.execute(
+                "SELECT 1 FROM conversations WHERE id = ?", (conversation_id,)
+            ).fetchone()
+            if conversation is None:
+                raise ValueError("conversation does not exist")
+            current = connection.execute(
+                "SELECT owner_token, lease_expires_at FROM conversation_turn_leases "
+                "WHERE conversation_id = ?", (conversation_id,)
+            ).fetchone()
+            if current is not None and current["lease_expires_at"] > now_text:
+                return False
+            connection.execute(
+                """
+                INSERT INTO conversation_turn_leases
+                    (conversation_id, owner_token, lease_expires_at, cancel_requested, updated_at)
+                VALUES (?, ?, ?, 0, ?)
+                ON CONFLICT(conversation_id) DO UPDATE SET
+                    owner_token = excluded.owner_token,
+                    lease_expires_at = excluded.lease_expires_at,
+                    cancel_requested = 0,
+                    updated_at = excluded.updated_at
+                """,
+                (conversation_id, owner_token, expires, now_text),
+            )
+            return True
+
+    def renew_conversation_turn(
+        self, conversation_id: str, owner_token: str, lease_seconds: int = 30
+    ) -> bool:
+        now = datetime.now(timezone.utc)
+        now_text = now.isoformat()
+        expires = (now + timedelta(seconds=lease_seconds)).isoformat()
+        with self.session() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE conversation_turn_leases
+                SET lease_expires_at = ?, updated_at = ?
+                WHERE conversation_id = ? AND owner_token = ?
+                """,
+                (expires, now_text, conversation_id, owner_token),
+            )
+            return cursor.rowcount == 1
+
+    def request_conversation_turn_cancel(self, conversation_id: str) -> bool:
+        now = utc_now()
+        with self.session() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE conversation_turn_leases
+                SET cancel_requested = 1, updated_at = ?
+                WHERE conversation_id = ? AND lease_expires_at > ?
+                """,
+                (now, conversation_id, now),
+            )
+            return cursor.rowcount == 1
+
+    def conversation_turn_cancel_requested(
+        self, conversation_id: str, owner_token: str
+    ) -> bool:
+        with self.session() as connection:
+            row = connection.execute(
+                """
+                SELECT cancel_requested FROM conversation_turn_leases
+                WHERE conversation_id = ? AND owner_token = ?
+                """,
+                (conversation_id, owner_token),
+            ).fetchone()
+        return bool(row["cancel_requested"]) if row is not None else False
+
+    def release_conversation_turn(self, conversation_id: str, owner_token: str) -> bool:
+        with self.session() as connection:
+            cursor = connection.execute(
+                "DELETE FROM conversation_turn_leases "
+                "WHERE conversation_id = ? AND owner_token = ?",
+                (conversation_id, owner_token),
+            )
+            return cursor.rowcount == 1
+
+
