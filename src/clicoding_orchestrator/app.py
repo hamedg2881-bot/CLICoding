@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import hmac
 import json
 import logging
@@ -9,7 +11,7 @@ import uuid
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from .tool_protocol import (
@@ -17,6 +19,7 @@ from .tool_protocol import (
     validate_tool_definitions, validate_tool_result,
 )
 
+from .attachments import AttachmentError, delete_storage_file, resolve_storage_path, safe_filename, store_image
 from .config import Settings
 from .policy import effective_system_messages
 from .context import (
@@ -82,8 +85,13 @@ class ChatMessage(BaseModel):
                     raise ValueError(
                         "image_url must be a base64 data URI no larger than 12 MB"
                     )
+            elif part.get("type") == "attachment":
+                try:
+                    uuid.UUID(str(part.get("attachment_id", "")))
+                except ValueError as exc:
+                    raise ValueError("attachment parts require a valid attachment_id") from exc
             else:
-                raise ValueError("only text and image_url content parts are supported")
+                raise ValueError("only text, image_url and attachment content parts are supported")
         return value
 
 
@@ -281,7 +289,7 @@ def _content_text(content: str | list[dict[str, Any]] | None) -> str:
 
 def _has_images(content: str | list[dict[str, Any]]) -> bool:
     return isinstance(content, list) and any(
-        part.get("type") == "image_url" for part in content
+        part.get("type") in ("image_url", "attachment") for part in content
     )
 
 
@@ -351,6 +359,40 @@ def create_app(
         key: asyncio.Semaphore(limit) for key, limit in runtime_limits.items()
     }
 
+    async def resolve_attachment_parts(
+        conversation_id: str,
+        content: str | list[dict[str, Any]] | None,
+    ) -> str | list[dict[str, Any]] | None:
+        if not isinstance(content, list):
+            return content
+        resolved_parts: list[dict[str, Any]] = []
+        for part in content:
+            if part.get("type") != "attachment":
+                resolved_parts.append(part)
+                continue
+            attachment_id = str(part.get("attachment_id", ""))
+            record = db.get_attachment(conversation_id, attachment_id)
+            if record is None:
+                raise HTTPException(status_code=404, detail="Attachment not found")
+            try:
+                path = resolve_storage_path(
+                    settings.attachment_storage_dir, record["storage_key"]
+                )
+                data = await asyncio.to_thread(path.read_bytes)
+            except (AttachmentError, OSError) as exc:
+                raise HTTPException(status_code=404, detail="Attachment data is unavailable") from exc
+            if (
+                len(data) != record["size_bytes"]
+                or hashlib.sha256(data).hexdigest() != record["sha256"]
+            ):
+                raise HTTPException(status_code=409, detail="Attachment integrity check failed")
+            encoded = base64.b64encode(data).decode("ascii")
+            resolved_parts.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{record['mime_type']};base64,{encoded}"},
+            })
+        return resolved_parts
+
     async def prepare_context_history(
         conversation_id: str,
         system_messages: list[dict[str, Any]],
@@ -368,7 +410,7 @@ def create_app(
             and event["role"] in ("user", "assistant", "tool")
         ]
 
-        def event_message(event: dict[str, Any], *, for_summary: bool = False):
+        async def event_message(event: dict[str, Any], *, for_summary: bool = False):
             content = _restore_content(event["content"])
             if for_summary:
                 if isinstance(content, list):
@@ -378,7 +420,8 @@ def create_app(
                         if isinstance(part, dict) and part.get("type") == "text"
                     ]
                     if any(
-                        isinstance(part, dict) and part.get("type") == "image_url"
+                        isinstance(part, dict)
+                        and part.get("type") in ("image_url", "attachment")
                         for part in content
                     ):
                         text_parts.append(
@@ -386,6 +429,8 @@ def create_app(
                         )
                     content = "\n".join(text_parts)
                 content = redact_sensitive_text(content if isinstance(content, str) else "")
+            else:
+                content = await resolve_attachment_parts(conversation_id, content)
             item = {"role": event["role"], "content": content}
             if event.get("metadata"):
                 metadata = (
@@ -397,7 +442,7 @@ def create_app(
                     item["content"] = None
             return item
 
-        def build_history() -> list[dict[str, Any]]:
+        async def build_history() -> list[dict[str, Any]]:
             messages = list(system_messages)
             if summary_record is not None:
                 messages.append({
@@ -408,12 +453,17 @@ def create_app(
                         + summary_record["summary"]
                     ),
                 })
-            messages.extend(event_message(event) for event in eligible_events)
+            for event in eligible_events:
+                messages.append(await event_message(event))
             if current_input is not None:
-                messages.append(current_input)
+                current_message = dict(current_input)
+                current_message["content"] = await resolve_attachment_parts(
+                    conversation_id, current_message.get("content")
+                )
+                messages.append(current_message)
             return messages
 
-        history = build_history()
+        history = await build_history()
         try:
             ensure_context_budget(
                 history,
@@ -454,9 +504,8 @@ def create_app(
                         + redact_sensitive_text(summary_record["summary"])
                     ),
                 })
-            summary_messages.extend(
-                event_message(event, for_summary=True) for event in prefix_events
-            )
+            for event in prefix_events:
+                summary_messages.append(await event_message(event, for_summary=True))
             try:
                 ensure_context_budget(
                     summary_messages,
@@ -489,7 +538,7 @@ def create_app(
                 event for event in eligible_events
                 if event["sequence"] > summary_record["through_sequence"]
             ]
-            history = build_history()
+            history = await build_history()
             ensure_context_budget(
                 history,
                 context_window_tokens=worker.context_window_tokens,
@@ -626,6 +675,90 @@ def create_app(
         conversation["context_summary"] = db.get_latest_summary(conversation_id)
         return conversation
 
+    @app.post("/api/v1/conversations/{conversation_id}/attachments")
+    async def upload_conversation_attachment(
+        conversation_id: str, http_request: Request
+    ) -> dict[str, Any]:
+        if not _owns_conversation(http_request, conversation_id):
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        content_length = http_request.headers.get("content-length")
+        if content_length and content_length.isdigit() and int(content_length) > settings.max_attachment_bytes:
+            raise HTTPException(status_code=413, detail="Attachment exceeds the configured size limit")
+        body = bytearray()
+        async for chunk in http_request.stream():
+            if len(body) + len(chunk) > settings.max_attachment_bytes:
+                raise HTTPException(status_code=413, detail="Attachment exceeds the configured size limit")
+            body.extend(chunk)
+        if not body:
+            raise HTTPException(status_code=400, detail="Attachment is empty")
+        try:
+            record = await asyncio.to_thread(
+                store_image,
+                settings.attachment_storage_dir,
+                conversation_id,
+                http_request.headers.get("x-filename"),
+                bytes(body),
+            )
+        except AttachmentError as exc:
+            raise HTTPException(status_code=415, detail=str(exc)) from exc
+        claimed_type = http_request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+        if claimed_type not in ("", "application/octet-stream", record["mime_type"]):
+            await asyncio.to_thread(
+                delete_storage_file, settings.attachment_storage_dir, record["storage_key"]
+            )
+            raise HTTPException(status_code=415, detail="Content-Type does not match the image data")
+        try:
+            saved = db.create_attachment(record)
+        except Exception:
+            await asyncio.to_thread(
+                delete_storage_file, settings.attachment_storage_dir, record["storage_key"]
+            )
+            raise
+        return {
+            "attachment_id": saved["id"],
+            "mime_type": saved["mime_type"],
+            "size_bytes": saved["size_bytes"],
+            "sha256": saved["sha256"],
+            "content_part": {"type": "attachment", "attachment_id": saved["id"]},
+        }
+
+    @app.get("/api/v1/conversations/{conversation_id}/attachments/{attachment_id}")
+    async def get_conversation_attachment(
+        conversation_id: str, attachment_id: str, http_request: Request
+    ) -> Response:
+        if not _owns_conversation(http_request, conversation_id):
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        record = db.get_attachment(conversation_id, attachment_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Attachment not found")
+        try:
+            path = resolve_storage_path(settings.attachment_storage_dir, record["storage_key"])
+            data = await asyncio.to_thread(path.read_bytes)
+        except (AttachmentError, OSError) as exc:
+            raise HTTPException(status_code=404, detail="Attachment data is unavailable") from exc
+        if len(data) != record["size_bytes"] or hashlib.sha256(data).hexdigest() != record["sha256"]:
+            raise HTTPException(status_code=409, detail="Attachment integrity check failed")
+        filename = safe_filename(record["filename"]).replace('"', "")
+        return Response(
+            content=data,
+            media_type=record["mime_type"],
+            headers={"Content-Disposition": f'inline; filename="{filename}"'},
+        )
+
+    @app.delete("/api/v1/conversations/{conversation_id}/attachments/{attachment_id}")
+    async def delete_conversation_attachment(
+        conversation_id: str, attachment_id: str, http_request: Request
+    ) -> dict[str, bool]:
+        if not _owns_conversation(http_request, conversation_id):
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        record = db.delete_attachment(conversation_id, attachment_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Attachment not found")
+        await asyncio.to_thread(
+            delete_storage_file, settings.attachment_storage_dir, record["storage_key"]
+        )
+        return {"deleted": True}
+
     @app.post("/api/v1/conversations/{conversation_id}/cancel")
     async def cancel_active_turn(
         conversation_id: str, http_request: Request
@@ -703,7 +836,7 @@ def create_app(
                 if event["role"] == "user" and _has_images(event["content"]):
                     recent_image_parts = [
                         part for part in event["content"]
-                        if part.get("type") == "image_url"
+                        if part.get("type") in ("image_url", "attachment")
                     ]
                     break
             vision_content: str | list[dict[str, Any]] = content
@@ -713,6 +846,9 @@ def create_app(
                     ([{"type": "text", "text": current_text}] if current_text else [])
                     + recent_image_parts
                 )
+            vision_content = await resolve_attachment_parts(
+                conversation_id, vision_content
+            )
             execution_id: str | None = None
             returned_tool_calls: list[dict[str, Any]] = []
 
