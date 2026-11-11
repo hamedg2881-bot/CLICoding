@@ -1311,3 +1311,23 @@ def test_openai_api_streams_edit_and_commits_history_after_completion(tmp_path):
     assert [event["role"] for event in events] == ["user", "assistant"]
     assert events[0]["content"] == "new edited question"
     assert events[1]["content"] == "reply-1"
+
+
+def test_openai_chat_always_receives_shared_cds_ai_policy(tmp_path):
+    client, gateway = make_client(tmp_path)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "CDS_AI",
+            "messages": [
+                {"role": "system", "content": "Client context"},
+                {"role": "user", "content": "سلام"},
+            ],
+        },
+    )
+    assert response.status_code == 200
+    assert gateway.calls[0][0] == {"role": "system", "content": "Client context"}
+    assert gateway.calls[0][-1]["role"] == "system"
+    assert "You are CDS_AI" in gateway.calls[0][-1]["content"]
+    assert "right-to-left" in gateway.calls[0][-1]["content"]
+    assert response.json()["system_messages_applied"] == 2
