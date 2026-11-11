@@ -369,12 +369,16 @@ def create_app(
         return {"workers": worker_registry.describe()}
 
     @app.post("/api/v1/conversations", status_code=201)
-    async def create_conversation() -> dict[str, str]:
-        return db.create_conversation()
+    async def create_conversation(http_request: Request) -> dict[str, str]:
+        return db.create_conversation(http_request.state.principal_id)
 
     @app.get("/api/v1/conversations/{conversation_id}")
-    async def get_conversation(conversation_id: str) -> dict[str, Any]:
-        conversation = db.get_conversation(conversation_id)
+    async def get_conversation(
+        conversation_id: str, http_request: Request
+    ) -> dict[str, Any]:
+        conversation = db.get_conversation(
+            conversation_id, owner_id=_owner_scope(http_request)
+        )
         if conversation is None:
             raise HTTPException(status_code=404, detail="Conversation not found")
         for event in conversation["events"]:
@@ -858,9 +862,13 @@ def create_app(
         "/api/v1/conversations/{conversation_id}/turns",
         response_model=TurnResponse,
     )
-    async def create_turn(conversation_id: str, request: TurnRequest) -> TurnResponse:
+    async def create_turn(
+        conversation_id: str, turn_request: TurnRequest, http_request: Request
+    ) -> TurnResponse:
+        if not _owns_conversation(http_request, conversation_id):
+            raise HTTPException(status_code=404, detail="Conversation not found")
         user_event, assistant_event, answer, execution_id = await run_turn(
-            conversation_id, request.content, request.task_type
+            conversation_id, turn_request.content, turn_request.task_type
         )
         return TurnResponse(
             conversation_id=conversation_id,
@@ -917,15 +925,22 @@ def create_app(
         # Open WebUI drops arbitrary response fields such as conversation_id.
         # Its configured custom headers preserve chat/user identity on every turn.
         external_conversation_id = _openwebui_conversation_id(http_request)
+        owner_id = http_request.state.principal_id
         if chat_request.conversation_id:
             conversation_id = chat_request.conversation_id
-            if not db.conversation_exists(conversation_id):
+            if not _owns_conversation(http_request, conversation_id):
                 raise HTTPException(status_code=404, detail="Conversation not found")
         elif external_conversation_id:
-            db.get_or_create_conversation(external_conversation_id)
+            try:
+                if http_request.state.is_admin and db.get_conversation(external_conversation_id):
+                    pass
+                else:
+                    db.get_or_create_conversation(external_conversation_id, owner_id=owner_id)
+            except PermissionError as exc:
+                raise HTTPException(status_code=404, detail="Conversation not found") from exc
             conversation_id = external_conversation_id
         else:
-            created = db.create_conversation()
+            created = db.create_conversation(owner_id)
             conversation_id = created["id"]
             # Generic OpenAI clients may bootstrap a new conversation with full history.
             for message in chat_request.messages[:-1]:
@@ -1142,14 +1157,16 @@ def create_app(
         response_model=TurnResponse,
     )
     async def create_orchestrated_turn(
-        conversation_id: str, request: TurnRequest
+        conversation_id: str, turn_request: TurnRequest, http_request: Request
     ) -> TurnResponse:
+        if not _owns_conversation(http_request, conversation_id):
+            raise HTTPException(status_code=404, detail="Conversation not found")
         if multi_model is None:
             raise HTTPException(
                 status_code=503, detail="Multi-model planning is disabled"
             )
         user_event, assistant_event, answer, execution_id = await run_turn(
-            conversation_id, request.content, request.task_type,
+            conversation_id, turn_request.content, turn_request.task_type,
             force_orchestration=True,
         )
         return TurnResponse(
@@ -1162,7 +1179,11 @@ def create_app(
         )
 
     @app.get("/api/v1/conversations/{conversation_id}/executions/{execution_id}")
-    async def get_execution(conversation_id: str, execution_id: str) -> dict[str, Any]:
+    async def get_execution(
+        conversation_id: str, execution_id: str, http_request: Request
+    ) -> dict[str, Any]:
+        if not _owns_conversation(http_request, conversation_id):
+            raise HTTPException(status_code=404, detail="Execution not found")
         execution = db.get_execution(execution_id)
         if execution is None or execution["conversation_id"] != conversation_id:
             raise HTTPException(status_code=404, detail="Execution not found")
