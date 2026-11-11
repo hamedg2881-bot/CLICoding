@@ -284,22 +284,65 @@ def create_app(
 
     @app.middleware("http")
     async def optional_bearer_auth(request: Request, call_next):
-        # Health remains available to local service monitors. When configured, the
-        # same shared secret protects every API and diagnostic endpoint.
-        if config.api_key and request.url.path != "/health":
+        # Health remains available to local service monitors. User tokens provide
+        # isolated conversation namespaces; a global key is an admin/service key.
+        request.state.principal_id = "anonymous"
+        request.state.is_admin = False
+        if request.url.path != "/health" and (config.api_key or config.user_api_keys):
             supplied = request.headers.get("authorization", "")
             scheme, separator, token = supplied.partition(" ")
-            if (
-                not separator
-                or scheme.lower() != "bearer"
-                or not hmac.compare_digest(token, config.api_key)
-            ):
+            if not separator or scheme.lower() != "bearer" or not token:
                 return JSONResponse(
                     status_code=401,
                     content={"detail": "Invalid or missing bearer token"},
                     headers={"WWW-Authenticate": "Bearer"},
                 )
+
+            matched_user = next(
+                (
+                    user_id for user_id, user_token in config.user_api_keys.items()
+                    if hmac.compare_digest(token, user_token)
+                ),
+                None,
+            )
+            if matched_user is not None:
+                request.state.principal_id = matched_user
+            elif config.api_key and hmac.compare_digest(token, config.api_key):
+                request.state.principal_id = "admin"
+                request.state.is_admin = True
+            else:
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "Invalid or missing bearer token"},
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+
+            # Open WebUI can supply its authenticated user ID through a server-side
+            # header template. This is trusted only when explicitly enabled; the
+            # service must then be reachable exclusively through a trusted proxy.
+            if (
+                config.trust_user_header
+                and not request.state.is_admin
+                and not config.user_api_keys
+            ):
+                header_user = request.headers.get("x-clicoding-user-id", "").strip()
+                if header_user:
+                    if len(header_user) > 128 or any(ch.isspace() for ch in header_user):
+                        return JSONResponse(
+                            status_code=400,
+                            content={"detail": "Invalid trusted user identity header"},
+                        )
+                    request.state.principal_id = header_user
         return await call_next(request)
+
+    def _owner_scope(request: Request) -> str | None:
+        return None if request.state.is_admin else request.state.principal_id
+
+    def _owns_conversation(request: Request, conversation_id: str) -> bool:
+        return db.conversation_exists(
+            conversation_id,
+            owner_id=_owner_scope(request),
+        )
 
     @app.get("/health")
     async def health() -> dict[str, str]:
