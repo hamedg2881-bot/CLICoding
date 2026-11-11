@@ -155,3 +155,11 @@ Phase 2 gateway work must expose transport primitives required by this core, but
 - All CI tests pass before ZIP transfer; DGX deployment and Orchestrator restart require separate validation and user approval.
 
 The existing Phase 3 workstation-side IDE requirement remains mandatory; this phase makes the shared conversation/tool contract a prerequisite rather than deferring it as a disconnected add-on.
+
+## Phase 2C — Modern assistant interaction quality (priority, 2026-11-11)
+
+The detailed product and release contract is in docs/CHAT_EXPERIENCE_SPEC.md. This is a first-class architecture requirement, not UI polish.
+
+- Completed in this branch: true upstream SSE delta streaming for direct chat; persist assistant turn only after the full stream succeeds; cancel upstream iteration when the client disconnects; regression coverage.
+- Next: tool-call round-trip and workstation tool broker contract; context-window budgeting/compaction; cancellation and retry semantics; multimodal attachment references; reference IDE adapter.
+- Specialist execution continues to use explicit orchestration and currently streams only its completed final answer. Do not claim token-level specialist progress until implemented.
