@@ -667,18 +667,102 @@ def test_openai_api_requires_a_tool_capable_worker_before_dispatch(tmp_path):
     assert gateway.calls == []
 
 
-def test_openai_api_rejects_streaming_tool_calls_until_sse_tool_deltas_are_supported(tmp_path):
-    client, _ = make_client(tmp_path)
-    response = client.post(
+class StreamingToolGateway:
+    def __init__(self):
+        self.complete_calls = []
+
+    async def stream_events(
+        self, messages, *, tools=None, tool_choice=None, options=None
+    ):
+        yield {"tool_calls": [{
+            "index": 0,
+            "id": "call_stream_1",
+            "type": "function",
+            "function": {"name": "read_", "arguments": '{"path":'},
+        }]}
+        yield {"tool_calls": [{
+            "index": 0,
+            "function": {"name": "file", "arguments": '"README.md"}'},
+        }]}
+        yield {"finish_reason": "tool_calls"}
+        yield {"done": True}
+
+    async def complete(self, messages, *, tools=None, tool_choice=None, options=None):
+        self.complete_calls.append(messages)
+        return Completion(content="I read README.md.", model="tool-model")
+
+
+def test_openai_api_streams_tool_call_deltas_and_accepts_tool_result(tmp_path):
+    gateway = StreamingToolGateway()
+    database = Database(str(tmp_path / "stream-tools.sqlite3"))
+    conversation_id = "stream-tool-conversation"
+    database.get_or_create_conversation(conversation_id)
+    registry = WorkerRegistry([
+        Worker(
+            "tool-worker",
+            "http://tool-model/v1",
+            "tool-model",
+            frozenset({"chat", "tool_calling"}),
+        )
+    ])
+    app = create_app(
+        settings=Settings(database_path=str(tmp_path / "stream-tools.sqlite3")),
+        gateway=gateway,
+        database=database,
+        registry=registry,
+    )
+    client = TestClient(app)
+    tools = tool_definitions()
+
+    streamed = client.post(
         "/v1/chat/completions",
         json={
             "model": "CDS_AI",
-            "messages": [{"role": "user", "content": "Read README"}],
-            "tools": tool_definitions(),
+            "conversation_id": conversation_id,
+            "messages": [{"role": "user", "content": "Read README.md"}],
+            "tools": tools,
+            "tool_choice": "auto",
             "stream": True,
         },
     )
-    assert response.status_code == 400
+    assert streamed.status_code == 200
+    assert "data: [DONE]" in streamed.text
+    chunks = [
+        json.loads(line[6:])
+        for line in streamed.text.splitlines()
+        if line.startswith("data: {")
+    ]
+    tool_chunks = [
+        chunk for chunk in chunks
+        if chunk["choices"][0]["delta"].get("tool_calls")
+    ]
+    assert len(tool_chunks) == 2
+    assert chunks[-1]["choices"][0]["finish_reason"] == "tool_calls"
+
+    events = database.list_events(conversation_id)
+    assert events[-1]["metadata"]["tool_calls"][0]["id"] == "call_stream_1"
+    assert events[-1]["metadata"]["tool_calls"][0]["function"] == {
+        "name": "read_file",
+        "arguments": '{"path":"README.md"}',
+    }
+
+    continued = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "CDS_AI",
+            "conversation_id": conversation_id,
+            "messages": [{
+                "role": "tool",
+                "tool_call_id": "call_stream_1",
+                "name": "read_file",
+                "content": "README contents",
+            }],
+            "tools": tools,
+        },
+    )
+    assert continued.status_code == 200
+    assert continued.json()["choices"][0]["message"]["content"] == "I read README.md."
+    assert gateway.complete_calls[0][-1]["role"] == "tool"
 
 
 class OptionsGateway:
