@@ -89,9 +89,10 @@ def create_backup(database: str | Path, attachments: str | Path, output: str | P
         snapshot = staging / DATABASE_NAME
         with sqlite3.connect(f"file:{database_path}?mode=ro", uri=True) as source, sqlite3.connect(snapshot) as target:
             source.backup(target)
+        os.chmod(snapshot, 0o600)
         _integrity_check(snapshot)
 
-        copied: list[dict[str, Any]] = []
+        copied: list[dict[str, Any]] =
         backup_attachment_root = staging / "attachments"
         backup_attachment_root.mkdir(mode=0o700)
         for row in _attachment_rows(snapshot):
@@ -139,8 +140,12 @@ def verify_backup(backup: str | Path) -> dict[str, Any]:
     root = Path(backup).expanduser().resolve(strict=True)
     manifest_path = root / MANIFEST_NAME
     database_path = root / DATABASE_NAME
-    if not manifest_path.is_file() or not database_path.is_file():
-        raise BackupError("backup manifest or database snapshot is missing")
+    attachments_path = root / "attachments"
+    if (
+        manifest_path.is_symlink() or database_path.is_symlink() or attachments_path.is_symlink()
+        or not manifest_path.is_file() or not database_path.is_file() or not attachments_path.is_dir()
+    ):
+        raise BackupError("backup manifest, database snapshot or attachment directory is missing or unsafe")
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -193,6 +198,9 @@ def restore_backup(
     attachments_target = Path(attachments).expanduser().resolve()
     if database_target == attachments_target or database_target in attachments_target.parents or attachments_target in database_target.parents:
         raise BackupError("database and attachment destinations must not overlap")
+    for target in (database_target, attachments_target):
+        if target == backup_root or target in backup_root.parents or backup_root in target.parents:
+            raise BackupError("restore destinations must not overlap the backup directory")
     if (database_target.exists() or attachments_target.exists()) and not replace_existing:
         raise BackupError("restore destinations already exist; pass replace_existing=True after reviewing them")
     database_target.parent.mkdir(parents=True, exist_ok=True)
@@ -209,10 +217,20 @@ def restore_backup(
     installed_attachments = False
     try:
         shutil.copyfile(backup_root / DATABASE_NAME, staged_database)
+        os.chmod(staged_database, 0o600)
         with staged_database.open("rb") as stream:
             os.fsync(stream.fileno())
         shutil.copytree(backup_root / "attachments", staged_attachments)
         _integrity_check(staged_database)
+        for item in manifest["attachments"]:
+            key = _safe_key(item["storage_key"])
+            staged_file = staged_attachments.joinpath(*key.parts)
+            if (
+                not staged_file.is_file()
+                or staged_file.stat().st_size != item["size_bytes"]
+                or _sha256(staged_file) != item["sha256"]
+            ):
+                raise BackupError(f"attachment changed during restore: {key.as_posix()}")
         if database_target.exists():
             os.replace(database_target, previous_database)
             moved_database = True
