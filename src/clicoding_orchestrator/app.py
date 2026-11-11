@@ -497,6 +497,8 @@ def create_app(
         generation_options: dict[str, Any] | None = None,
         tool_definitions: dict[str, dict[str, Any]] | None = None,
         tool_choice: str | dict[str, Any] | None = None,
+        input_role: str = "user",
+        input_metadata: dict[str, Any] | None = None,
     ):
         """Stream direct chat and validated function-tool deltas; persist only on success."""
         lock = conversation_locks.setdefault(conversation_id, asyncio.Lock())
@@ -511,9 +513,10 @@ def create_app(
                     if event["role"] == "assistant" and event["metadata"].get("tool_calls"):
                         item["content"] = None
                 events.append(item)
-            history = list(system_messages) + events + [
-                {"role": "user", "content": content}
-            ]
+            input_message = {"role": input_role, "content": content}
+            if input_metadata:
+                input_message.update(input_metadata)
+            history = list(system_messages) + events + [input_message]
             try:
                 ensure_context_budget(
                     history,
@@ -530,7 +533,11 @@ def create_app(
                 yield "data: [DONE]\n\n"
                 return
             db.append_event(
-                conversation_id, role="user", content=_store_content(content), producer="user"
+                conversation_id,
+                role=input_role,
+                content=_store_content(content),
+                producer="user" if input_role == "user" else "tool-client",
+                metadata=input_metadata,
             )
             role_chunk = {
                 "id": response_id,
@@ -844,7 +851,9 @@ def create_app(
 
         response_id = f"chatcmpl-{uuid.uuid4().hex}"
         created_at = int(time.time())
-        is_specialist = chat_request.task_type != "chat" or _has_images(last_user)
+        is_specialist = not tool_definitions and (
+            chat_request.task_type != "chat" or _has_images(last_user)
+        )
         generation_options = {
             key: value for key, value in {
                 "temperature": chat_request.temperature,
@@ -893,8 +902,13 @@ def create_app(
                         item["content"] = None
                 stream_events.append(item)
             try:
+                stream_input = {"role": last_message.role, "content": last_user}
+                if last_message.role == "tool":
+                    stream_input["tool_call_id"] = last_message.tool_call_id
+                    if last_message.name:
+                        stream_input["name"] = last_message.name
                 ensure_context_budget(
-                    supplied_system + stream_events + [{"role": "user", "content": last_user}],
+                    supplied_system + stream_events + [stream_input],
                     context_window_tokens=stream_worker.context_window_tokens,
                     reserved_output_tokens=(
                         chat_request.max_tokens or stream_worker.max_output_tokens
@@ -912,6 +926,15 @@ def create_app(
                 stream_direct_turn(
                     conversation_id, last_user, supplied_system, stream_worker,
                     stream_gateway, response_id, created_at, generation_options,
+                    tool_definitions or None, chat_request.tool_choice,
+                    last_message.role,
+                    (
+                        {
+                            "tool_call_id": last_message.tool_call_id,
+                            **({"name": last_message.name} if last_message.name else {}),
+                        }
+                        if last_message.role == "tool" else None
+                    ),
                 ),
                 media_type="text/event-stream",
                 headers={
