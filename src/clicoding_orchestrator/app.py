@@ -327,6 +327,7 @@ def create_app(
                         request.state.principal_id = "shared"
                 else:
                     request.state.principal_id = "shared"
+                    request.state.is_admin = True
             else:
                 return JSONResponse(
                     status_code=401,
@@ -372,8 +373,10 @@ def create_app(
         }
 
     @app.get("/api/v1/workers")
-    async def list_workers() -> dict[str, list[dict[str, object]]]:
-        # Operator diagnostics only; this endpoint does not expose credentials.
+    async def list_workers(http_request: Request) -> dict[str, list[dict[str, object]]]:
+        # Runtime topology is operator-only, even though credentials are omitted.
+        if not http_request.state.is_admin:
+            raise HTTPException(status_code=403, detail="Administrator access required")
         return {"workers": worker_registry.describe()}
 
     @app.post("/api/v1/conversations", status_code=201)
