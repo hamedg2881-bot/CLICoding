@@ -156,7 +156,7 @@ def test_openai_compatible_endpoint_uses_orchestrator_and_keeps_one_identity(tmp
     assert first.status_code == 200
     first_body = first.json()
     conversation_id = first_body["conversation_id"]
-    assert first_body["model"] == "clicoding"
+    assert first_body["model"] == "CDS_AI"
     assert first_body["choices"][0]["message"]["content"] == "orchestrated-1"
     assert first_body["x_clicoding"]["orchestrated"] is True
     assert first_body["x_clicoding"]["execution_id"] == "execution-1"
