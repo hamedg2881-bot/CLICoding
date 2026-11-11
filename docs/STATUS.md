@@ -358,3 +358,12 @@ User supplied a fresh command output from host `spark-7ea3`:
 - Buffered requests return HTTP 409 for invalid regeneration; streaming requests emit an SSE error.
 - Editing an earlier turn and truncating subsequent history is not implemented; it requires a target event ID and explicit confirmation.
 - Packaged Open WebUI/IDE controls for the regenerate header remain an integration task.
+
+
+## 2026-11-11 — Edit and resubmit
+
+- Added `X-CLICoding-Operation: edit` with an explicit `X-CLICoding-Event-ID` target.
+- Only user events can be edited. The new request context contains all events before the target plus the replacement message.
+- Target and later events are deleted transactionally only after a successful model response/tool-call stream; failed/cancelled edits preserve the original history.
+- Works for buffered specialist turns and direct streamed chat/tool turns.
+- Packaged UI controls for selecting the target event and confirming the history rewrite remain integration work.
