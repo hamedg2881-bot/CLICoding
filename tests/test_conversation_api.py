@@ -436,3 +436,31 @@ def test_rewriting_conversation_history_invalidates_only_affected_summaries(tmp_
 
     assert deleted == 1
     assert database.get_latest_summary(conversation_id)["through_sequence"] == 2
+
+
+
+def test_replacing_or_deleting_history_invalidates_covered_summaries(tmp_path):
+    database = Database(str(tmp_path / "summary-rewrite.sqlite3"))
+    conversation_id = database.create_conversation()["id"]
+    first = database.append_event(conversation_id, "user", "first")
+    database.append_event(conversation_id, "assistant", "first answer")
+    target = database.append_event(conversation_id, "user", "second")
+    database.append_event(conversation_id, "assistant", "second answer")
+    database.save_summary(conversation_id, 2, "summary first turn", "model")
+    database.save_summary(conversation_id, 4, "summary both turns", "model")
+
+    database.replace_events_from(
+        conversation_id,
+        target["id"],
+        [
+            {"role": "user", "content": "edited second", "producer": "user"},
+            {"role": "assistant", "content": "edited answer", "producer": "chat"},
+        ],
+    )
+    latest = database.get_latest_summary(conversation_id)
+    assert latest is not None and latest["through_sequence"] == 2
+
+    database.save_summary(conversation_id, 4, "summary edited history", "model")
+    tail = database.list_events(conversation_id)[-1]
+    database.delete_last_event(conversation_id, tail["id"])
+    assert database.get_latest_summary(conversation_id)["through_sequence"] == 2
