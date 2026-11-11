@@ -908,15 +908,23 @@ def create_app(
         last_renewal = time.monotonic()
         while not task.done():
             await asyncio.sleep(0.25)
-            if db.conversation_turn_cancel_requested(conversation_id, owner_token):
-                task.cancel()
-                return
-            if time.monotonic() - last_renewal >= 5:
-                if not db.renew_conversation_turn(conversation_id, owner_token):
-                    # A lost lease must fail closed; never let two workers mutate one turn.
+            try:
+                if db.conversation_turn_cancel_requested(conversation_id, owner_token):
                     task.cancel()
                     return
-                last_renewal = time.monotonic()
+                if time.monotonic() - last_renewal >= 5:
+                    if not db.renew_conversation_turn(conversation_id, owner_token):
+                        # A lost lease must fail closed; never let two workers mutate one turn.
+                        task.cancel()
+                        return
+                    last_renewal = time.monotonic()
+            except Exception:
+                logger.exception(
+                    "Conversation turn lease monitor failed; cancelling safely "
+                    "(conversation_id=%s)", conversation_id
+                )
+                task.cancel()
+                return
 
     @app.post("/api/v1/conversations/{conversation_id}/cancel")
     async def cancel_active_turn(
@@ -1608,8 +1616,10 @@ def create_app(
                 raise
             raise HTTPException(status_code=409, detail="The assistant turn was cancelled")
         finally:
+            if not task.done():
+                task.cancel()
             monitor.cancel()
-            await asyncio.gather(monitor, return_exceptions=True)
+            await asyncio.gather(task, monitor, return_exceptions=True)
             if active_turns.get(conversation_id) is task:
                 active_turns.pop(conversation_id, None)
             db.release_conversation_turn(conversation_id, owner_token)
