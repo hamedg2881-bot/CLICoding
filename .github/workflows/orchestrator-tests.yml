@@ -4,7 +4,7 @@ on:
   push:
     branches: [main, feature/cds-ai-release-integration]
   pull_request:
-    branches: [main, architecture/conversation-first-core]
+    branches: [main, feature/cds-ai-regenerate-turns]
   workflow_dispatch:
 
 permissions:
