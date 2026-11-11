@@ -402,7 +402,10 @@ def test_ordinary_chat_bypasses_planner_even_when_orchestration_is_enabled(tmp_p
     assert response.json()["choices"][0]["message"]["content"] == "reply-1"
     assert response.json()["x_clicoding"]["orchestrated"] is False
     assert response.json()["x_clicoding"]["execution_id"] is None
-    assert gateway.calls == [[{"role": "user", "content": "سلام"}]]
+    assert gateway.calls == [[
+        {"role": "system", "content": CDS_AI_SYSTEM_PROMPT},
+        {"role": "user", "content": "سلام"},
+    ]]
 
 
 def test_explicit_specialist_task_uses_orchestrator(tmp_path):
