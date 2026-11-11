@@ -323,6 +323,8 @@ class Database:
         now = utc_now()
         event_id = str(uuid.uuid4())
         with self.session() as connection:
+            # Serialize sequence allocation across SQLite connections/processes.
+            connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 "SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence "
                 "FROM conversation_events WHERE conversation_id = ?",
