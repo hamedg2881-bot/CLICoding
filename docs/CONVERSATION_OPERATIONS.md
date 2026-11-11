@@ -22,7 +22,7 @@ Regeneration is accepted only when:
 - the latest persisted event is an assistant event;
 - the immediately preceding event is the same user/tool input supplied in the request, including stored content and structured tool-result metadata.
 
-The service deletes only that final assistant event using a database transaction guarded by the current tail event ID, then runs the same input again. Earlier history is not rewritten. A mismatch or missing completed assistant turn returns HTTP 409 for buffered requests; streamed requests return an SSE error event.
+The service temporarily excludes that final assistant event from the model context, runs the same input again, and deletes/replaces the old tail event only after the new answer or tool call has completed successfully. If regeneration fails or is cancelled, the previous assistant answer remains intact. Earlier history is not rewritten. A mismatch or missing completed assistant turn returns HTTP 409 for buffered requests; streamed requests return an SSE error event.
 
 This works for direct answers and tool-call turns. For a previous tool-call turn, send the same user input and tool definitions again. For a completed tool-result continuation, send the exact same tool result.
 
