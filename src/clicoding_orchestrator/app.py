@@ -467,9 +467,20 @@ def create_app(
                     raise HTTPException(
                         status_code=502, detail="Upstream returned an invalid tool call"
                     ) from exc
-                if tool_choice == "required" and not returned_tool_calls:
+                required_tool_name = (
+                    tool_choice.get("function", {}).get("name")
+                    if isinstance(tool_choice, dict) else None
+                )
+                if (tool_choice == "required" or required_tool_name) and not returned_tool_calls:
                     raise HTTPException(
                         status_code=502, detail="Upstream did not honor required tool_choice"
+                    )
+                if (
+                    required_tool_name and returned_tool_calls
+                    and returned_tool_calls[0]["function"]["name"] != required_tool_name
+                ):
+                    raise HTTPException(
+                        status_code=502, detail="Upstream called a different function than requested"
                     )
                 if tool_choice == "none" and returned_tool_calls:
                     raise HTTPException(
@@ -703,8 +714,17 @@ def create_app(
                         tool_calls_by_index[index] for index in sorted(tool_calls_by_index)
                     ]
                     validated_tool_calls = validate_tool_calls(ordered, tool_definitions or {})
-                if tool_choice == "required" and not validated_tool_calls:
+                required_tool_name = (
+                    tool_choice.get("function", {}).get("name")
+                    if isinstance(tool_choice, dict) else None
+                )
+                if (tool_choice == "required" or required_tool_name) and not validated_tool_calls:
                     raise GatewayError("Upstream did not honor required tool_choice")
+                if (
+                    required_tool_name and validated_tool_calls
+                    and validated_tool_calls[0]["function"]["name"] != required_tool_name
+                ):
+                    raise GatewayError("Upstream called a different function than requested")
                 if tool_choice == "none" and validated_tool_calls:
                     raise GatewayError("Upstream returned a tool call when tool_choice was none")
 
@@ -802,8 +822,6 @@ def create_app(
                         raise ToolProtocolError("tool_choice references an undeclared function")
                 else:
                     raise ToolProtocolError("tool_choice has an invalid format")
-            if chat_request.stream and tool_definitions:
-                raise ToolProtocolError("streaming tool calls are not enabled in this release")
         except ToolProtocolError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
