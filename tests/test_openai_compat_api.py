@@ -1117,3 +1117,76 @@ def test_cancel_endpoint_stops_an_active_conversation_api_turn(tmp_path):
     asyncio.run(exercise_cancel())
     assert gateway.cancelled.is_set()
     assert [event["role"] for event in database.list_events(conversation_id)] == ["user"]
+
+
+
+def test_long_conversation_is_summarized_without_dropping_recent_turns(tmp_path):
+    class SummaryGateway:
+        def __init__(self):
+            self.calls = []
+
+        async def complete(self, messages, **kwargs):
+            self.calls.append(messages)
+            if "Summarize the earlier conversation" in messages[0]["content"]:
+                return Completion(
+                    content=(
+                        "Goals and constraints: preserve the user's project context. "
+                        "Decisions and facts: five earlier questions were discussed. "
+                        "Completed work: prior exchanges were reviewed. "
+                        "Open tasks: answer the current request."
+                    ),
+                    model="summary-model",
+                )
+            return Completion(content="answer after safe compaction", model="chat-model")
+
+    gateway = SummaryGateway()
+    database = Database(str(tmp_path / "compaction.sqlite3"))
+    conversation_id = database.create_conversation()["id"]
+    for index in range(5):
+        database.append_event(conversation_id, "user", f"question-{index} " + ("u" * 400))
+        database.append_event(conversation_id, "assistant", f"answer-{index} " + ("a" * 400))
+    registry = WorkerRegistry([
+        Worker(
+            "chat",
+            "http://chat/v1",
+            "chat-model",
+            frozenset({"chat"}),
+            context_window_tokens=2048,
+            max_output_tokens=256,
+        )
+    ])
+    app = create_app(
+        settings=Settings(database_path=str(tmp_path / "compaction.sqlite3")),
+        gateway=gateway,
+        database=database,
+        registry=registry,
+    )
+
+    response = TestClient(app).post(
+        "/v1/chat/completions",
+        json={
+            "model": "CDS_AI",
+            "conversation_id": conversation_id,
+            "messages": [{"role": "user", "content": "current request"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "answer after safe compaction"
+    assert len(gateway.calls) == 2
+    summary = database.get_latest_summary(conversation_id)
+    assert summary is not None
+    assert summary["through_sequence"] == 6
+    assert "five earlier questions" in summary["summary"]
+
+    generation_history = gateway.calls[1]
+    summary_messages = [
+        message for message in generation_history
+        if message["role"] == "system" and "Earlier conversation summary" in message["content"]
+    ]
+    assert len(summary_messages) == 1
+    joined_history = json.dumps(generation_history, ensure_ascii=False)
+    assert "question-3" in joined_history
+    assert "question-4" in joined_history
+    assert "current request" in joined_history
+    assert len(database.list_events(conversation_id)) == 11
