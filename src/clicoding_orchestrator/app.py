@@ -336,6 +336,7 @@ def create_app(
                     + recent_image_parts
                 )
             execution_id: str | None = None
+            returned_tool_calls: list[dict[str, Any]] = []
 
             if tool_definitions is None and multi_model is not None and (
                 force_orchestration or task_type != "chat" or _has_images(vision_content)
@@ -406,15 +407,23 @@ def create_app(
                     ) from exc
                 answer = completion.content
                 producer = worker.id
-                returned_tool_calls = validate_tool_calls(
-                    completion.tool_calls, tool_definitions or {}
-                )
+                try:
+                    returned_tool_calls = validate_tool_calls(
+                        completion.tool_calls, tool_definitions or {}
+                    )
+                except ToolProtocolError as exc:
+                    logger.warning("Rejected invalid model tool call: %s", exc)
+                    raise HTTPException(
+                        status_code=502, detail="Upstream returned an invalid tool call"
+                    ) from exc
                 if tool_choice == "required" and not returned_tool_calls:
-                    raise GatewayError("Upstream did not honor required tool_choice")
+                    raise HTTPException(
+                        status_code=502, detail="Upstream did not honor required tool_choice"
+                    )
                 if tool_choice == "none" and returned_tool_calls:
-                    raise GatewayError("Upstream returned a tool call when tool_choice was none")
-            else:
-                returned_tool_calls = []
+                    raise HTTPException(
+                        status_code=502, detail="Upstream returned a tool call when tool_choice was none"
+                    )
 
             assistant_metadata = (
                 {"tool_calls": returned_tool_calls, "finish_reason": "tool_calls"}
