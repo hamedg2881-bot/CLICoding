@@ -43,7 +43,7 @@ def test_public_models_exposes_only_stable_alias(tmp_path):
     response = client.get("/v1/models")
 
     assert response.status_code == 200
-    assert [model["id"] for model in response.json()["data"]] == ["clicoding"]
+    assert [model["id"] for model in response.json()["data"]] == ["CDS_AI"]
     assert "private-model-name" not in response.text
     assert "internal-chat" not in response.text
 
@@ -53,14 +53,14 @@ def test_openai_chat_returns_conversation_id_and_preserves_handoff_context(tmp_p
     first = client.post(
         "/v1/chat/completions",
         json={
-            "model": "clicoding",
+            "model": "CDS_AI",
             "messages": [{"role": "user", "content": "Hello"}],
             "stream": False,
         },
     )
     assert first.status_code == 200
     conversation_id = first.json()["conversation_id"]
-    assert first.json()["model"] == "clicoding"
+    assert first.json()["model"] == "CDS_AI"
     assert first.json()["choices"][0]["message"]["content"] == "reply-1"
 
     second = client.post(
