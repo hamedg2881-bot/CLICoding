@@ -495,8 +495,10 @@ def create_app(
         response_id: str,
         created_at: int,
         generation_options: dict[str, Any] | None = None,
+        tool_definitions: dict[str, dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
     ):
-        """Stream a direct-chat turn and persist its assistant event only on success."""
+        """Stream direct chat and validated function-tool deltas; persist only on success."""
         lock = conversation_locks.setdefault(conversation_id, asyncio.Lock())
         async with lock:
             events = []
@@ -524,15 +526,12 @@ def create_app(
             except ContextBudgetExceeded as exc:
                 yield "data: " + json.dumps({
                     "error": {"message": str(exc), "type": "context_length_exceeded"}
-                }, ensure_ascii=False) + "\\n\\n"
-                yield "data: [DONE]\\n\\n"
+                }, ensure_ascii=False) + "\n\n"
+                yield "data: [DONE]\n\n"
                 return
             db.append_event(
                 conversation_id, role="user", content=_store_content(content), producer="user"
             )
-            history = list(system_messages) + events + [
-                {"role": "user", "content": content}
-            ]
             role_chunk = {
                 "id": response_id,
                 "object": "chat.completion.chunk",
@@ -542,55 +541,187 @@ def create_app(
             }
             yield "data: " + json.dumps(role_chunk, ensure_ascii=False, separators=(",", ":")) + "\n\n"
             answer_parts: list[str] = []
+            tool_calls_by_index: dict[int, dict[str, Any]] = {}
+            finish_reason = "stop"
             try:
                 stream_options = dict(generation_options or {})
                 if isinstance(selected_gateway, OpenAICompatibleGateway):
                     stream_options.setdefault("max_tokens", worker.max_output_tokens)
                 async with worker_semaphores[runtime_key(worker)]:
-                    stream_method = getattr(selected_gateway, "stream", None)
-                    if callable(stream_method):
-                        stream = (
-                            stream_method(history, options=stream_options)
-                            if stream_options else stream_method(history)
-                        )
-                        async for piece in stream:
-                            if not isinstance(piece, str):
-                                raise GatewayError("Upstream stream yielded a non-text delta")
-                            if not piece:
-                                continue
-                            answer_parts.append(piece)
-                            chunk = {
-                                "id": response_id,
-                                "object": "chat.completion.chunk",
-                                "created": created_at,
-                                "model": "CDS_AI",
-                                "choices": [{"index": 0, "delta": {"content": piece}, "finish_reason": None}],
+                    if tool_definitions is not None:
+                        structured_stream = getattr(selected_gateway, "stream_events", None)
+                        if callable(structured_stream):
+                            stream = structured_stream(
+                                history,
+                                tools=list(tool_definitions.values()),
+                                tool_choice=tool_choice,
+                                options=stream_options or None,
+                            )
+                            async for event in stream:
+                                piece = event.get("content")
+                                if isinstance(piece, str) and piece:
+                                    answer_parts.append(piece)
+                                    chunk = {
+                                        "id": response_id,
+                                        "object": "chat.completion.chunk",
+                                        "created": created_at,
+                                        "model": "CDS_AI",
+                                        "choices": [{
+                                            "index": 0,
+                                            "delta": {"content": piece},
+                                            "finish_reason": None,
+                                        }],
+                                    }
+                                    yield "data: " + json.dumps(chunk, ensure_ascii=False, separators=(",", ":")) + "\n\n"
+                                deltas = event.get("tool_calls")
+                                if deltas:
+                                    if not isinstance(deltas, list):
+                                        raise GatewayError("Upstream returned invalid tool-call deltas")
+                                    for delta in deltas:
+                                        index = delta.get("index", 0)
+                                        if not isinstance(index, int) or index < 0:
+                                            raise GatewayError("Upstream returned an invalid tool-call index")
+                                        current = tool_calls_by_index.setdefault(
+                                            index,
+                                            {
+                                                "id": "",
+                                                "type": "function",
+                                                "function": {"name": "", "arguments": ""},
+                                            },
+                                        )
+                                        if delta.get("id"):
+                                            current["id"] = delta["id"]
+                                        if delta.get("type"):
+                                            current["type"] = delta["type"]
+                                        function_delta = delta.get("function") or {}
+                                        if function_delta.get("name"):
+                                            current["function"]["name"] += function_delta["name"]
+                                        if function_delta.get("arguments"):
+                                            current["function"]["arguments"] += function_delta["arguments"]
+                                    chunk = {
+                                        "id": response_id,
+                                        "object": "chat.completion.chunk",
+                                        "created": created_at,
+                                        "model": "CDS_AI",
+                                        "choices": [{
+                                            "index": 0,
+                                            "delta": {"tool_calls": deltas},
+                                            "finish_reason": None,
+                                        }],
+                                    }
+                                    yield "data: " + json.dumps(chunk, ensure_ascii=False, separators=(",", ":")) + "\n\n"
+                                if event.get("finish_reason") is not None:
+                                    finish_reason = event["finish_reason"]
+                        else:
+                            kwargs: dict[str, Any] = {
+                                "tools": list(tool_definitions.values()),
                             }
-                            yield "data: " + json.dumps(chunk, ensure_ascii=False, separators=(",", ":")) + "\n\n"
+                            if tool_choice is not None:
+                                kwargs["tool_choice"] = tool_choice
+                            if stream_options:
+                                kwargs["options"] = stream_options
+                            completion = await selected_gateway.complete(history, **kwargs)
+                            if completion.content:
+                                answer_parts.append(completion.content)
+                                delta = {"content": completion.content}
+                                chunk = {
+                                    "id": response_id,
+                                    "object": "chat.completion.chunk",
+                                    "created": created_at,
+                                    "model": "CDS_AI",
+                                    "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
+                                }
+                                yield "data: " + json.dumps(chunk, ensure_ascii=False, separators=(",", ":")) + "\n\n"
+                            validated_calls = validate_tool_calls(
+                                completion.tool_calls, tool_definitions
+                            )
+                            if validated_calls:
+                                tool_calls_by_index = {0: validated_calls[0]}
+                                chunk = {
+                                    "id": response_id,
+                                    "object": "chat.completion.chunk",
+                                    "created": created_at,
+                                    "model": "CDS_AI",
+                                    "choices": [{
+                                        "index": 0,
+                                        "delta": {"tool_calls": [{
+                                            "index": 0,
+                                            **validated_calls[0],
+                                        }]},
+                                        "finish_reason": None,
+                                    }],
+                                }
+                                yield "data: " + json.dumps(chunk, ensure_ascii=False, separators=(",", ":")) + "\n\n"
+                            finish_reason = completion.finish_reason
                     else:
-                        completion = (
-                            await selected_gateway.complete(history, options=stream_options)
-                            if stream_options else await selected_gateway.complete(history)
-                        )
-                        answer_parts.append(completion.content)
-                        chunk = {
-                            "id": response_id,
-                            "object": "chat.completion.chunk",
-                            "created": created_at,
-                            "model": "CDS_AI",
-                            "choices": [{"index": 0, "delta": {"content": completion.content}, "finish_reason": None}],
-                        }
-                        yield "data: " + json.dumps(chunk, ensure_ascii=False, separators=(",", ":")) + "\n\n"
+                        stream_method = getattr(selected_gateway, "stream", None)
+                        if callable(stream_method):
+                            stream = (
+                                stream_method(history, options=stream_options)
+                                if stream_options else stream_method(history)
+                            )
+                            async for piece in stream:
+                                if not isinstance(piece, str):
+                                    raise GatewayError("Upstream stream yielded a non-text delta")
+                                if not piece:
+                                    continue
+                                answer_parts.append(piece)
+                                chunk = {
+                                    "id": response_id,
+                                    "object": "chat.completion.chunk",
+                                    "created": created_at,
+                                    "model": "CDS_AI",
+                                    "choices": [{"index": 0, "delta": {"content": piece}, "finish_reason": None}],
+                                }
+                                yield "data: " + json.dumps(chunk, ensure_ascii=False, separators=(",", ":")) + "\n\n"
+                        else:
+                            completion = (
+                                await selected_gateway.complete(history, options=stream_options)
+                                if stream_options else await selected_gateway.complete(history)
+                            )
+                            if completion.content:
+                                answer_parts.append(completion.content)
+                                chunk = {
+                                    "id": response_id,
+                                    "object": "chat.completion.chunk",
+                                    "created": created_at,
+                                    "model": "CDS_AI",
+                                    "choices": [{"index": 0, "delta": {"content": completion.content}, "finish_reason": None}],
+                                }
+                                yield "data: " + json.dumps(chunk, ensure_ascii=False, separators=(",", ":")) + "\n\n"
+
+                validated_tool_calls: list[dict[str, Any]] = []
+                if tool_calls_by_index:
+                    ordered = [
+                        tool_calls_by_index[index] for index in sorted(tool_calls_by_index)
+                    ]
+                    validated_tool_calls = validate_tool_calls(ordered, tool_definitions or {})
+                if tool_choice == "required" and not validated_tool_calls:
+                    raise GatewayError("Upstream did not honor required tool_choice")
+                if tool_choice == "none" and validated_tool_calls:
+                    raise GatewayError("Upstream returned a tool call when tool_choice was none")
+
+                assistant_metadata = (
+                    {"tool_calls": validated_tool_calls, "finish_reason": "tool_calls"}
+                    if validated_tool_calls else None
+                )
                 db.append_event(
-                    conversation_id, role="assistant", content="".join(answer_parts),
+                    conversation_id,
+                    role="assistant",
+                    content="".join(answer_parts),
                     producer=worker.id,
+                    metadata=assistant_metadata,
                 )
                 final_chunk = {
                     "id": response_id,
                     "object": "chat.completion.chunk",
                     "created": created_at,
                     "model": "CDS_AI",
-                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                    "choices": [{
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "tool_calls" if validated_tool_calls else finish_reason,
+                    }],
                 }
                 yield "data: " + json.dumps(final_chunk, ensure_ascii=False, separators=(",", ":")) + "\n\n"
             except asyncio.CancelledError:
