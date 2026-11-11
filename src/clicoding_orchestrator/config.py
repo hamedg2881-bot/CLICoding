@@ -41,6 +41,7 @@ class Settings:
             raise ValueError("rate_limit_window_seconds must be between 1 and 3600")
         if self.api_key is not None and (
             len(self.api_key) < 32 or not self.api_key.isascii() or not self.api_key.strip()
+            or any(character.isspace() for character in self.api_key)
         ):
             raise ValueError("api_key must be at least 32 ASCII characters")
         if not isinstance(self.user_api_keys, dict):
@@ -52,9 +53,15 @@ class Settings:
             or not isinstance(token, str)
             or len(token) < 32
             or not token.isascii()
+            or any(character.isspace() for character in token)
             for user_id, token in self.user_api_keys.items()
         ):
             raise ValueError("user_api_keys require non-empty IDs and tokens of at least 32 ASCII characters")
+        configured_tokens = list(self.user_api_keys.values())
+        if len(set(configured_tokens)) != len(configured_tokens):
+            raise ValueError("user_api_keys must not reuse the same token for multiple users")
+        if self.api_key is not None and self.api_key in configured_tokens:
+            raise ValueError("api_key must be different from every user API token")
 
     @classmethod
     def from_env(cls) -> "Settings":
