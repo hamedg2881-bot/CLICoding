@@ -56,6 +56,7 @@ class Database:
                 """
                 CREATE TABLE IF NOT EXISTS conversations (
                     id TEXT PRIMARY KEY,
+                    owner_id TEXT NOT NULL DEFAULT 'shared',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -127,7 +128,20 @@ class Database:
                 """
             )
         self._migrate_event_metadata()
+        self._migrate_conversation_owner()
         self._migrate_sandbox_approval_languages()
+
+    def _migrate_conversation_owner(self) -> None:
+        """Add conversation ownership; legacy records remain in the shared namespace."""
+        with self.session() as connection:
+            columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(conversations)").fetchall()
+            }
+            if "owner_id" not in columns:
+                connection.execute(
+                    "ALTER TABLE conversations ADD COLUMN owner_id TEXT NOT NULL DEFAULT 'shared'"
+                )
 
     def _migrate_event_metadata(self) -> None:
         """Add structured event metadata without rebuilding or losing old conversations."""
@@ -200,40 +214,65 @@ class Database:
             connection.execute("PRAGMA foreign_keys = ON")
             connection.close()
 
-    def create_conversation(self) -> dict[str, str]:
+    @staticmethod
+    def _validate_owner_id(owner_id: str) -> str:
+        if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
+            raise ValueError("owner_id must contain 1 to 128 non-whitespace characters")
+        return owner_id
+
+    def create_conversation(self, owner_id: str = "shared") -> dict[str, str]:
+        owner_id = self._validate_owner_id(owner_id)
         conversation_id = str(uuid.uuid4())
         now = utc_now()
         with self.session() as connection:
             connection.execute(
-                "INSERT INTO conversations (id, created_at, updated_at) VALUES (?, ?, ?)",
-                (conversation_id, now, now),
+                "INSERT INTO conversations (id, owner_id, created_at, updated_at) VALUES (?, ?, ?, ?)",
+                (conversation_id, owner_id, now, now),
             )
-        return {"id": conversation_id, "created_at": now, "updated_at": now}
+        return {
+            "id": conversation_id,
+            "owner_id": owner_id,
+            "created_at": now,
+            "updated_at": now,
+        }
 
-    def get_or_create_conversation(self, conversation_id: str) -> dict[str, str]:
-        """Return a conversation with a caller-derived stable ID, creating it once."""
+    def get_or_create_conversation(
+        self, conversation_id: str, owner_id: str = "shared"
+    ) -> dict[str, str]:
+        """Return a caller-derived stable ID only within the authenticated owner namespace."""
+        owner_id = self._validate_owner_id(owner_id)
         if not conversation_id or len(conversation_id) > 128:
             raise ValueError("conversation_id must contain 1 to 128 characters")
         now = utc_now()
         with self.session() as connection:
             connection.execute(
                 """
-                INSERT OR IGNORE INTO conversations (id, created_at, updated_at)
-                VALUES (?, ?, ?)
+                INSERT OR IGNORE INTO conversations (id, owner_id, created_at, updated_at)
+                VALUES (?, ?, ?, ?)
                 """,
-                (conversation_id, now, now),
+                (conversation_id, owner_id, now, now),
             )
             row = connection.execute(
-                "SELECT id, created_at, updated_at FROM conversations WHERE id = ?",
+                "SELECT id, owner_id, created_at, updated_at FROM conversations WHERE id = ?",
                 (conversation_id,),
             ).fetchone()
+        if row is None or row["owner_id"] != owner_id:
+            raise PermissionError("conversation does not belong to the authenticated owner")
         return dict(row)
 
-    def conversation_exists(self, conversation_id: str) -> bool:
+    def conversation_exists(
+        self, conversation_id: str, owner_id: str | None = None
+    ) -> bool:
         with self.session() as connection:
-            row = connection.execute(
-                "SELECT 1 FROM conversations WHERE id = ?", (conversation_id,)
-            ).fetchone()
+            if owner_id is None:
+                row = connection.execute(
+                    "SELECT 1 FROM conversations WHERE id = ?", (conversation_id,)
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    "SELECT 1 FROM conversations WHERE id = ? AND owner_id = ?",
+                    (conversation_id, self._validate_owner_id(owner_id)),
+                ).fetchone()
         return row is not None
 
     def append_event(
@@ -321,12 +360,21 @@ class Database:
             events.append(event)
         return events
 
-    def get_conversation(self, conversation_id: str) -> dict[str, Any] | None:
+    def get_conversation(
+        self, conversation_id: str, owner_id: str | None = None
+    ) -> dict[str, Any] | None:
         with self.session() as connection:
-            row = connection.execute(
-                "SELECT id, created_at, updated_at FROM conversations WHERE id = ?",
-                (conversation_id,),
-            ).fetchone()
+            if owner_id is None:
+                row = connection.execute(
+                    "SELECT id, owner_id, created_at, updated_at FROM conversations WHERE id = ?",
+                    (conversation_id,),
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    "SELECT id, owner_id, created_at, updated_at FROM conversations "
+                    "WHERE id = ? AND owner_id = ?",
+                    (conversation_id, self._validate_owner_id(owner_id)),
+                ).fetchone()
         if row is None:
             return None
         result = dict(row)
