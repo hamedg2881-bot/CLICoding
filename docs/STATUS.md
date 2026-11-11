@@ -1,9 +1,20 @@
 # Project Status
 
-**Last updated:** 2026-11-10  
-**Canonical repository:** https://github.com/hamedg2881-bot/CLICoding  
-**Current phase:** Phase 2A — conversation and multi-model orchestration core  
-**Overall state:** Conversation persistence, capability routing, structured planning, durable multi-model execution, base64 image transport, and configurable three-way parallelism are implemented and covered by 44 passing CI tests. GPT-OSS-20B, Qwen3-Coder-Next, and an experimental Qwen3-VL-2B Vision runtime have each passed real endpoint smoke tests; GPT-OSS and Coder have also passed a concurrent request test. Real image inference, Orchestrator-to-live-runtime integration, Open WebUI conversation mapping/streaming, and sustained three-way load/headroom validation remain open.
+**Last updated:** 2026-11-11  
+**Product / public assistant ID:** CDS_AI  
+**Canonical source repository:** https://github.com/hamedg2881-bot/CLICoding  
+**Current candidate:** `feature/cds-ai-release-integration`, stacked on PR #13  
+**Overall state:** The integration candidate combines the conversation-first CDS_AI core, shared assistant policy, regenerate/edit lineage, API cancellation, safe versioned context compaction, specialist/direct streaming fixes, per-user isolation, workstation tools and conservative context budgeting. GitHub CI is being rerun after the integration. No transfer to DGX or service restart has been performed.
+
+## Current implementation snapshot — 2026-11-11
+- Product identity: `CDS_AI`; legacy CLICoding service/database/environment identifiers remain for compatibility.
+- Conversation lifecycle: persistent history, exact retry idempotency, latest-turn regenerate and guarded edit/resubmit operations are present in PR #13; the integration candidate adds an authenticated active-turn cancellation endpoint.
+- Context lifecycle: direct chat and tool-call turns use model-assisted compaction with versioned summaries. Original events remain intact; recent three user turns are retained; summaries are invalidated when rewritten history intersects their coverage. Specialist orchestration compaction remains open.
+- Streaming: direct chat and tool-call deltas stream; specialist output remains buffered before SSE. SSE framing regression tests cover specialist and operation-error paths.
+- Workstation execution: approved, allow-listed reference tool host; no arbitrary shell tool.
+- Worker example uses recorded ports 8003/8004/8005 and leaves all workers disabled. Served aliases and tool-call capability require live verification.
+- Remaining source gates include typed attachments, packaged IDE UI, browser/screenshot visual validation, specialist progress, OS-level process sandboxing, rate limiting, audit export, multi-process locking and cross-platform acceptance.
+- No DGX host files, services, model runtimes or containers have been changed.
 
 ## Confirmed requirements
 - Internet is unavailable during development; internal LAN is available.
