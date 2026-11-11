@@ -659,12 +659,14 @@ def create_app(
                 regeneration_event = _prepare_regeneration(
                     db, conversation_id, input_role, content, input_metadata
                 )
+                db.invalidate_summaries_from_sequence(conversation_id, regeneration_event["sequence"])
                 input_event = db.list_events(conversation_id)[-2]
                 stored_events = db.list_events(conversation_id)[:-1]
             elif edit_event_id is not None:
                 edit_target, stored_events = _prepare_edit(
                     db, conversation_id, edit_event_id
                 )
+                db.invalidate_summaries_from_sequence(conversation_id, edit_target["sequence"])
                 input_event = None
             else:
                 input_event = _append_input_event(
@@ -920,6 +922,7 @@ def create_app(
                     regeneration_event = _prepare_regeneration(
                         db, conversation_id, input_role, content, input_metadata
                     )
+                    db.invalidate_summaries_from_sequence(conversation_id, regeneration_event["sequence"])
                 except HTTPException as exc:
                     yield "data: " + json.dumps({
                         "error": {"message": exc.detail, "type": "invalid_request_error"}
@@ -932,6 +935,7 @@ def create_app(
                     edit_target, stored_events = _prepare_edit(
                         db, conversation_id, edit_event_id
                     )
+                    db.invalidate_summaries_from_sequence(conversation_id, edit_target["sequence"])
                 except HTTPException as exc:
                     yield "data: " + json.dumps({
                         "error": {"message": exc.detail, "type": "invalid_request_error"}
@@ -1465,10 +1469,16 @@ def create_app(
             assert stream_worker is not None
             stream_events = []
             if regenerate and existing_events and existing_events[-1]["role"] == "assistant":
+                db.invalidate_summaries_from_sequence(
+                    conversation_id, existing_events[-1]["sequence"]
+                )
                 stream_source_events = existing_events[:-1]
             elif edit_event_id is not None:
-                _, stream_source_events = _prepare_edit(
+                edit_target, stream_source_events = _prepare_edit(
                     db, conversation_id, edit_event_id
+                )
+                db.invalidate_summaries_from_sequence(
+                    conversation_id, edit_target["sequence"]
                 )
             else:
                 stream_source_events = existing_events
