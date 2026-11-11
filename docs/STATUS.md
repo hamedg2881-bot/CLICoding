@@ -1,3 +1,12 @@
+## 2026-11-11 — Offline backup and restore
+
+- Added the packaged cds-ai-backup CLI and a source-tree wrapper. The utility uses SQLite's online backup API, includes only attachment files referenced by the database snapshot, verifies SQLite integrity and SHA-256/size metadata, and writes a versioned manifest.
+- Restore verifies the backup before staging, refuses overwrite unless explicitly requested, retains pre-restore database/attachment paths, checks staged files and attempts rollback if installation fails.
+- Added tests for backup/verify/restore, tamper detection, unreferenced payload rejection and overwrite protection.
+- The utility does not encrypt backups, schedule jobs, include .env/secrets, or stop/restart services. Store backups encrypted at rest and stop CDS_AI before restore.
+- Automatic attachment expiry, malware scanning and content decoding remain open.
+- No DGX transfer or service/runtime restart has occurred.
+
 ## 2026-11-11 — API security operations hardening
 
 - Added a durable SQLite token registry with cryptographically random user tokens, SHA-256 hashes at rest, one-time plaintext disclosure, administrator-only listing and revocation.
