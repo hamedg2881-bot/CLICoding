@@ -325,7 +325,7 @@ def create_app(
 ) -> FastAPI:
     config = settings or Settings.from_env()
     db = database or Database(config.database_path)
-    security_store = SecurityStore(config.database_path)
+    security_store = SecurityStore(db.path)
 
     if registry is not None:
         worker_registry = registry
