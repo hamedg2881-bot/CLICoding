@@ -119,7 +119,7 @@ jobs:
           if manifest["machine"] not in {"aarch64", "arm64"}:
               raise SystemExit(f"unexpected wheelhouse architecture: {manifest['machine']}")
           Path("dist/wheelhouse-manifest.json").write_text(
-              json.dumps(manifest, indent=2) + "\\n", encoding="utf-8"
+              json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
           )
           print(f"Built {len(wheels)} wheels for {manifest['machine']} / {sys.version.split()[0]}")
           PY
