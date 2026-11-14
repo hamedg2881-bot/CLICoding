@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
+import hmac
 import json
 import os
 import selectors
@@ -11,13 +13,24 @@ import sys
 import tempfile
 import time
 import uuid
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 DOCKER = "/usr/bin/docker"
 MAX_REQUEST_BYTES = 128 * 1024
+MAX_WORKSPACE_REQUEST_BYTES = 8 * 1024 * 1024
+MAX_WORKSPACE_FILES = 200
+MAX_WORKSPACE_FILE_BYTES = 1 * 1024 * 1024
+MAX_WORKSPACE_BYTES = 5 * 1024 * 1024
 MAX_OUTPUT_BYTES = 64 * 1024
+MAX_WORKSPACE_OUTPUT_BYTES = 256 * 1024
 TIME_LIMIT_SECONDS = 60
+WORKSPACE_TIME_LIMIT_SECONDS = 600
+WORKSPACE_MEMORY_LIMIT = "2g"
+WORKSPACE_CPU_LIMIT = "2"
+WORKSPACE_PID_LIMIT = "128"
+NUGET_FEED_PATH = "/var/cache/clicoding-sandbox/nuget-feed"
+DOTNET_WORKSPACE_IMAGE = "mcr.microsoft.com/dotnet/sdk:10.0.402@sha256:747cbade5bfd918a175ac32f8f1d931edec2c7d0d5397a3de72eaef1ac1f66d2"
 MEMORY_LIMIT = "512m"
 CPU_LIMIT = "1"
 PID_LIMIT = "32"
@@ -83,16 +96,22 @@ def emit(value: dict[str, Any], status: int = 0) -> int:
     return status
 
 
-def read_request() -> tuple[str, bytes]:
-    raw = sys.stdin.buffer.read(MAX_REQUEST_BYTES + 1)
-    if len(raw) > MAX_REQUEST_BYTES:
-        raise RequestError(f"Request exceeds {MAX_REQUEST_BYTES} bytes")
+def read_request() -> dict[str, Any]:
+    raw = sys.stdin.buffer.read(MAX_WORKSPACE_REQUEST_BYTES + 1)
+    if len(raw) > MAX_WORKSPACE_REQUEST_BYTES:
+        raise RequestError(f"Request exceeds {MAX_WORKSPACE_REQUEST_BYTES} bytes")
     try:
         request = json.loads(raw)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise RequestError("Input must be one valid UTF-8 JSON object") from exc
     if not isinstance(request, dict):
         raise RequestError("Request must be a JSON object")
+    return request
+
+
+def parse_code_request(request: dict[str, Any]) -> tuple[str, bytes]:
+    if set(request) != {"language", "code"}:
+        raise RequestError("Single-file requests must contain only language and code")
     language = request.get("language")
     code = request.get("code")
     if not isinstance(language, str) or language not in RUNTIMES:
@@ -106,6 +125,94 @@ def read_request() -> tuple[str, bytes]:
     if len(encoded) > MAX_REQUEST_BYTES:
         raise RequestError(f"Source exceeds {MAX_REQUEST_BYTES} bytes")
     return language, encoded
+
+
+def validate_workspace_request(request: dict[str, Any]) -> dict[str, Any]:
+    if set(request) != {"mode", "action", "project_path", "files", "snapshot_sha256"}:
+        raise RequestError("Workspace request has unexpected or missing fields")
+    if request.get("mode") != "workspace" or request.get("action") not in {"build", "test"}:
+        raise RequestError("Unsupported workspace sandbox action")
+    project_path = request.get("project_path")
+    if (
+        not isinstance(project_path, str) or not project_path or len(project_path) > 512
+        or "\\" in project_path or "\x00" in project_path
+        or PurePosixPath(project_path).is_absolute()
+        or PureWindowsPath(project_path).is_absolute()
+        or PurePosixPath(project_path).suffix.lower() not in {".sln", ".slnx", ".csproj"}
+    ):
+        raise RequestError("Workspace project path is invalid")
+    files = request.get("files")
+    if not isinstance(files, list) or not 1 <= len(files) <= MAX_WORKSPACE_FILES:
+        raise RequestError("Workspace file count is outside the allowed range")
+    seen: set[str] = set()
+    manifest = []
+    total_bytes = 0
+    target_found = False
+    blocked_dirs = {
+        ".git", ".ssh", ".aws", ".azure", ".gnupg", ".venv", "venv",
+        "node_modules", "bin", "obj", "__pycache__", ".idea", ".vs",
+        "secrets", "credentials",
+    }
+    blocked_names = {
+        ".env", ".git-credentials", "id_rsa", "id_ed25519",
+        "credentials.json", "secrets.json", ".npmrc", ".pypirc", "nuget.config",
+    }
+    for item in files:
+        if not isinstance(item, dict) or set(item) != {"path", "content", "sha256", "bytes"}:
+            raise RequestError("Workspace snapshot entry is invalid")
+        path = item["path"]
+        if (
+            not isinstance(path, str) or not path or len(path) > 512
+            or "\\" in path or "\x00" in path
+            or PurePosixPath(path).is_absolute()
+            or PureWindowsPath(path).is_absolute()
+            or any(part in {"", ".", ".."} for part in PurePosixPath(path).parts)
+        ):
+            raise RequestError("Workspace snapshot contains an unsafe path")
+        relative = PurePosixPath(path)
+        parts = [part.casefold() for part in relative.parts]
+        if any(part in blocked_dirs for part in parts[:-1]):
+            raise RequestError("Workspace snapshot contains a blocked directory")
+        filename = parts[-1]
+        if (
+            filename in blocked_names
+            or (filename.startswith(".env.") and filename != ".env.example")
+            or Path(filename).suffix.lower() in {".pem", ".key", ".p12", ".pfx", ".kdb"}
+        ):
+            raise RequestError("Workspace snapshot contains a blocked credential file")
+        key = relative.as_posix().casefold()
+        if key in seen:
+            raise RequestError("Workspace snapshot contains duplicate paths")
+        seen.add(key)
+        source = item["content"]
+        if not isinstance(source, str):
+            raise RequestError("Workspace snapshot content must be UTF-8 text")
+        try:
+            encoded = source.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise RequestError("Workspace snapshot contains invalid UTF-8") from exc
+        digest = hashlib.sha256(encoded).hexdigest()
+        if len(encoded) > MAX_WORKSPACE_FILE_BYTES or item["bytes"] != len(encoded):
+            raise RequestError("Workspace snapshot file size mismatch")
+        if not isinstance(item["sha256"], str) or not hmac.compare_digest(digest, item["sha256"]):
+            raise RequestError("Workspace snapshot file digest mismatch")
+        total_bytes += len(encoded)
+        if total_bytes > MAX_WORKSPACE_BYTES:
+            raise RequestError("Workspace snapshot exceeds the size limit")
+        manifest.append({"path": relative.as_posix(), "sha256": digest, "bytes": len(encoded)})
+        if relative.as_posix() == project_path:
+            target_found = True
+    if not target_found:
+        raise RequestError("Workspace project file is not included in the snapshot")
+    manifest.sort(key=lambda item: item["path"])
+    canonical = json.dumps(
+        manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    calculated = hashlib.sha256(canonical).hexdigest()
+    supplied = request.get("snapshot_sha256")
+    if not isinstance(supplied, str) or not hmac.compare_digest(calculated, supplied):
+        raise RequestError("Workspace snapshot digest mismatch")
+    return request
 
 
 def cleanup_container(cid_file: str, execution_id: str) -> None:
