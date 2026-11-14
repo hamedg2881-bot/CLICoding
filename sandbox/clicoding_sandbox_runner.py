@@ -128,8 +128,12 @@ def parse_code_request(request: dict[str, Any]) -> tuple[str, bytes]:
 
 
 def validate_workspace_request(request: dict[str, Any]) -> dict[str, Any]:
-    if set(request) != {"mode", "action", "project_path", "files", "snapshot_sha256"}:
+    if set(request) != {"mode", "approval_id", "action", "project_path", "files", "snapshot_sha256"}:
         raise RequestError("Workspace request has unexpected or missing fields")
+    try:
+        uuid.UUID(str(request["approval_id"]))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise RequestError("Workspace approval identity is invalid") from exc
     if request.get("mode") != "workspace" or request.get("action") not in {"build", "test"}:
         raise RequestError("Unsupported workspace sandbox action")
     project_path = request.get("project_path")
@@ -493,6 +497,7 @@ def run_workspace(request: dict[str, Any]) -> dict[str, Any]:
             DOCKER, "run", "--rm", "--pull=never",
             "--cidfile", cid_file,
             "--label", f"clicoding.execution={execution_id}",
+            "--label", f"clicoding.approval={request['approval_id']}",
             "--network=none", "--read-only", "--user", USER_ID,
             "--cap-drop=ALL", "--security-opt", "no-new-privileges:true",
             "--pids-limit", WORKSPACE_PID_LIMIT,
