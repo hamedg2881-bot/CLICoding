@@ -256,7 +256,7 @@ main{display:flex;flex-direction:column;min-width:0;height:100%;position:relativ
   $("stopButton").addEventListener("click",stop);
   $("prompt").addEventListener("keydown",event=>{if(event.key==="Enter"&&!event.shiftKey){event.preventDefault();sendStreaming();}});
   $("prompt").addEventListener("input",()=>{ $("prompt").style.height="auto"; $("prompt").style.height=Math.min($("prompt").scrollHeight,180)+"px";});
-  $("newChat").addEventListener("click",()=>{if(state.busy)return;state.conversationId=null;$("messages").replaceChildren();showWelcome();renderChatList();setStatus("گفت‌وگوی جدید");$("prompt").focus();});
+  $("newChat").addEventListener("click",()=>{if(state.busy)return;state.conversationId=null;state.pendingImage=null;$("fileName").textContent="";$("imageFile").value="";$("messages").replaceChildren();showWelcome();renderChatList();setStatus("گفت‌وگوی جدید");$("prompt").focus();});
   $("settingsButton").addEventListener("click",()=>{$("settings").hidden=!$("settings").hidden;});
   $("closeSettings").addEventListener("click",()=>$("settings").hidden=true);
   $("saveToken").addEventListener("click",()=>{const nextToken=$("apiToken").value.trim();if(nextToken!==state.token){state.token=nextToken;state.chats=[];state.conversationId=null;sessionStorage.removeItem(indexKey);$("messages").replaceChildren();showWelcome();renderChatList();}if(state.token)sessionStorage.setItem("cds-ai-token",state.token);else sessionStorage.removeItem("cds-ai-token");$("settings").hidden=true;setStatus("تنظیمات اتصال ذخیره شد");});
