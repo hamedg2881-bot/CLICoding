@@ -484,7 +484,7 @@ def cancel_workspace_approval(approval_id: str) -> dict:
 
 class Handler(socketserver.StreamRequestHandler):
     def handle(self) -> None:
-        self.connection.settimeout(5)
+        self.connection.settimeout(20)
         raw = self.rfile.readline(MAX_REQUEST_BYTES + 1)
         if not raw or len(raw) > MAX_REQUEST_BYTES or not raw.endswith(b"\n"):
             self.wfile.write(b'{"status":"rejected","error":"invalid request"}\n')
