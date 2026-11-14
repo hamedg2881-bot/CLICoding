@@ -152,11 +152,15 @@ def test_browser_uploads_image_and_stop_calls_cancellation_endpoint():
                     "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
                     "0000000b49444154789c636000020000050001a5f645400000000049454e44ae426082"
                 )
-                await page.locator("#imageFile").set_input_files({
+                async with page.expect_file_chooser() as chooser_info:
+                    await page.locator("#attachButton").click()
+                chooser = await chooser_info.value
+                await chooser.set_files({
                     "name": "sample.png",
                     "mimeType": "image/png",
                     "buffer": png,
                 })
+                assert await page.locator("#fileName").inner_text() == "sample.png"
                 await page.locator("#prompt").fill("این تصویر را بررسی کن")
                 await page.locator("#sendButton").click()
                 await asyncio.wait_for(completion_started.wait(), timeout=5)
