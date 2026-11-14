@@ -139,10 +139,18 @@ def main() -> int:
                 for item in entries if isinstance(item, dict)
             }
             missing = required_references - locked_references
+            extra = locked_references - required_references
+            if len(locked_references) != len(entries):
+                failures += 1
+                print("MISSING  duplicate source references in image lock")
             if missing:
                 failures += len(missing)
                 for reference in sorted(missing):
                     print(f"MISSING  image lock entry: {reference}")
+            if extra:
+                failures += len(extra)
+                for reference in sorted(str(item) for item in extra):
+                    print(f"MISSING  unexpected image lock entry: {reference}")
             print("Locked sandbox images (read-only inspection):")
             for entry in entries:
                 if not isinstance(entry, dict):
