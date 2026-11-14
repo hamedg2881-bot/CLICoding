@@ -68,3 +68,32 @@ def test_archive_checksum_streaming(tmp_path):
     archive = tmp_path / "images.tar"
     archive.write_bytes(b"container archive")
     assert exporter.sha256_file(archive) == hashlib.sha256(b"container archive").hexdigest()
+
+
+
+def test_lock_only_output_writes_inventory_without_docker_archive(tmp_path, monkeypatch):
+    entries = [{
+        "source_reference": "example/image@sha256:" + "a" * 64,
+        "runtime_names": ["python"],
+        "local_tag": "clicoding-sandbox/python:arm64",
+        "image_id": "sha256:" + "b" * 64,
+        "platform": "linux/arm64",
+        "source_repo_digests": ["example/image@sha256:" + "a" * 64],
+        "build_context_sha256": None,
+    }]
+    output_dir = tmp_path / "prepared"
+    output_dir.mkdir()
+    lock = {
+        "format_version": 1,
+        "platform": "linux/arm64",
+        "images": entries,
+    }
+    lock_path = output_dir / "sandbox-image-lock.json"
+    lock_path.write_text(json.dumps(lock, indent=2) + "\\n", encoding="utf-8")
+    digest = exporter.sha256_file(lock_path)
+    sidecar = output_dir / "sandbox-image-lock.json.sha256"
+    sidecar.write_text(f"{digest}  {lock_path.name}\\n", encoding="utf-8")
+
+    assert json.loads(lock_path.read_text(encoding="utf-8")) == lock
+    assert sidecar.read_text(encoding="utf-8").startswith(digest)
+    assert not (output_dir / "clicoding-sandbox-images-arm64.tar").exists()
