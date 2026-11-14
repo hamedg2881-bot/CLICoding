@@ -36,6 +36,29 @@ class GatewayError(RuntimeError):
     pass
 
 
+def _parse_sse_event(raw: str) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    try:
+        event = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise GatewayError("Upstream returned malformed streaming data") from exc
+    if not isinstance(event, dict):
+        raise GatewayError("Upstream returned an invalid streaming event")
+    if event.get("error"):
+        raise GatewayError("Upstream model reported a streaming error")
+    choices = event.get("choices", [])
+    if not isinstance(choices, list):
+        raise GatewayError("Upstream returned invalid streaming choices")
+    parsed: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    for choice in choices:
+        if not isinstance(choice, dict):
+            raise GatewayError("Upstream returned an invalid streaming choice")
+        delta = choice.get("delta", {})
+        if not isinstance(delta, dict):
+            raise GatewayError("Upstream returned an invalid streaming delta")
+        parsed.append((choice, delta))
+    return parsed
+
+
 class OpenAICompatibleGateway:
     """OpenAI-compatible transport; conversation and task state live elsewhere."""
 
@@ -168,19 +191,10 @@ class OpenAICompatibleGateway:
                         if raw == "[DONE]":
                             saw_done = True
                             break
-                        try:
-                            event = json.loads(raw)
-                        except json.JSONDecodeError as exc:
-                            raise GatewayError("Upstream returned malformed streaming data") from exc
-                        if isinstance(event, dict) and event.get("error"):
-                            raise GatewayError("Upstream model reported a streaming error")
-                        choices = event.get("choices", []) if isinstance(event, dict) else []
-                        if not choices:
+                        parsed_choices = _parse_sse_event(raw)
+                        if not parsed_choices:
                             continue
-                        choice = choices[0]
-                        delta = choice.get("delta", {})
-                        if not isinstance(delta, dict):
-                            raise GatewayError("Upstream returned an invalid streaming delta")
+                        choice, delta = parsed_choices[0]
                         content = delta.get("content")
                         if isinstance(content, str) and content:
                             yield {"content": content}
@@ -233,17 +247,11 @@ class OpenAICompatibleGateway:
                         if raw == "[DONE]":
                             saw_done = True
                             break
-                        try:
-                            event = json.loads(raw)
-                        except json.JSONDecodeError as exc:
-                            raise GatewayError("Upstream returned malformed streaming data") from exc
-                        if isinstance(event, dict) and event.get("error"):
-                            raise GatewayError("Upstream model reported a streaming error")
-                        choices = event.get("choices", []) if isinstance(event, dict) else []
-                        if not choices:
+                        parsed_choices = _parse_sse_event(raw)
+                        if not parsed_choices:
                             continue
-                        delta = choices[0].get("delta", {})
-                        content = delta.get("content") if isinstance(delta, dict) else None
+                        _, delta = parsed_choices[0]
+                        content = delta.get("content")
                         if isinstance(content, str) and content:
                             yield content
         except GatewayError:
