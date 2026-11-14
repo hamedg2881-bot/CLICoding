@@ -176,21 +176,36 @@ main{display:flex;flex-direction:column;min-width:0;height:100%;position:relativ
   }
   async function sendStreaming() {
     const text=$("prompt").value.trim();
-    if (!text || state.busy) return;
+    if ((!text && !state.pendingImage) || state.busy) return;
     state.busy=true; $("sendButton").disabled=true; $("stopButton").hidden=false; $("prompt").disabled=true;
     let assistant, bubble, id;
     const controller=new AbortController(); state.controller=controller;
     try {
       id=await ensureConversation();
-      addMessage("user",text);
+      const requestText=text || "این تصویر را بررسی کن.";
+      addMessage("user",state.pendingImage ? requestText + "\n[تصویر پیوست شد: " + state.pendingImage.name + "]" : requestText);
       const chat=state.chats.find(item=>item.id===id);
       if (chat && chat.title==="گفت‌وگوی جدید") {chat.title=text.slice(0,42);persistIndex();renderChatList();}
       $("prompt").value="";
       assistant=addMessage("assistant",""); bubble=assistant.bubble;
+      let messageContent=requestText;
+      let taskType=$("taskType").value;
+      if(state.pendingImage){
+        const file=state.pendingImage;
+        const uploaded=await api("/api/v1/conversations/"+encodeURIComponent(id)+"/attachments",{
+          method:"POST",
+          headers:{"Content-Type":file.type || "application/octet-stream","X-Filename":file.name},
+          body:file
+        });
+        const attachment=await uploaded.json();
+        messageContent=[{type:"text",text:requestText},attachment.content_part];
+        taskType="vision";
+        state.pendingImage=null; $("fileName").textContent=""; $("imageFile").value="";
+      }
       const response=await api("/v1/chat/completions",{
         method:"POST",signal:controller.signal,
         headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({model:"CDS_AI",task_type:$("taskType").value,stream:true,conversation_id:id,messages:[{role:"user",content:text}]})
+        body:JSON.stringify({model:"CDS_AI",task_type:taskType,stream:true,conversation_id:id,messages:[{role:"user",content:messageContent}]})
       });
       if (!response.body) throw new Error("مرورگر از دریافت جریان پاسخ پشتیبانی نمی‌کند");
       const reader=response.body.getReader(), decoder=new TextDecoder();
