@@ -2247,7 +2247,7 @@ def create_app(
                 timeout=3,
             )
             writer.write(
-                (json.dumps({"cancel_approval_id": approval_id}) + "\\n").encode("utf-8")
+                (json.dumps({"cancel_approval_id": approval_id}) + "\n").encode("utf-8")
             )
             await writer.drain()
             raw = await asyncio.wait_for(reader.readline(), timeout=20)
