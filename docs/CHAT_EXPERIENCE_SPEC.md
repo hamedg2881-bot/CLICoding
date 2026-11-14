@@ -63,7 +63,7 @@ The first public adapter remains OpenAI Chat Completions compatible for common c
 - Implemented: specialist plan/task lifecycle events are streamed as custom `event: progress` SSE frames with safe status metadata; final specialist answer is sent after orchestration completes and is not represented as token-by-token streaming.
 - Implemented: first-party CDS_AI browser chat UI served at `/`, with RTL layout, separate conversations in the current browser session, history reload, task-type selection, live progress panel, direct token display, PNG/JPEG/GIF/WebP attachment upload through the authenticated attachment API, API-identity-isolated session chat history, and a Stop action wired to the authenticated cancellation endpoint.
 - Implemented: backend tool-call round-trip and safe workstation tool broker, context-window budgeting/compaction, regenerate/edit lineage, typed image attachment storage, and IDE reference adapter.
-- Not yet accepted: actual Open WebUI rendering of the custom `x_clicoding.progress` event metadata; first-party UI browser/Playwright acceptance across desktop/mobile; end-to-end keyboard, multi-conversation and cancellation UX.
+- Not yet accepted: actual Open WebUI rendering of the custom `x_clicoding.progress` event metadata; full browser acceptance against the live backend; mobile/keyboard accessibility and real-backend cancellation race behavior. Desktop Playwright browser-contract tests with mocked APIs now cover specialist progress, separate conversations, image attachment requests and Stop-to-cancel behavior.
 - Not yet implemented: automatic attachment expiry/retention, image decoding/content validation and malware scanning; packaged IDE UI and OS-level process sandboxing.
 
 ## Release gates
