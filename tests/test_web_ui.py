@@ -17,7 +17,7 @@ def test_root_serves_first_party_chat_ui_and_progress_controls(tmp_path):
     assert response.headers["content-type"].startswith("text/html")
     assert "CDS_AI" in response.text
     assert 'id="stopButton"' in response.text
-    assert 'event === "progress"' in response.text
+    assert 'eventName === "progress"' in response.text
     assert "/api/v1/conversations/" in response.text
     assert "/v1/chat/completions" in response.text
     assert "sessionStorage" in response.text
