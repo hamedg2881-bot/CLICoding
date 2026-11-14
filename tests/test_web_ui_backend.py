@@ -18,6 +18,17 @@ class BrowserBackendGateway:
         self.never_release = asyncio.Event()
 
     async def complete(self, messages, *, tools=None, tool_choice=None, options=None):
+        contains_image = any(
+            isinstance(message.get("content"), list)
+            and any(part.get("type") == "image_url" for part in message["content"])
+            for message in messages
+        )
+        if contains_image:
+            self.vision_started.set()
+            try:
+                await self.never_release.wait()
+            finally:
+                self.vision_cancelled.set()
         return Completion(content="unused completion", model="browser-backend-test")
 
     async def stream(self, messages, *, options=None):
