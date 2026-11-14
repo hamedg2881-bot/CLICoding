@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from typing import Any
 
@@ -81,6 +82,7 @@ def _validate_schema_definition(
             schema_type not in {"integer", "number"}
             or not isinstance(schema[key], (int, float))
             or isinstance(schema[key], bool)
+            or not math.isfinite(schema[key])
         ):
             raise ToolProtocolError(f"{path}.{key} is only valid as a numeric bound")
     if "minimum" in schema and "maximum" in schema and schema["minimum"] > schema["maximum"]:
@@ -134,7 +136,11 @@ def _matches_type(value: Any, schema_type: str) -> bool:
     if schema_type == "integer":
         return isinstance(value, int) and not isinstance(value, bool)
     if schema_type == "number":
-        return isinstance(value, (int, float)) and not isinstance(value, bool)
+        return (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(value)
+        )
     if schema_type == "boolean":
         return isinstance(value, bool)
     return False
