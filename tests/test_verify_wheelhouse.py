@@ -21,6 +21,7 @@ def make_manifest(tmp_path):
     manifest = {
         "format_version": 1,
         "python": sys.version,
+        "implementation": sys.implementation.name,
         "machine": platform.machine(),
         "wheels": [
             {
