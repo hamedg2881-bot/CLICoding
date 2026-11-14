@@ -93,8 +93,9 @@ main{display:flex;flex-direction:column;min-width:0;height:100%;position:relativ
     article.className = "message " + role;
     const avatar = document.createElement("div"); avatar.className = "avatar"; avatar.textContent = role === "user" ? "شما" : "C";
     const bubble = document.createElement("div"); bubble.className = "bubble"; bubble.textContent = content;
-    article.append(avatar, bubble); $("messages").append(article); scrollBottom();
-    return {article, bubble};
+    const body=document.createElement("div"); body.className="message-body"; body.append(bubble);
+    article.append(avatar, body); $("messages").append(article); scrollBottom();
+    return {article, bubble, body};
   }
   function setStatus(value) { $("status").textContent = value; }
   async function ensureConversation() {
@@ -145,7 +146,7 @@ main{display:flex;flex-direction:column;min-width:0;height:100%;position:relativ
     if (!panel) {
       panel = document.createElement("div"); panel.className="progress";
       const heading=document.createElement("div"); heading.className="progress-head"; heading.textContent="روند انجام کار";
-      panel.append(heading); container.prepend(panel);
+      panel.append(heading); (container.querySelector(".message-body") || container).prepend(panel);
     }
     const item=document.createElement("div"); item.className="progress-item";
     const dot=document.createElement("span"); dot.className="dot";
@@ -171,13 +172,13 @@ main{display:flex;flex-direction:column;min-width:0;height:100%;position:relativ
     }
     if (payload.error) throw new Error(payload.error.message || "خطای نامشخص در پاسخ");
     const delta=payload.choices?.[0]?.delta?.content;
-    if (typeof delta === "string") { assistantBubble.textContent += delta; scrollBottom(); }
+    if (typeof delta === "string") { setStatus("در حال تولید پاسخ..."); assistantBubble.textContent += delta; scrollBottom(); }
     return false;
   }
   async function sendStreaming() {
     const text=$("prompt").value.trim();
     if ((!text && !state.pendingImage) || state.busy) return;
-    state.busy=true; $("sendButton").disabled=true; $("stopButton").hidden=false; $("prompt").disabled=true;
+    state.busy=true; setStatus("در حال پردازش درخواست..."); $("sendButton").disabled=true; $("stopButton").hidden=false; $("prompt").disabled=true;
     let assistant, bubble, id;
     const controller=new AbortController(); state.controller=controller;
     try {
