@@ -50,3 +50,32 @@ def test_feed_check_fails_closed_when_feed_is_missing_or_symlinked(tmp_path):
     link.symlink_to(target, target_is_directory=True)
     ok, _ = checker.check_feed(link)
     assert ok is False
+
+
+def test_runtime_preflight_checks_locked_image_id_and_platform(monkeypatch):
+    entry = {
+        "source_reference": "example/dotnet@sha256:" + "a" * 64,
+        "local_tag": "clicoding-sandbox/dotnet:arm64",
+        "image_id": "sha256:" + "b" * 64,
+    }
+    monkeypatch.setattr(
+        checker.subprocess,
+        "run",
+        lambda *args, **kwargs: __import__("subprocess").CompletedProcess(
+            args[0], 0, stdout=f"{entry['image_id']}|linux/arm64\n", stderr=""
+        ),
+    )
+    ok, detail = checker.inspect_locked_image("/usr/bin/docker", entry)
+    assert ok is True
+    assert "linux/arm64" in detail
+
+    monkeypatch.setattr(
+        checker.subprocess,
+        "run",
+        lambda *args, **kwargs: __import__("subprocess").CompletedProcess(
+            args[0], 0, stdout=f"sha256:{'c' * 64}|linux/arm64\n", stderr=""
+        ),
+    )
+    ok, detail = checker.inspect_locked_image("/usr/bin/docker", entry)
+    assert ok is False
+    assert "ID mismatch" in detail
