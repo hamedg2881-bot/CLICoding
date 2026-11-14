@@ -270,3 +270,62 @@ def test_openai_gateway_streams_structured_tool_call_deltas(monkeypatch):
     assert payload["parallel_tool_calls"] is False
     assert payload["tool_choice"] == "auto"
     assert payload["max_tokens"] == 128
+
+class SharedHTTPClient:
+    def __init__(self):
+        self.posts = []
+        self.streams = []
+        self.closed = False
+
+    async def post(self, url, **kwargs):
+        self.posts.append((url, kwargs))
+        return FakeJSONResponse({
+            "model": "served-model",
+            "choices": [{
+                "message": {"role": "assistant", "content": "pooled reply"},
+                "finish_reason": "stop",
+            }],
+        })
+
+    def stream(self, method, url, **kwargs):
+        self.streams.append((method, url, kwargs))
+        response = FakeResponse([
+            'data: ' + json.dumps({"choices": [{"delta": {"content": "pooled "}}]}),
+            'data: ' + json.dumps({"choices": [{"delta": {"content": "stream"}}]}),
+            "data: [DONE]",
+        ])
+        return FakeStreamContext(response)
+
+    async def aclose(self):
+        self.closed = True
+
+
+def test_openai_gateway_reuses_injected_client_for_completion_and_streaming(monkeypatch):
+    shared_client = SharedHTTPClient()
+
+    def unexpected_client(**kwargs):
+        raise AssertionError("gateway must reuse the injected application client")
+
+    monkeypatch.setattr("clicoding_orchestrator.gateway.httpx.AsyncClient", unexpected_client)
+    gateway = OpenAICompatibleGateway(
+        "http://model/v1", "served-model", client=shared_client
+    )
+    messages = [{"role": "user", "content": "Use the pooled connection"}]
+
+    async def exercise():
+        completion = await gateway.complete(messages)
+        events = [event async for event in gateway.stream_events(messages)]
+        return completion, events
+
+    completion, events = asyncio.run(exercise())
+
+    assert completion.content == "pooled reply"
+    assert [event.get("content") for event in events if "content" in event] == [
+        "pooled ", "stream"
+    ]
+    assert len(shared_client.posts) == 1
+    assert len(shared_client.streams) == 1
+    assert shared_client.posts[0][1]["timeout"] == 180.0
+    assert shared_client.streams[0][2]["timeout"] == 180.0
+    assert shared_client.closed is False
+
