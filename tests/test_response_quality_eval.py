@@ -38,7 +38,7 @@ def test_quality_runner_documents_human_scoring_and_does_not_auto_judge():
         / "run_response_quality.py"
     ).read_text(encoding="utf-8")
 
-    assert "no automatic quality" in runner
+    assert "never assigns an automatic quality" in runner
     assert "Score each response manually" in runner
     assert "CDS_AI_API_KEY" in runner
     assert "Authorization" in runner
