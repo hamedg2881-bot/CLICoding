@@ -499,7 +499,7 @@ class MultiModelOrchestrator:
                 # Completed task outputs are still useful if the final chat worker is
                 # unavailable; do not turn a successful execution into an HTTP failure.
                 answer = (
-                    "Final synthesis was unavailable. The available specialist results "
+                    "The final synthesis was unavailable. The available specialist results "
                     "are shown below; check the work-status disclosure that follows.\n\n"
                     + "\n\n".join(successful)
                 )
