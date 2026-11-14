@@ -365,7 +365,8 @@ class CancellationTrackingClient:
         return self.context
 
 
-def test_openai_gateway_closes_upstream_stream_when_consumer_is_cancelled():
+@pytest.mark.parametrize("stream_method", ["stream", "stream_events"])
+def test_openai_gateway_closes_upstream_stream_when_consumer_is_cancelled(stream_method):
     response = BlockingStreamResponse()
     client = CancellationTrackingClient(response)
     gateway = OpenAICompatibleGateway(
@@ -373,11 +374,13 @@ def test_openai_gateway_closes_upstream_stream_when_consumer_is_cancelled():
     )
 
     async def exercise():
-        iterator = gateway.stream(
-            [{"role": "user", "content": "Keep streaming"}]
+        iterator = (
+            gateway.stream([{"role": "user", "content": "Keep streaming"}])
+            if stream_method == "stream"
+            else gateway.stream_events([{"role": "user", "content": "Keep streaming"}])
         )
         first = await anext(iterator)
-        assert first == "first"
+        assert first == ("first" if stream_method == "stream" else {"content": "first"})
         next_piece = asyncio.create_task(anext(iterator))
         await response.started.wait()
         next_piece.cancel()
