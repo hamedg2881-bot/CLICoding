@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from dataclasses import dataclass
 from typing import Any
 
@@ -119,9 +120,18 @@ class CDSAIClient:
                     raise CDSAIClientError("maximum workstation tool-call rounds exceeded")
 
                 tool_rounds += 1
-                tool_message = await asyncio.to_thread(
+                cancellation_event = threading.Event()
+                tool_task = asyncio.create_task(asyncio.to_thread(
                     tool_host.execute_tool_call,
                     tool_calls[0],
                     conversation_id,
-                )
+                    cancellation_event,
+                ))
+                try:
+                    tool_message = await asyncio.shield(tool_task)
+                except asyncio.CancelledError:
+                    # A worker thread cannot be force-cancelled. Signal it so
+                    # pending file writes stop at their next safe commit point.
+                    cancellation_event.set()
+                    raise
                 next_messages = [*system_messages, tool_message]
