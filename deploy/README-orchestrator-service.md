@@ -23,8 +23,8 @@ The service binds to loopback port 8090 and runs one Uvicorn worker. It does not
 
 Before installation, verify the release ZIP checksum and revision using
 [DGX_STAGING_CHECKLIST.md](../docs/DGX_STAGING_CHECKLIST.md). Confirm:
-- ARM64 host and exact Python 3.11+ minor version;
-- an offline wheelhouse built for that Python ABI and ARM64;
+- ARM64 host and CPython 3.12.x (the published wheelhouse is built for CPython 3.12; Python 3.11, PyPy or another ABI is not compatible);
+- an offline wheelhouse whose manifest verifies against the host Python ABI and ARM64 platform;
 - every worker endpoint and served model alias using read-only requests;
 - Docker runtime images are already present locally and match the approved image inventory;
 - a separate candidate database and attachment directory are available for acceptance.
@@ -48,7 +48,7 @@ If either identity already exists, inspect it and do not recreate or change it b
 
 ## 3. Install the exact release and Python dependencies
 
-After transferring and verifying the artifact, extract it into its commit-specific release directory. Make the release source root readable but not writable by the service account.
+After transferring and verifying the artifact, extract it into its commit-specific release directory. Keep the release root and source files root-owned and readable but not writable by the service account. The service unit's `WorkingDirectory` resolves through `/opt/ai/clicoding/current/source/CDS_AI`; the `current` symlink must therefore point to the release root (not directly to `source/CDS_AI`).
 
 Extract both verified artifacts into one versioned release root. The source ZIP creates `source/CDS_AI/`; the wheelhouse tarball creates `wheelhouse/` and `wheelhouse-manifest.json`.
 
