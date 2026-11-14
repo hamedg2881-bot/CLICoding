@@ -1288,7 +1288,6 @@ def create_app(
                     }, ensure_ascii=False) + "\n\n"
                     yield "data: [DONE]\n\n"
                     return
-                stored_events = db.list_events(conversation_id)[:-1]
             elif edit_event_id is not None:
                 try:
                     edit_target, _ = _prepare_edit(
