@@ -967,7 +967,8 @@ def create_app(
                     db, conversation_id, input_role, content, input_metadata
                 )
                 db.invalidate_summaries_from_sequence(conversation_id, regeneration_event["sequence"])
-                input_event = db.list_events(conversation_id)[-2]
+                stored_events = db.list_events(conversation_id)
+                input_event = stored_events[-2]
             elif edit_event_id is not None:
                 edit_target, stored_events = _prepare_edit(
                     db, conversation_id, edit_event_id
