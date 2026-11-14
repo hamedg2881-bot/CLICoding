@@ -355,6 +355,193 @@ def run_container(language: str, source: bytes) -> dict[str, Any]:
             pass
 
 
+
+def run_bounded_container(
+    command: list[str],
+    cid_file: str,
+    execution_id: str,
+    timeout_seconds: int,
+    output_limit: int,
+) -> tuple[int | None, str, str, str]:
+    started = time.monotonic()
+    process = subprocess.Popen(
+        command,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        bufsize=0,
+        close_fds=True,
+    )
+    assert process.stdout is not None and process.stderr is not None
+    selector = selectors.DefaultSelector()
+    captured = {"stdout": bytearray(), "stderr": bytearray()}
+    for stream, name in ((process.stdout, "stdout"), (process.stderr, "stderr")):
+        os.set_blocking(stream.fileno(), False)
+        selector.register(stream, selectors.EVENT_READ, name)
+    timed_out = output_limited = False
+    try:
+        while selector.get_map():
+            remaining = timeout_seconds - (time.monotonic() - started)
+            if remaining <= 0:
+                timed_out = True
+                break
+            for key, _ in selector.select(min(0.1, remaining)):
+                chunk = os.read(key.fileobj.fileno(), 8192)
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                    key.fileobj.close()
+                    continue
+                total = len(captured["stdout"]) + len(captured["stderr"])
+                available = output_limit - total
+                if available > 0:
+                    captured[key.data].extend(chunk[:available])
+                if len(chunk) > available:
+                    output_limited = True
+                    break
+            if output_limited:
+                break
+    finally:
+        selector.close()
+    if timed_out or output_limited:
+        process.kill()
+        try:
+            process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            pass
+        cleanup_container(cid_file, execution_id)
+    else:
+        try:
+            process.wait(timeout=max(0.1, timeout_seconds - (time.monotonic() - started)))
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            process.kill()
+            process.wait(timeout=3)
+            cleanup_container(cid_file, execution_id)
+    try:
+        return (
+            process.returncode,
+            bytes(captured["stdout"]).decode("utf-8", errors="replace"),
+            bytes(captured["stderr"]).decode("utf-8", errors="replace"),
+            "timeout" if timed_out else "output_limit" if output_limited else "completed",
+        )
+    finally:
+        try:
+            os.unlink(cid_file)
+        except FileNotFoundError:
+            pass
+
+
+def run_workspace(request: dict[str, Any]) -> dict[str, Any]:
+    request = validate_workspace_request(request)
+    feed = Path(NUGET_FEED_PATH)
+    if not feed.is_dir() or feed.is_symlink():
+        return {
+            "status": "unavailable",
+            "error": "offline NuGet feed is not staged at the root-owned configured path",
+            "snapshot_sha256": request["snapshot_sha256"],
+        }
+
+    execution_id = uuid.uuid4().hex
+    cid_file = f"/run/clicoding-sandbox/workspace-{execution_id}.cid"
+    cid_fd = os.open(cid_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    os.close(cid_fd)
+    os.unlink(cid_file)
+    started = time.monotonic()
+
+    with tempfile.TemporaryDirectory(
+        prefix="workspace-snapshot-", dir="/run/clicoding-sandbox"
+    ) as snapshot_dir:
+        root = Path(snapshot_dir)
+        for item in request["files"]:
+            relative = PurePosixPath(item["path"])
+            target = root.joinpath(*relative.parts)
+            target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+            fd = os.open(target, flags, 0o600)
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(item["content"].encode("utf-8"))
+
+        for directory, subdirs, filenames in os.walk(root, topdown=False):
+            current = Path(directory)
+            for filename in filenames:
+                file_path = current / filename
+                os.chown(file_path, 65532, 65532)
+                os.chmod(file_path, 0o400)
+            for dirname in subdirs:
+                dir_path = current / dirname
+                os.chown(dir_path, 65532, 65532)
+                os.chmod(dir_path, 0o500)
+        os.chown(root, 65532, 65532)
+        os.chmod(root, 0o500)
+
+        command = [
+            DOCKER, "run", "--rm", "--pull=never",
+            "--cidfile", cid_file,
+            "--label", f"clicoding.execution={execution_id}",
+            "--network=none", "--read-only", "--user", USER_ID,
+            "--cap-drop=ALL", "--security-opt", "no-new-privileges:true",
+            "--pids-limit", WORKSPACE_PID_LIMIT,
+            "--memory", WORKSPACE_MEMORY_LIMIT, "--memory-swap", WORKSPACE_MEMORY_LIMIT,
+            "--cpus", WORKSPACE_CPU_LIMIT, "--ulimit", "nofile=128:128",
+            "--tmpfs", "/tmp:rw,exec,nosuid,nodev,size=1024m,uid=65532,gid=65532",
+            "--mount", f"type=bind,src={snapshot_dir},dst=/input,readonly",
+            "--mount", f"type=bind,src={NUGET_FEED_PATH},dst=/nuget-feed,readonly",
+            "--workdir", "/tmp",
+            "--env", "HOME=/tmp",
+            "--env", "DOTNET_CLI_HOME=/tmp",
+            "--env", "DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1",
+            "--env", "DOTNET_CLI_TELEMETRY_OPTOUT=1",
+            "--env", "NUGET_PACKAGES=/tmp/nuget",
+            "--env", "DOTNET_GCHeapHardLimit=0x60000000",
+            "--env", f"PROJECT_PATH={request['project_path']}",
+            "--env", f"ACTION={request['action']}",
+            DOTNET_WORKSPACE_IMAGE,
+            "sh", "-lc",
+            (
+                "set -eu; mkdir -p /tmp/workspace /tmp/nuget; "
+                "cp -R /input/. /tmp/workspace/; "
+                "printf '%s\\n' '<configuration><packageSources><clear /><add key=\"offline\" value=\"/nuget-feed\" /></packageSources></configuration>' > /tmp/NuGet.Config; "
+                "cd /tmp/workspace; "
+                "dotnet restore \"$PROJECT_PATH\" --configfile /tmp/NuGet.Config --source /nuget-feed --packages /tmp/nuget --disable-parallel; "
+                "dotnet \"$ACTION\" \"$PROJECT_PATH\" --no-restore --verbosity minimal"
+            ),
+        ]
+        returncode, stdout, stderr, run_status = run_bounded_container(
+            command,
+            cid_file,
+            execution_id,
+            WORKSPACE_TIME_LIMIT_SECONDS,
+            MAX_WORKSPACE_OUTPUT_BYTES,
+        )
+
+    status = (
+        run_status if run_status != "completed"
+        else "succeeded" if returncode == 0
+        else "runtime_error" if returncode in (125, 126, 127)
+        else "failed"
+    )
+    return {
+        "status": status,
+        "action": request["action"],
+        "project_path": request["project_path"],
+        "snapshot_sha256": request["snapshot_sha256"],
+        "exit_code": returncode,
+        "stdout": stdout,
+        "stderr": stderr,
+        "duration_ms": int((time.monotonic() - started) * 1000),
+        "limits": {
+            "wall_seconds": WORKSPACE_TIME_LIMIT_SECONDS,
+            "memory": WORKSPACE_MEMORY_LIMIT,
+            "cpus": WORKSPACE_CPU_LIMIT,
+            "pids": int(WORKSPACE_PID_LIMIT),
+            "output_bytes": MAX_WORKSPACE_OUTPUT_BYTES,
+            "network": "disabled",
+            "workspace_mount": "read-only",
+            "nuget_feed_mount": "read-only",
+        },
+    }
+
+
 def main() -> int:
     if os.geteuid() != 0:
         return emit({"status": "rejected", "error": "Run this tool with sudo"}, 2)
@@ -362,13 +549,17 @@ def main() -> int:
     if not Path(DOCKER).is_file():
         return emit({"status": "runner_error", "error": "Docker CLI not found"}, 2)
     try:
-        language, source = read_request()
+        request = read_request()
         with open("/run/lock/clicoding-sandbox.lock", "w", encoding="ascii") as lock_file:
             try:
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 return emit({"status": "busy", "error": "Another sandbox execution is active"}, 1)
-            result = run_container(language, source)
+            if request.get("mode") == "workspace":
+                result = run_workspace(request)
+            else:
+                language, source = parse_code_request(request)
+                result = run_container(language, source)
             return emit(result, 0 if result["status"] == "succeeded" else 1)
     except RequestError as exc:
         return emit({"status": "rejected", "error": str(exc)}, 2)
