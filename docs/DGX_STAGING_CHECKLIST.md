@@ -4,48 +4,49 @@
 
 **Transfer policy:** Download a checksummed ZIP artifact from GitHub Actions on the exact reviewed commit and transfer it with WinSCP or another approved LAN file-transfer method. The DGX host does not need Git and must not use Git commands.
 
-## 1. Select and download the exact source artifact
+## 1. Select and download the exact transfer artifact
 
 1. Open the Draft PR for the reviewed candidate: https://github.com/hamedg2881-bot/CLICoding/pull/14
 2. Confirm the PR is still open and Draft. Record its exact head commit SHA.
-3. Open the successful **push** GitHub Actions run whose head SHA exactly equals the PR head. Do not use the `pull_request` run artifact: GitHub tests that event on a synthetic merge commit. Download the source artifact named `CDS_AI-release-<full-commit-sha>` from the matching push run.
-4. The downloaded artifact contains:
-   - `CDS_AI_<12-char-sha>.zip` — source archive;
-   - matching `.zip.sha256` — SHA-256 checksum;
-   - `RELEASE_INFO.txt` — full source revision and archive filename.
-5. Do not use a GitHub branch ZIP, a stale artifact from another run, or a ZIP whose commit SHA does not match the reviewed PR head.
+3. Open the successful **push** GitHub Actions run whose head SHA exactly equals the PR head. Do not use the \`pull_request\` run artifact: GitHub tests that event on a synthetic merge commit. Download the single artifact named \`CDS_AI-transfer-bundle-<full-commit-sha>\` from the matching push run.
+4. After extracting the GitHub artifact download, it contains:
+   - \`CDS_AI-transfer-bundle-<12-char-sha>.tar.gz\`;
+   - matching \`.tar.gz.sha256\` checksum.
+5. Do not use a GitHub branch ZIP, a stale artifact from another run, or an artifact whose commit SHA does not match the reviewed PR head.
 
-The CI workflow creates the archive from the exact tested commit and publishes it only after its test job succeeds. The artifact is retained for 30 days; download and preserve it in the approved release store before expiry.
+The transfer bundle contains the exact source ZIP, its checksum and release information, plus the CPython 3.12 ARM64 wheelhouse archive and its checksum. The CI workflow publishes it only after both the test job and ARM64 wheelhouse job succeed. The artifact is retained for 30 days; download and preserve it in the approved release store before expiry.
 
 ## 2. Transfer and verify on DGX (read-only staging)
 
-Transfer the three artifact files to a new, version-specific staging directory, for example `/opt/ai/clicoding/releases/<full-commit-sha>/`. Do not overwrite the current application directory.
+Transfer the bundle tarball and its checksum to a new, version-specific staging directory, for example \`/opt/ai/clicoding/releases/<full-commit-sha>/incoming/\`. Do not overwrite the current application directory.
 
 On DGX:
 
-```bash
-cd /opt/ai/clicoding/releases/<full-commit-sha>
+\`\`\`bash
+release_root=/opt/ai/clicoding/releases/<full-commit-sha>
+sudo install -d -o root -g root -m 0755 "$release_root/incoming"
+cd "$release_root/incoming"
+sha256sum -c CDS_AI-transfer-bundle-<12-char-sha>.tar.gz.sha256
+mkdir bundle
+tar -xzf CDS_AI-transfer-bundle-<12-char-sha>.tar.gz -C bundle
+cd bundle
+cat TRANSFER_MANIFEST.txt
 sha256sum -c CDS_AI_<12-char-sha>.zip.sha256
+sha256sum -c CDS_AI-wheelhouse-cp312-arm64-<12-char-sha>.tar.gz.sha256
 unzip -t CDS_AI_<12-char-sha>.zip
-cat RELEASE_INFO.txt
-```
+\`\`\`
 
-Confirm that:
-- the checksum reports `OK`;
-- ZIP integrity validation succeeds;
-- the full revision in `RELEASE_INFO.txt` exactly matches the reviewed PR head;
-- the archive contains the expected `CDS_AI/` root directory.
+Confirm that the full commit in \`TRANSFER_MANIFEST.txt\` matches the reviewed PR head and that both inner checksums report \`OK\`. Extract the source and wheelhouse into the versioned release root:
 
-Extract only into a new, empty staging directory:
+\`\`\`bash
+sudo mkdir -p "$release_root/source"
+sudo unzip -q CDS_AI_<12-char-sha>.zip -d "$release_root/source"
+sudo tar -xzf CDS_AI-wheelhouse-cp312-arm64-<12-char-sha>.tar.gz -C "$release_root"
+test -f "$release_root/source/CDS_AI/pyproject.toml"
+test -f "$release_root/source/CDS_AI/orchestrator/README.md"
+\`\`\`
 
-```bash
-mkdir source
-unzip -q CDS_AI_<12-char-sha>.zip -d source
-test -f source/CDS_AI/pyproject.toml
-test -f source/CDS_AI/orchestrator/README.md
-```
-
-Do not copy files over a live installation during staging.
+Do not copy files over a live source directory. Preserve the incoming bundle, its checksum, the inner archives, their checksums, release information and extracted files together.
 
 ## 3. Read-only DGX preflight
 
@@ -64,30 +65,19 @@ docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
 
 Confirm ARM64 architecture, Python 3.11+, disk location for SQLite and attachments, available host memory, Docker availability for the existing sandbox, and the actual OpenAI-compatible worker endpoints. Do not infer worker ports or model aliases from an example file or old notes.
 
-## 4. Offline dependency preparation (not yet an install command)
+## 4. Offline dependency preparation (no installation yet)
 
-1. From that same successful **push** Actions run and exact source commit, download the artifact named `CDS_AI-wheelhouse-cp312-arm64-<full-commit-sha>`.
-2. Transfer its `.tar.gz` and matching `.tar.gz.sha256` sidecar to the DGX staging directory.
-3. Verify and extract:
+The wheelhouse archive is already included in the transfer bundle extracted in Section 2. Verify it against the packaged script before creating any virtual environment:
 
-```bash
-sha256sum -c CDS_AI-wheelhouse-cp312-arm64-<12-char-sha>.tar.gz.sha256
-tar -xzf CDS_AI-wheelhouse-cp312-arm64-<12-char-sha>.tar.gz
-```
+\`\`\`bash
+python3 "$release_root/source/CDS_AI/scripts/verify_wheelhouse.py" \
+  --wheelhouse "$release_root/wheelhouse" \
+  --manifest "$release_root/wheelhouse-manifest.json"
+\`\`\`
 
-4. Run the packaged verifier from the extracted source tree:
+The verifier checks the Python major/minor ABI, ARM64 architecture, exact wheel inventory, file sizes and every wheel SHA-256. It must succeed before installation. Keep the wheelhouse, virtual environments, secrets and runtime data outside the source tree, and use pip offline mode with an explicit local wheelhouse only; public package indexes must never be fallback sources.
 
-```bash
-python3 source/CDS_AI/scripts/verify_wheelhouse.py \
-  --wheelhouse wheelhouse \
-  --manifest wheelhouse-manifest.json
-```
-
-5. The verifier checks the Python major/minor ABI, ARM64 architecture, exact wheel inventory, file sizes and every wheel SHA-256. It must succeed before installation.
-6. Keep the wheelhouse, virtual environment, secrets and runtime data outside the source tree.
-7. Install only with pip offline mode and an explicit local wheelhouse; public package indexes must not be fallback sources.
-
-The CI workflow now builds the complete project plus test-dependency wheelhouse on a native ARM64 runner using CPython 3.12.3. The last passing packaging run produced 32 wheels for aarch64. This is a reproducible candidate wheelhouse, not proof of compatibility with the exact DGX OS/glibc/runtime. Confirm the DGX Python minor version and platform first; do not use this artifact if they differ. No offline install on DGX has been performed yet.
+The CI workflow builds the complete project plus test-dependency wheelhouse on a native ARM64 runner using CPython 3.12.3. The latest completed packaging run produced 32 wheels for aarch64. This is a reproducible candidate wheelhouse, not proof of compatibility with the exact DGX OS/glibc/runtime. Confirm the DGX Python major/minor version and platform first; do not use the artifact if they differ. No offline install on DGX has been performed.
 
 ## 5. Offline Docker sandbox image bundle
 
