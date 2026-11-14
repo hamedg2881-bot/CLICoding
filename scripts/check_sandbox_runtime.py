@@ -50,17 +50,20 @@ def inspect_locked_image(docker: str, entry: dict) -> tuple[bool, str]:
     expected_id = entry.get("image_id")
     if not isinstance(local_tag, str) or not isinstance(expected_id, str):
         return False, "invalid image lock entry"
-    result = subprocess.run(
-        [
-            docker, "image", "inspect", "--format",
-            "{{.Id}}|{{.Os}}/{{.Architecture}}", local_tag,
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=15,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            [
+                docker, "image", "inspect", "--format",
+                "{{.Id}}|{{.Os}}/{{.Architecture}}", local_tag,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, f"Docker inspection failed: {type(exc).__name__}"
     if result.returncode != 0:
         return False, "missing local image tag"
     actual_id, separator, platform_value = result.stdout.strip().partition("|")
@@ -72,18 +75,21 @@ def inspect_locked_image(docker: str, entry: dict) -> tuple[bool, str]:
 
 
 def check_feed(path: Path) -> tuple[bool, str]:
-    if not path.is_dir() or path.is_symlink():
-        return False, "missing or not a real directory"
-    metadata = path.stat()
-    if metadata.st_uid != 0 or metadata.st_mode & 0o022:
-        return False, "must be root-owned and not group/world writable"
-    for item in path.rglob("*"):
-        item_metadata = item.lstat()
-        if item.is_symlink() or item_metadata.st_uid != 0 or item_metadata.st_mode & 0o022:
-            return False, f"unsafe feed entry: {item.relative_to(path)}"
-        if not (item.is_dir() or item.is_file()):
-            return False, f"unsupported special file in feed: {item.relative_to(path)}"
-    return True, "root-owned, no symlinks, not group/world writable"
+    try:
+        if not path.is_dir() or path.is_symlink():
+            return False, "missing or not a real directory"
+        metadata = path.stat()
+        if metadata.st_uid != 0 or metadata.st_mode & 0o022:
+            return False, "must be root-owned and not group/world writable"
+        for item in path.rglob("*"):
+            item_metadata = item.lstat()
+            if item.is_symlink() or item_metadata.st_uid != 0 or item_metadata.st_mode & 0o022:
+                return False, f"unsafe feed entry: {item.relative_to(path)}"
+            if not (item.is_dir() or item.is_file()):
+                return False, f"unsupported special file in feed: {item.relative_to(path)}"
+        return True, "root-owned, no symlinks, not group/world writable"
+    except OSError as exc:
+        return False, f"feed inspection failed: {type(exc).__name__}"
 
 
 def main() -> int:
