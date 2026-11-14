@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from .tool_protocol import (
@@ -773,12 +773,6 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"events": events, "next_before_id": events[-1]["id"] if events else None}
-
-    @app.get("/", include_in_schema=False)
-    async def chat_ui() -> FileResponse:
-        """Serve the first-party CDS_AI chat interface."""
-        ui_path = Path(__file__).parent / "web" / "index.html"
-        return FileResponse(ui_path, media_type="text/html; charset=utf-8")
 
     @app.get("/health")
     async def health() -> dict[str, str]:
