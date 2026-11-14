@@ -1789,3 +1789,31 @@ def test_specialist_orchestration_uses_compacted_context(tmp_path):
     assert "question-6" in orchestrator.context
     assert "current request" in orchestrator.context
     assert database.get_latest_summary(conversation_id)["through_sequence"] == 10
+
+def test_application_lifespan_owns_and_closes_shared_http_client(tmp_path, monkeypatch):
+    created = []
+
+    class LifecycleClient:
+        def __init__(self, **kwargs):
+            self.closed = False
+            self.options = kwargs
+            created.append(self)
+
+        async def aclose(self):
+            self.closed = True
+
+    monkeypatch.setattr("clicoding_orchestrator.app.httpx.AsyncClient", LifecycleClient)
+    app = create_app(
+        settings=Settings(database_path=str(tmp_path / "lifespan.sqlite3")),
+        gateway=FakeGateway(),
+        database=Database(str(tmp_path / "lifespan.sqlite3")),
+    )
+
+    with TestClient(app):
+        assert len(created) == 1
+        assert app.state.http_client is created[0]
+        assert created[0].closed is False
+        assert created[0].options["limits"].max_connections == 100
+
+    assert created[0].closed is True
+
