@@ -1,10 +1,16 @@
 import hashlib
+import importlib.util
 import json
+from pathlib import Path
 
 import pytest
 
 from clicoding_orchestrator.database import Database
-from sandbox import clicoding_sandbox_broker as broker
+
+_broker_path = Path(__file__).parents[1] / "sandbox" / "clicoding_sandbox_broker.py"
+_broker_spec = importlib.util.spec_from_file_location("clicoding_sandbox_broker", _broker_path)
+broker = importlib.util.module_from_spec(_broker_spec)
+_broker_spec.loader.exec_module(broker)
 
 
 def create_approved_workspace(path):
