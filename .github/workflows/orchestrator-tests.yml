@@ -29,7 +29,7 @@ jobs:
           python -c "import yaml; yaml.safe_load(open('config/workers.example.yaml', encoding='utf-8'))"
           python -m py_compile scripts/run_response_quality.py scripts/verify_wheelhouse.py scripts/check_sandbox_runtime.py scripts/export_sandbox_images.py
           sudo install -d /opt/ai/clicoding/current/venv/bin
-          printf '#!/bin/sh\\nexit 0\\n' | sudo tee /opt/ai/clicoding/current/venv/bin/uvicorn >/dev/null
+          printf '#!/bin/sh\nexit 0\n' | sudo tee /opt/ai/clicoding/current/venv/bin/uvicorn >/dev/null
           sudo chmod 0755 /opt/ai/clicoding/current/venv/bin/uvicorn
           systemd-analyze verify deploy/cds-ai-orchestrator.service sandbox/clicoding-sandbox-broker.service
       - name: Run test suite
@@ -156,7 +156,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          printf 'commit=%s\\nsource_archive=%s\\nwheelhouse_archive=%s\\npython_abi=cp312\\narchitecture=aarch64\\n' \
+          printf 'commit=%s\nsource_archive=%s\nwheelhouse_archive=%s\npython_abi=cp312\narchitecture=aarch64\n' \
             "${GITHUB_SHA}" \
             "$(basename "$(find bundle -maxdepth 1 -name 'CDS_AI_*.zip' -print -quit)")" \
             "$(basename "$(find bundle -maxdepth 1 -name 'CDS_AI-wheelhouse-cp312-arm64-*.tar.gz' -print -quit)")" \
