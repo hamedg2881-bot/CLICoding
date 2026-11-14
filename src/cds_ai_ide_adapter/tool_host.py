@@ -137,6 +137,7 @@ class WorkspaceToolHost:
         workspace_id: str,
         store: ToolExecutionStore,
         approval: Callable[[ToolApproval], bool] | None = None,
+        sandbox_executor: Callable[..., dict[str, Any]] | None = None,
         max_file_bytes: int = 1_000_000,
         max_output_chars: int = 64_000,
         command_timeout_seconds: int = 300,
@@ -159,6 +160,7 @@ class WorkspaceToolHost:
         if store_path == root or root in store_path.parents:
             raise ValueError("tool idempotency store must be outside the active workspace")
         self.approval = approval
+        self.sandbox_executor = sandbox_executor
         self.max_file_bytes = max_file_bytes
         self.max_output_chars = max_output_chars
         self.command_timeout_seconds = command_timeout_seconds
@@ -301,13 +303,13 @@ class WorkspaceToolHost:
             ),
             function(
                 "workspace_dotnet_build",
-                "Run an approved .NET build on the workstation host. Project targets may execute code with the user's OS permissions and network access; this is not sandboxed.",
+                "Build a multi-file .NET workspace snapshot inside the existing approved Docker sandbox. Requires an offline local NuGet feed; no host project execution or network access is permitted.",
                 {"project": string},
                 [],
             ),
             function(
                 "workspace_dotnet_test",
-                "Run approved .NET tests on the workstation host. Build targets and tests may execute code with the user's OS permissions and network access; this is not sandboxed.",
+                "Run .NET tests for a multi-file workspace snapshot inside the existing approved Docker sandbox. Requires an offline local NuGet feed; no host project execution or network access is permitted.",
                 {"project": string},
                 [],
             ),
@@ -806,6 +808,101 @@ class WorkspaceToolHost:
         except OSError as exc:
             return {"status": "failed", "error": f"{type(exc).__name__}: {str(exc)[:500]}"}
 
+
+    def _workspace_snapshot(
+        self, cancellation_event: threading.Event | None = None
+    ) -> list[dict[str, str]]:
+        files: list[dict[str, str]] = []
+        total_bytes = 0
+        for directory, dirnames, filenames in os.walk(self.root, topdown=True, followlinks=False):
+            current = Path(directory)
+            kept_directories = []
+            for name in sorted(dirnames):
+                child = current / name
+                if name in self.IGNORED_DIRECTORIES:
+                    continue
+                if child.is_symlink():
+                    raise ValueError("workspace snapshot refuses symbolic-link directories")
+                kept_directories.append(name)
+            dirnames[:] = kept_directories
+
+            for name in sorted(filenames):
+                if cancellation_event is not None and cancellation_event.is_set():
+                    raise InterruptedError("workspace snapshot was cancelled")
+                target = current / name
+                if target.is_symlink():
+                    raise ValueError("workspace snapshot refuses symbolic-link files")
+                if name in self.BLOCKED_FILENAMES or name.casefold() in {
+                    ".npmrc", ".pypirc", "nuget.config",
+                } or target.suffix.lower() in self.BLOCKED_SUFFIXES:
+                    continue
+                relative = target.relative_to(self.root).as_posix()
+                metadata = target.stat(follow_symlinks=False)
+                if not stat.S_ISREG(metadata.st_mode):
+                    raise ValueError("workspace snapshot accepts regular files only")
+                if metadata.st_size > min(self.max_file_bytes, 1_000_000):
+                    raise ValueError(f"workspace file exceeds the 1 MiB snapshot limit: {relative}")
+                read = self._read_file(relative)
+                if read.get("status") != "ok":
+                    raise ValueError(f"workspace file could not be snapshotted: {relative}")
+                total_bytes += read["bytes"]
+                if total_bytes > 5 * 1024 * 1024:
+                    raise ValueError("workspace snapshot exceeds the 5 MiB limit")
+                files.append({"path": relative, "content": read["content"]})
+                if len(files) > 200:
+                    raise ValueError("workspace snapshot exceeds the 200-file limit")
+        return files
+
+    def _run_workspace_sandbox(
+        self,
+        action: str,
+        project: str | None,
+        cancellation_event: threading.Event | None = None,
+    ) -> dict[str, Any]:
+        if self.sandbox_executor is None:
+            return {
+                "status": "unavailable",
+                "error": "The existing Docker workspace sandbox is not configured; host Build/Test is disabled.",
+            }
+        if cancellation_event is not None and cancellation_event.is_set():
+            return {"status": "cancelled"}
+        files = self._workspace_snapshot(cancellation_event)
+        project_files = {
+            item["path"]
+            for item in files
+            if PurePosixPath(item["path"]).suffix.lower() in {".sln", ".slnx", ".csproj"}
+        }
+        if project:
+            safe_project = self._safe_path(project, must_exist=True)
+            if not safe_project.is_file() or safe_project.suffix.lower() not in {
+                ".sln", ".slnx", ".csproj",
+            }:
+                raise ValueError("project must be a .sln, .slnx, or .csproj file")
+            project_path = safe_project.relative_to(self.root).as_posix()
+        else:
+            solutions = sorted(
+                item for item in project_files
+                if PurePosixPath(item).suffix.lower() in {".sln", ".slnx"}
+            )
+            candidates = solutions or sorted(project_files)
+            if len(candidates) != 1:
+                raise ValueError(
+                    "specify a project path when the workspace does not contain exactly one solution/project"
+                )
+            project_path = candidates[0]
+        if project_path not in project_files:
+            raise ValueError("selected project file is not included in the workspace snapshot")
+        if cancellation_event is not None and cancellation_event.is_set():
+            return {"status": "cancelled"}
+        return self.sandbox_executor(
+            self.workspace_id,
+            action,
+            project_path,
+            files,
+            self.approval,
+            cancellation_event,
+        )
+
     def _dispatch(
         self,
         name: str,
@@ -847,19 +944,9 @@ class WorkspaceToolHost:
                 cancellation_event=cancellation_event,
             )
         if name in {"workspace_dotnet_build", "workspace_dotnet_test"}:
-            project = arguments.get("project")
-            command = ["dotnet", "build" if name.endswith("build") else "test"]
-            if project:
-                path = self._safe_path(project, must_exist=True)
-                if not path.is_file() or path.suffix.lower() not in {".sln", ".slnx", ".csproj"}:
-                    raise ValueError("project must be a .sln, .slnx, or .csproj file")
-                command.append(str(path))
-            command.append("--no-restore")
-            return self._run_fixed_command(
-                command,
-                name,
-                "Build the approved .NET project" if name.endswith("build")
-                else "Run the approved .NET test project",
-                cancellation_event=cancellation_event,
+            return self._run_workspace_sandbox(
+                "build" if name.endswith("build") else "test",
+                arguments.get("project"),
+                cancellation_event,
             )
         raise ToolProtocolError(f"tool is not registered: {name}")
