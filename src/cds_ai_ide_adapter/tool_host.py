@@ -11,6 +11,7 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
+import threading
 import time
 from typing import Any, Callable
 
@@ -165,7 +166,10 @@ class WorkspaceToolHost:
         return self._definitions
 
     def execute_tool_call(
-        self, call: dict[str, Any], conversation_id: str | None = None
+        self,
+        call: dict[str, Any],
+        conversation_id: str | None = None,
+        cancellation_event: threading.Event | None = None,
     ) -> dict[str, str]:
         normalized = validate_tool_calls([call], self._definitions_by_name)
         call = normalized[0]
@@ -195,6 +199,8 @@ class WorkspaceToolHost:
             scope = hashlib.sha256(conversation_id.encode("utf-8")).hexdigest()
         key = f"{self.workspace_id}:{scope}:{call_id}"
 
+        if cancellation_event is not None and cancellation_event.is_set():
+            return self._tool_message(call_id, name, {"status": "cancelled"})
         try:
             cached = self.store.begin(key, request_sha)
         except ToolExecutionConflict as exc:
@@ -204,7 +210,12 @@ class WorkspaceToolHost:
             return self._tool_message(call_id, name, cached)
 
         try:
-            result = redact_sensitive_data(self._dispatch(name, arguments))
+            if cancellation_event is not None and cancellation_event.is_set():
+                result = {"status": "cancelled"}
+            else:
+                result = redact_sensitive_data(
+                    self._dispatch(name, arguments, cancellation_event)
+                )
             self.store.finish(key, result)
         except Exception as exc:
             result = redact_sensitive_data({
@@ -412,7 +423,11 @@ class WorkspaceToolHost:
         }
 
     def _write_file(
-        self, relative_path: str, content: str, expected_sha256: str | None
+        self,
+        relative_path: str,
+        content: str,
+        expected_sha256: str | None,
+        cancellation_event: threading.Event | None = None,
     ) -> dict[str, Any]:
         if not isinstance(content, str) or len(content.encode("utf-8")) > 300_000:
             raise ValueError("file content exceeds the 300000-byte write limit")
@@ -449,6 +464,8 @@ class WorkspaceToolHost:
         )
         if self.approval is None or not self.approval(approval):
             return {"status": "approval_denied", "path": relative_path}
+        if cancellation_event is not None and cancellation_event.is_set():
+            return {"status": "cancelled", "path": relative_path}
 
         fd, temporary = tempfile.mkstemp(prefix=".cds-ai-", dir=target.parent)
         try:
@@ -456,6 +473,8 @@ class WorkspaceToolHost:
                 stream.write(content)
                 stream.flush()
                 os.fsync(stream.fileno())
+            if cancellation_event is not None and cancellation_event.is_set():
+                return {"status": "cancelled", "path": relative_path}
             if target.is_symlink():
                 raise ValueError("symbolic links are not allowed in workspace tool paths")
             os.replace(temporary, target)
@@ -530,7 +549,14 @@ class WorkspaceToolHost:
                 "stderr": str(exc.stderr or "")[-self.max_output_chars:],
             }
 
-    def _dispatch(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    def _dispatch(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        cancellation_event: threading.Event | None = None,
+    ) -> dict[str, Any]:
+        if cancellation_event is not None and cancellation_event.is_set():
+            return {"status": "cancelled"}
         if name == "workspace_list_files":
             return self._list_files(arguments.get("directory", "."))
         if name == "workspace_read_file":
@@ -544,7 +570,7 @@ class WorkspaceToolHost:
             ):
                 raise ValueError("expected_sha256 must be a 64-character SHA-256 hex digest")
             return self._write_file(
-                arguments["path"], arguments["content"], expected
+                arguments["path"], arguments["content"], expected, cancellation_event
             )
         if name == "workspace_git_status":
             return self._run_fixed_command(
