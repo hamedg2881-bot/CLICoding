@@ -245,6 +245,8 @@ class CDSAISandboxExecutor:
                     decision = "reject"
                 elif callback is None or not callback(request):
                     decision = "reject"
+                elif cancellation_event is not None and cancellation_event.is_set():
+                    decision = "reject"
                 else:
                     decision = "approve"
                 decided = client.post(
@@ -264,15 +266,56 @@ class CDSAISandboxExecutor:
                         "snapshot_sha256": digest,
                     }
                 if cancellation_event is not None and cancellation_event.is_set():
+                    cancelled = client.post(
+                        f"{base}/{approval_id}/cancel", headers=headers
+                    )
+                    if cancelled.is_error:
+                        raise CDSAIClientError("workspace approval cancellation failed")
                     return {
                         "status": "cancelled",
                         "approval_id": approval_id,
                         "snapshot_sha256": digest,
                     }
-                executed = client.post(
-                    f"{base}/{approval_id}/execute",
-                    headers=headers,
-                )
+
+                monitor_stop = threading.Event()
+                cancellation_result: dict[str, Any] = {}
+
+                def monitor_cancellation() -> None:
+                    assert cancellation_event is not None
+                    while not monitor_stop.wait(0.1):
+                        if cancellation_event.is_set():
+                            try:
+                                with httpx.Client(timeout=httpx.Timeout(20.0, connect=3.0)) as cancel_client:
+                                    response = cancel_client.post(
+                                        f"{base}/{approval_id}/cancel", headers=headers
+                                    )
+                                    if response.is_error:
+                                        cancellation_result["error"] = (
+                                            f"cancel endpoint returned HTTP {response.status_code}"
+                                        )
+                                    else:
+                                        cancellation_result.update(response.json())
+                            except (httpx.HTTPError, ValueError) as exc:
+                                cancellation_result["error"] = type(exc).__name__
+                            return
+
+                monitor = None
+                if cancellation_event is not None:
+                    monitor = threading.Thread(
+                        target=monitor_cancellation,
+                        name=f"cds-ai-sandbox-cancel-{approval_id[:8]}",
+                        daemon=True,
+                    )
+                    monitor.start()
+                try:
+                    executed = client.post(
+                        f"{base}/{approval_id}/execute",
+                        headers=headers,
+                    )
+                finally:
+                    monitor_stop.set()
+                    if monitor is not None:
+                        monitor.join(timeout=2)
                 if executed.is_error:
                     raise CDSAIClientError(
                         f"workspace sandbox execution failed with HTTP {executed.status_code}"
@@ -282,6 +325,11 @@ class CDSAISandboxExecutor:
                     raise CDSAIClientError("sandbox broker returned an invalid result")
                 result.setdefault("approval_id", approval_id)
                 result.setdefault("snapshot_sha256", digest)
+                if cancellation_event is not None and cancellation_event.is_set():
+                    if result.get("status") != "cancelled":
+                        result["status"] = "cancel_pending"
+                    if cancellation_result:
+                        result["cancellation"] = cancellation_result
                 return result
         except httpx.HTTPError as exc:
             raise CDSAIClientError("workspace sandbox request transport failed") from exc
