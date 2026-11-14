@@ -265,6 +265,7 @@ def test_fixed_command_is_terminated_when_cancelled(tmp_path, monkeypatch):
             self.calls += 1
             if self.calls == 1:
                 started.set()
+                assert cancelled.wait(2)
                 raise subprocess.TimeoutExpired("fake-command", timeout)
             assert self.terminated
             return "partial stdout", "partial stderr"
