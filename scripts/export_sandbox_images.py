@@ -94,10 +94,15 @@ def sha256_file(path: Path) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--docker", default="docker")
-    parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--output", type=Path, help="write a portable Docker image archive")
+    parser.add_argument("--output-dir", type=Path, default=Path.cwd(), help="directory for the image lock and optional archive")
+    parser.add_argument("--lock-only", action="store_true", help="prepare local ARM64 images and write the lock without creating a large image archive")
     parser.add_argument("--pull", action="store_true", help="pull all pinned upstream images for linux/arm64")
     parser.add_argument("--build-typescript", action="store_true", help="build the repository-pinned local TypeScript image")
     args = parser.parse_args()
+    if not args.lock_only and args.output is None:
+        parser.error("--output is required unless --lock-only is selected")
+    output_dir = args.output_dir if args.lock_only or args.output is None else args.output.parent
 
     runner = load_runner()
     grouped: dict[str, list[str]] = {}
@@ -147,27 +152,29 @@ def main() -> int:
         local_tags.append(local_tag)
         print(f"READY {reference} -> {local_tag} ({image_id})")
 
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    run([args.docker, "save", "--output", str(args.output), *local_tags], timeout=7200)
-    archive_sha = sha256_file(args.output)
-    archive_sidecar = Path(str(args.output) + ".sha256")
-    archive_sidecar.write_text(
-        f"{archive_sha}  {args.output.name}\n", encoding="utf-8"
-    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    if not args.lock_only:
+        assert args.output is not None
+        run([args.docker, "save", "--output", str(args.output), *local_tags], timeout=7200)
+        archive_sha = sha256_file(args.output)
+        archive_sidecar = Path(str(args.output) + ".sha256")
+        archive_sidecar.write_text(
+            f"{archive_sha}  {args.output.name}\n", encoding="utf-8"
+        )
+        print(f"IMAGE_ARCHIVE={args.output}")
+        print(f"IMAGE_ARCHIVE_SHA256={archive_sha}")
 
     lock = {
         "format_version": 1,
         "platform": "linux/arm64",
         "images": entries,
     }
-    lock_path = args.output.with_name("sandbox-image-lock.json")
+    lock_path = output_dir / "sandbox-image-lock.json"
     lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
     lock_sha = sha256_file(lock_path)
     Path(str(lock_path) + ".sha256").write_text(
         f"{lock_sha}  {lock_path.name}\n", encoding="utf-8"
     )
-    print(f"IMAGE_ARCHIVE={args.output}")
-    print(f"IMAGE_ARCHIVE_SHA256={archive_sha}")
     print(f"IMAGE_LOCK={lock_path}")
     print(f"IMAGE_LOCK_SHA256={lock_sha}")
     print(f"EXPORTED_IMAGES={len(entries)}")
