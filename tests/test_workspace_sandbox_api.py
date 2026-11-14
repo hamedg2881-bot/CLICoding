@@ -36,10 +36,12 @@ def test_workspace_sandbox_api_creates_reads_and_decides_owner_scoped_approval(t
     assert created.json()["status"] == "pending"
     assert created.json()["action"] == "build"
     assert len(created.json()["snapshot_sha256"]) == 64
+    assert "content" not in created.json()["files"][0]
 
     fetched = client.get(f"/api/v1/workspace-sandbox-approvals/{approval_id}")
     assert fetched.status_code == 200
     assert len(fetched.json()["files"]) == 2
+    assert all("content" not in item for item in fetched.json()["files"])
 
     decided = client.post(
         f"/api/v1/workspace-sandbox-approvals/{approval_id}/decision",
