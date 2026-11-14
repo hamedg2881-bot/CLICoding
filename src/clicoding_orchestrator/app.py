@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import time
 import uuid
 from pathlib import Path
@@ -36,6 +37,11 @@ from .registry import RegistryError, Worker, WorkerRegistry, runtime_key
 from .router import CapabilityRouter, NoEligibleWorker
 from .orchestration import MultiModelOrchestrator
 from .security import SecurityStore
+
+
+SANDBOX_BROKER_SOCKET_PATH = os.environ.get(
+    "CLICODING_SANDBOX_BROKER_SOCKET", SANDBOX_BROKER_SOCKET_PATH
+)
 
 
 class TurnRequest(BaseModel):
@@ -2211,7 +2217,7 @@ def create_app(
         try:
             reader, writer = await asyncio.wait_for(
                 asyncio.open_unix_connection(
-                    "/run/clicoding-sandbox/broker.sock", limit=600 * 1024
+                    SANDBOX_BROKER_SOCKET_PATH, limit=600 * 1024
                 ),
                 timeout=3,
             )
@@ -2242,7 +2248,7 @@ def create_app(
         try:
             reader, writer = await asyncio.wait_for(
                 asyncio.open_unix_connection(
-                    "/run/clicoding-sandbox/broker.sock", limit=64 * 1024
+                    SANDBOX_BROKER_SOCKET_PATH, limit=64 * 1024
                 ),
                 timeout=3,
             )
