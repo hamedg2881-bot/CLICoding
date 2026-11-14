@@ -57,17 +57,48 @@ def validate_tool_definitions(
     return definitions
 
 
-def _validate_schema_definition(schema: dict[str, Any], path: str) -> None:
+def _validate_schema_definition(
+    schema: dict[str, Any], path: str, depth: int = 0
+) -> None:
+    if depth > 8:
+        raise ToolProtocolError(f"{path} exceeds the maximum schema nesting depth")
     unknown = set(schema) - _SCHEMA_KEYS
     if unknown:
         raise ToolProtocolError(f"{path} uses unsupported schema keywords: {sorted(unknown)}")
     schema_type = schema.get("type")
     if schema_type not in {"object", "array", "string", "integer", "number", "boolean"}:
         raise ToolProtocolError(f"{path}.type is unsupported")
-    if "enum" in schema and (
-        not isinstance(schema["enum"], list) or len(schema["enum"]) > 100
-    ):
-        raise ToolProtocolError(f"{path}.enum must be a bounded array")
+
+    if "enum" in schema:
+        values = schema["enum"]
+        if not isinstance(values, list) or not 1 <= len(values) <= 100:
+            raise ToolProtocolError(f"{path}.enum must contain 1-100 values")
+        if any(not _matches_type(value, schema_type) for value in values):
+            raise ToolProtocolError(f"{path}.enum values must match {schema_type}")
+
+    for key in ("minimum", "maximum"):
+        if key in schema and (
+            schema_type not in {"integer", "number"}
+            or not isinstance(schema[key], (int, float))
+            or isinstance(schema[key], bool)
+        ):
+            raise ToolProtocolError(f"{path}.{key} is only valid as a numeric bound")
+    if "minimum" in schema and "maximum" in schema and schema["minimum"] > schema["maximum"]:
+        raise ToolProtocolError(f"{path} minimum cannot exceed maximum")
+
+    for key in ("minLength", "maxLength", "minItems", "maxItems"):
+        if key in schema and (
+            schema_type not in ({"string"} if "Length" in key else {"array"})
+            or not isinstance(schema[key], int)
+            or isinstance(schema[key], bool)
+            or schema[key] < 0
+            or schema[key] > 20000
+        ):
+            raise ToolProtocolError(f"{path}.{key} is invalid for {schema_type}")
+    for low, high in (("minLength", "maxLength"), ("minItems", "maxItems")):
+        if low in schema and high in schema and schema[low] > schema[high]:
+            raise ToolProtocolError(f"{path}.{low} cannot exceed {high}")
+
     if schema_type == "object":
         properties = schema.get("properties", {})
         required = schema.get("required", [])
@@ -77,18 +108,20 @@ def _validate_schema_definition(schema: dict[str, Any], path: str) -> None:
             not isinstance(item, str) or item not in properties for item in required
         ):
             raise ToolProtocolError(f"{path}.required must reference declared properties")
+        if len(set(required)) != len(required):
+            raise ToolProtocolError(f"{path}.required cannot contain duplicates")
         additional = schema.get("additionalProperties", False)
         if not isinstance(additional, bool):
             raise ToolProtocolError(f"{path}.additionalProperties must be boolean")
         for key, value in properties.items():
-            if not isinstance(key, str) or not isinstance(value, dict):
-                raise ToolProtocolError(f"{path}.properties entries must be schemas")
-            _validate_schema_definition(value, f"{path}.properties.{key}")
+            if not isinstance(key, str) or not key or len(key) > 128 or not isinstance(value, dict):
+                raise ToolProtocolError(f"{path}.properties entries must have bounded names and schemas")
+            _validate_schema_definition(value, f"{path}.properties.{key}", depth + 1)
     elif schema_type == "array":
         items = schema.get("items")
         if not isinstance(items, dict):
             raise ToolProtocolError(f"{path}.items must be a schema")
-        _validate_schema_definition(items, f"{path}.items")
+        _validate_schema_definition(items, f"{path}.items", depth + 1)
 
 
 def _matches_type(value: Any, schema_type: str) -> bool:
