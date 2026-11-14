@@ -9,6 +9,9 @@ import json
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import socketserver
+import signal
+import threading
+import time
 import sqlite3
 import stat
 import subprocess
@@ -23,6 +26,9 @@ SOCKET_GROUP = os.getenv("CLICODING_BROKER_GROUP", "clicoding-sandbox")
 MAX_REQUEST_BYTES = 4096
 MAX_RESPONSE_BYTES = 512 * 1024
 RUNNER_TIMEOUT_SECONDS = 660
+RUNNING_EXECUTIONS: dict[str, subprocess.Popen] = {}
+RUNNING_EXECUTIONS_LOCK = threading.Lock()
+DOCKER_PATH = "/usr/bin/docker"
 
 
 def now() -> str:
@@ -245,6 +251,12 @@ def persist_result(approval_id: str, digest: str, result: dict) -> None:
     connection = database_connection()
     try:
         connection.execute("BEGIN IMMEDIATE")
+        claim = connection.execute(
+            "SELECT status FROM sandbox_execution_claims WHERE approval_id = ?",
+            (approval_id,),
+        ).fetchone()
+        if claim is not None and claim["status"] == "cancel_requested":
+            result = {**result, "status": "cancelled", "cancel_requested": True}
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS sandbox_execution_results (
@@ -293,34 +305,150 @@ def execute_approval(approval_id: str) -> dict:
         digest = workspace["snapshot_sha256"]
         payload_object = {"mode": "workspace", **workspace}
     payload = json.dumps(payload_object, ensure_ascii=False).encode("utf-8")
+    process = None
     try:
-        completed = subprocess.run(
+        process = subprocess.Popen(
             [RUNNER_PATH],
-            input=payload,
+            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            timeout=RUNNER_TIMEOUT_SECONDS,
-            check=False,
             close_fds=True,
+            start_new_session=True,
         )
-        if len(completed.stdout) > MAX_RESPONSE_BYTES:
+        with RUNNING_EXECUTIONS_LOCK:
+            RUNNING_EXECUTIONS[approval_id] = process
+        stdout, stderr = process.communicate(
+            input=payload, timeout=RUNNER_TIMEOUT_SECONDS
+        )
+        if len(stdout) > MAX_RESPONSE_BYTES:
             raise RuntimeError("runner response exceeded broker limit")
         try:
-            result = json.loads(completed.stdout.decode("utf-8"))
+            result = json.loads(stdout.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise RuntimeError("runner returned invalid JSON") from exc
         if not isinstance(result, dict) or "status" not in result:
             raise RuntimeError("runner returned an invalid result object")
-        if completed.stderr:
-            result["broker_stderr"] = completed.stderr.decode("utf-8", errors="replace")[:4096]
+        if stderr:
+            result["broker_stderr"] = stderr.decode("utf-8", errors="replace")[:4096]
     except subprocess.TimeoutExpired:
+        if process is not None:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            try:
+                process.communicate(timeout=3)
+            except subprocess.TimeoutExpired:
+                pass
         result = {"status": "runtime_error", "error": "runner process exceeded broker timeout"}
     except Exception as exc:
         result = {"status": "runtime_error", "error": f"{type(exc).__name__}: {exc}"}
+    finally:
+        with RUNNING_EXECUTIONS_LOCK:
+            RUNNING_EXECUTIONS.pop(approval_id, None)
     result["approval_id"] = approval_id
     result["source_sha256"] = digest
     persist_result(approval_id, digest, result)
     return result
+
+
+def cancel_workspace_approval(approval_id: str) -> dict:
+    if not isinstance(approval_id, str):
+        raise ValueError("cancel_approval_id must be a UUID string")
+    try:
+        approval_id = str(uuid.UUID(approval_id))
+    except (ValueError, AttributeError) as exc:
+        raise ValueError("invalid cancel_approval_id") from exc
+
+    connection = database_connection()
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        approval = connection.execute(
+            "SELECT status FROM sandbox_workspace_approvals WHERE id = ?",
+            (approval_id,),
+        ).fetchone()
+        if approval is None:
+            raise ValueError("workspace approval not found")
+        if approval["status"] == "pending":
+            connection.execute(
+                "UPDATE sandbox_workspace_approvals SET status = 'rejected', decided_at = ? "
+                "WHERE id = ? AND status = 'pending'",
+                (now(), approval_id),
+            )
+            connection.commit()
+            return {"status": "cancelled", "approval_id": approval_id}
+        if approval["status"] != "approved":
+            connection.commit()
+            return {"status": "not_cancellable", "approval_id": approval_id}
+        claim = connection.execute(
+            "SELECT status FROM sandbox_execution_claims WHERE approval_id = ?",
+            (approval_id,),
+        ).fetchone()
+        if claim is None:
+            connection.execute(
+                "UPDATE sandbox_workspace_approvals SET status = 'rejected', decided_at = ? "
+                "WHERE id = ? AND status = 'approved'",
+                (now(), approval_id),
+            )
+            connection.commit()
+            return {"status": "cancelled", "approval_id": approval_id}
+        if claim["status"] not in {"running", "cancel_requested"}:
+            connection.commit()
+            return {"status": "already_finished", "approval_id": approval_id}
+        connection.execute(
+            "UPDATE sandbox_execution_claims SET status = 'cancel_requested' "
+            "WHERE approval_id = ? AND status = 'running'",
+            (approval_id,),
+        )
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+    with RUNNING_EXECUTIONS_LOCK:
+        process = RUNNING_EXECUTIONS.get(approval_id)
+    if process is not None:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+
+    stopped = False
+    for _ in range(5):
+        try:
+            listed = subprocess.run(
+                [DOCKER_PATH, "ps", "-aq", "--filter", f"label=clicoding.approval={approval_id}"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=3, check=False,
+            )
+            ids = [
+                item for item in listed.stdout.decode("ascii", errors="ignore").splitlines()
+                if item and all(ch in "0123456789abcdef" for ch in item.lower())
+            ]
+            if ids:
+                removed = subprocess.run(
+                    [DOCKER_PATH, "rm", "--force", *ids],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5, check=False,
+                )
+                stopped = removed.returncode == 0
+            else:
+                stopped = True
+            if stopped:
+                break
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        time.sleep(0.2)
+    if process is not None and process.poll() is None:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    return {
+        "status": "cancel_requested" if stopped else "cancel_pending",
+        "approval_id": approval_id,
+        "container_stopped": stopped,
+    }
 
 
 class Handler(socketserver.StreamRequestHandler):
@@ -332,9 +460,14 @@ class Handler(socketserver.StreamRequestHandler):
             return
         try:
             request = json.loads(raw)
-            if not isinstance(request, dict) or set(request) != {"approval_id"}:
-                raise ValueError("request must contain only approval_id")
-            result = execute_approval(request["approval_id"])
+            if not isinstance(request, dict):
+                raise ValueError("request must be a JSON object")
+            if set(request) == {"approval_id"}:
+                result = execute_approval(request["approval_id"])
+            elif set(request) == {"cancel_approval_id"}:
+                result = cancel_workspace_approval(request["cancel_approval_id"])
+            else:
+                raise ValueError("request must contain approval_id or cancel_approval_id")
         except ValueError as exc:
             result = {"status": "rejected", "error": str(exc)}
         except Exception as exc:
