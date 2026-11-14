@@ -6,6 +6,7 @@
 - Added a regression test for a successful implementation task paired with a failed independent review task.
 - Reconciled context-budgeting documentation with the implemented worker-specific specialist compaction and bounded chunk summarization.
 - Added [RESPONSE_QUALITY.md](RESPONSE_QUALITY.md), a quality rubric and real-model evaluation plan covering Persian/English, context continuity, coding, debugging, review, tool honesty, long context, partial failure and vision.
+- Removed the unrequested standalone CDS_AI chat UI route, asset, browser tests, packaging hook and Playwright CI dependency. Open WebUI and supported IDE adapters remain the intended client surfaces.
 - Unit/CI tests validate prompt and orchestration contracts only. Real-model quality has not yet been measured; DGX/model acceptance remains open.
 - No DGX files, services, model runtimes or containers were changed.
 
