@@ -73,15 +73,26 @@ def request_case(endpoint: str, api_key: str | None, case: dict, timeout: float)
             body = response.read().decode("utf-8")
             parsed = json.loads(body)
         elapsed_ms = round((time.monotonic() - started) * 1000)
-        choices = parsed.get("choices") or []
-        if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        if not isinstance(parsed, dict):
+            raise ValueError("API response must be a JSON object")
+        choices = parsed.get("choices")
+        if not isinstance(choices, list) or not choices:
             raise ValueError("API response contains no valid first choice")
-        message = choices[0].get("message", {})
+        if not isinstance(choices[0], dict):
+            raise ValueError("API response contains an invalid first choice")
+        message = choices[0].get("message")
         if not isinstance(message, dict):
             raise ValueError("API response first choice has no valid message")
         response_text = message.get("content")
         tool_calls = message.get("tool_calls")
-        if response_text is None and not tool_calls:
+        if response_text is not None and not isinstance(response_text, str):
+            raise ValueError("API response assistant content must be text or null")
+        if tool_calls is not None and (
+            not isinstance(tool_calls, list)
+            or any(not isinstance(call, dict) for call in tool_calls)
+        ):
+            raise ValueError("API response tool_calls must be a list of objects")
+        if not response_text and not tool_calls:
             raise ValueError("API response contains neither assistant content nor tool calls")
         return {
             "case_id": case["id"],
