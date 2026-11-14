@@ -122,5 +122,6 @@ class CDSAIClient:
                 tool_message = await asyncio.to_thread(
                     tool_host.execute_tool_call,
                     tool_calls[0],
+                    conversation_id,
                 )
                 next_messages = [*system_messages, tool_message]
