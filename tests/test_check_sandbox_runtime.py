@@ -57,6 +57,7 @@ def test_runtime_preflight_checks_locked_image_id_and_platform(monkeypatch):
         "source_reference": "example/dotnet@sha256:" + "a" * 64,
         "local_tag": "clicoding-sandbox/dotnet:arm64",
         "image_id": "sha256:" + "b" * 64,
+        "platform": "linux/arm64",
     }
     monkeypatch.setattr(
         checker.subprocess,
