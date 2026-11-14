@@ -60,6 +60,12 @@ cds-ai-backup restore \
 
 When replacing existing destinations, the utility renames them to sibling `pre-restore` paths and retains them for manual rollback. It verifies the staged database and copied attachment hashes before installation, and attempts to restore the previous paths if installation fails. Database and attachment replacement cannot be one filesystem transaction, so inspect the printed paths and verify the result before starting either service. Preserve the `pre-restore` paths until application-level recovery checks have passed.
 
+## Schema migration and code rollback
+
+The application currently applies forward schema adjustments during database initialization (including adding columns to existing tables and rebuilding the sandbox-approval table when its allowed-language constraint changes). These are forward migrations; there is no general automatic downgrade path. Do not assume that switching the `current` symlink back makes an older binary compatible with a database already opened by a newer release.
+
+Before an upgrade, test the candidate against a disposable copy of the exact production database and matching attachment directory, then verify existing conversations, ownership, attachments, approvals, execution results and broker operations. If the previous release's compatibility with the migrated schema is not explicitly demonstrated, rollback means stopping both services and restoring the verified pre-upgrade database and attachment backup before starting the old release. Preserve the original backup and pre-restore paths until recovery is accepted.
+
 ## Security and operational policy
 
 - Conversation databases and attachments are sensitive user data. Store backups in an access-controlled location and encrypt them at rest using the organization's offline backup mechanism.
