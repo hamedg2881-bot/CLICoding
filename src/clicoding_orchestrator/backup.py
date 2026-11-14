@@ -9,6 +9,7 @@ import os
 from pathlib import Path, PurePosixPath
 import shutil
 import sqlite3
+import stat
 import tempfile
 import uuid
 from typing import Any
@@ -146,17 +147,30 @@ def _verify_attachment_tree(root: Path, expected_records: list[dict[str, Any]]) 
         parts = _safe_key(key).parts
         expected_directories.add(parts[0])
     for path in root.rglob("*"):
-        if path.is_symlink():
+        mode = path.lstat().st_mode
+        if stat.S_ISLNK(mode):
             raise BackupError("backup contains a symbolic link")
         relative = path.relative_to(root).as_posix()
-        if path.is_file() and relative not in expected_files:
-            raise BackupError("backup contains an unreferenced attachment file")
-        if path.is_dir() and relative not in expected_directories:
-            raise BackupError("backup contains an unexpected attachment directory")
+        if stat.S_ISREG(mode):
+            if relative not in expected_files:
+                raise BackupError("backup contains an unreferenced attachment file")
+        elif stat.S_ISDIR(mode):
+            if relative not in expected_directories:
+                raise BackupError("backup contains an unexpected attachment directory")
+        else:
+            raise BackupError("backup contains an unsupported special file")
 
 
 def verify_backup(backup: str | Path) -> dict[str, Any]:
-    root = Path(backup).expanduser().resolve(strict=True)
+    supplied_root = Path(backup).expanduser()
+    if supplied_root.is_symlink():
+        raise BackupError("backup directory must not be a symbolic link")
+    root = supplied_root.resolve(strict=True)
+    if not root.is_dir():
+        raise BackupError("backup path must be a directory")
+    expected_root_entries = {MANIFEST_NAME, DATABASE_NAME, "attachments"}
+    if {entry.name for entry in root.iterdir()} != expected_root_entries:
+        raise BackupError("backup contains missing or unreferenced top-level content")
     manifest_path = root / MANIFEST_NAME
     database_path = root / DATABASE_NAME
     attachments_path = root / "attachments"
