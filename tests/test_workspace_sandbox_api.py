@@ -1,3 +1,6 @@
+import asyncio
+import json
+
 from fastapi.testclient import TestClient
 
 from clicoding_orchestrator.app import create_app
@@ -90,3 +93,97 @@ def test_workspace_sandbox_api_enforces_request_body_limit(tmp_path):
         headers={"content-type": "application/json"},
     )
     assert response.status_code == 413
+
+
+def test_workspace_sandbox_api_forwards_execute_request_to_existing_broker(tmp_path, monkeypatch):
+    database_path = str(tmp_path / "workspace-api-execute.sqlite3")
+    database = Database(database_path)
+    client = TestClient(
+        create_app(settings=Settings(database_path=database_path), database=database)
+    )
+    created = client.post("/api/v1/workspace-sandbox-approvals", json=workspace_payload())
+    approval_id = created.json()["id"]
+    client.post(
+        f"/api/v1/workspace-sandbox-approvals/{approval_id}/decision",
+        json={"decision": "approve"},
+    )
+    sent = []
+
+    class FakeReader:
+        async def readline(self):
+            return json.dumps({
+                "status": "succeeded",
+                "exit_code": 0,
+                "snapshot_sha256": created.json()["snapshot_sha256"],
+            }).encode() + b"\\n"
+
+    class FakeWriter:
+        def write(self, value):
+            sent.append(json.loads(value))
+
+        async def drain(self):
+            return None
+
+        def close(self):
+            return None
+
+        async def wait_closed(self):
+            return None
+
+    async def fake_open_unix_connection(*args, **kwargs):
+        return FakeReader(), FakeWriter()
+
+    monkeypatch.setattr(asyncio, "open_unix_connection", fake_open_unix_connection)
+    executed = client.post(
+        f"/api/v1/workspace-sandbox-approvals/{approval_id}/execute"
+    )
+    assert executed.status_code == 200
+    assert executed.json()["status"] == "succeeded"
+    assert sent == [{"approval_id": approval_id}]
+
+
+def test_workspace_sandbox_api_forwards_cancel_request_to_existing_broker(tmp_path, monkeypatch):
+    database_path = str(tmp_path / "workspace-api-cancel.sqlite3")
+    database = Database(database_path)
+    client = TestClient(
+        create_app(settings=Settings(database_path=database_path), database=database)
+    )
+    created = client.post("/api/v1/workspace-sandbox-approvals", json=workspace_payload())
+    approval_id = created.json()["id"]
+    client.post(
+        f"/api/v1/workspace-sandbox-approvals/{approval_id}/decision",
+        json={"decision": "approve"},
+    )
+    sent = []
+
+    class FakeReader:
+        async def readline(self):
+            return json.dumps({
+                "status": "cancel_requested",
+                "approval_id": approval_id,
+                "container_stopped": True,
+            }).encode() + b"\\n"
+
+    class FakeWriter:
+        def write(self, value):
+            sent.append(json.loads(value))
+
+        async def drain(self):
+            return None
+
+        def close(self):
+            return None
+
+        async def wait_closed(self):
+            return None
+
+    async def fake_open_unix_connection(*args, **kwargs):
+        return FakeReader(), FakeWriter()
+
+    monkeypatch.setattr(asyncio, "open_unix_connection", fake_open_unix_connection)
+    cancelled = client.post(
+        f"/api/v1/workspace-sandbox-approvals/{approval_id}/cancel"
+    )
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "cancel_requested"
+    assert sent == [{"cancel_approval_id": approval_id}]
