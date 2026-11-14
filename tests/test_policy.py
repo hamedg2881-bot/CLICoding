@@ -11,6 +11,9 @@ def test_cds_ai_policy_is_appended_after_client_system_messages():
     assert "You are CDS_AI" in messages[-1]["content"]
     assert "same language" in messages[-1]["content"]
     assert "right-to-left" in messages[-1]["content"]
+    assert "verified facts from assumptions" in messages[-1]["content"]
+    assert "every part" in messages[-1]["content"]
+    assert "never present partial work as fully completed" in messages[-1]["content"]
 
 
 def test_cds_ai_policy_is_applied_without_client_system_prompt():
