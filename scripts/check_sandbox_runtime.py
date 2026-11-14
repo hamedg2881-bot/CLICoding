@@ -124,6 +124,10 @@ def main() -> int:
                 failures += 1
                 print("MISSING  image lock format/platform mismatch")
             entries = lock.get("images", [])
+            if not isinstance(entries, list):
+                entries = []
+                failures += 1
+                print("MISSING  image lock image inventory is invalid")
             locked_references = {
                 item.get("source_reference")
                 for item in entries if isinstance(item, dict)
