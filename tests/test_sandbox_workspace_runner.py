@@ -155,3 +155,11 @@ def test_runner_rejects_image_lock_identity_mismatch(tmp_path, monkeypatch):
     )
     with pytest.raises(runner.RequestError, match="identity/platform mismatch"):
         runner.resolve_runtime_image(source_reference, required_lock=True)
+
+
+def test_runner_rejects_dangling_image_lock_symlink(tmp_path, monkeypatch):
+    lock_path = tmp_path / "sandbox-image-lock.json"
+    lock_path.symlink_to(tmp_path / "missing-lock.json")
+    monkeypatch.setattr(runner, "IMAGE_LOCK_PATH", str(lock_path))
+    with pytest.raises(runner.RequestError, match="must not be a symlink"):
+        runner.resolve_runtime_image("example/dotnet@sha256:" + "a" * 64)
