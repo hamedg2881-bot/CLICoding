@@ -97,7 +97,40 @@ This inspects all pinned images and feed permissions without pulling images or c
 
 The CI workflow now builds the complete project plus test-dependency wheelhouse on a native ARM64 runner using CPython 3.12.3. The last passing packaging run produced 32 wheels for aarch64. This is a reproducible candidate wheelhouse, not proof of compatibility with the exact DGX OS/glibc/runtime. Confirm the DGX Python minor version and platform first; do not use this artifact if they differ. No offline install on DGX has been performed yet.
 
-## 5. Initial safe runtime configuration (after source and dependency gates)
+## 5. Offline Docker sandbox image bundle
+
+The sandbox requires the exact pinned ARM64 images in `sandbox/clicoding_sandbox_runner.py`, including the locally built TypeScript image. Do not pull these images on the DGX during offline deployment.
+
+On an internet-connected staging workstation with Docker and Buildx (native ARM64 is preferred; Docker Desktop must support `linux/arm64`), extract the source archive and run:
+
+```bash
+python source/CDS_AI/scripts/export_sandbox_images.py \
+  --pull \
+  --build-typescript \
+  --output dist/clicoding-sandbox-images-arm64.tar
+```
+
+This pulls the pinned upstream images for ARM64, builds `clicoding-typescript:7.0.2` from the repository Dockerfile and pinned Node base image, tags every image under a transfer-local name, and writes:
+- `clicoding-sandbox-images-arm64.tar`
+- `clicoding-sandbox-images-arm64.tar.sha256`
+- `sandbox-image-lock.json`
+- `sandbox-image-lock.json.sha256`
+
+The lock records the source reference, local transfer tag, immutable Docker image ID and ARM64 platform. Transfer all four files to the DGX. The image archive may be large; ensure sufficient staging disk space.
+
+After explicit deployment approval, load the archive and install the lock:
+
+```bash
+sha256sum -c clicoding-sandbox-images-arm64.tar.sha256
+sha256sum -c sandbox-image-lock.json.sha256
+sudo docker load -i clicoding-sandbox-images-arm64.tar
+sudo install -o root -g root -m 0600 \
+  sandbox-image-lock.json /etc/cds-ai/sandbox-image-lock.json
+```
+
+The runner resolves each pinned source reference to its locked local image ID at execution time; it does not depend on registry access or mutable tags. The read-only preflight in Section 4 verifies every loaded ID and platform. Do not start the broker if the image lock or any image check fails.
+
+## 6. Initial safe runtime configuration (after source, dependency and image gates)
 
 - Start with `CLICODING_ENABLE_PLANNING=false`.
 - Use an absolute persistent `CLICODING_DATABASE_PATH` and attachment storage path outside the source tree.
@@ -109,7 +142,7 @@ The CI workflow now builds the complete project plus test-dependency wheelhouse 
 - Initially bind Uvicorn to `127.0.0.1`; use one process until live supervisor and multi-process acceptance is complete.
 - Do not connect Open WebUI until client acceptance validates conversation-ID persistence, SSE, Stop, regenerate/edit and the progress-event behavior.
 
-## 6. Acceptance order
+## 7. Acceptance order
 
 1. Verify archive checksum, source revision and extracted file inventory.
 2. Verify the offline wheelhouse against the exact DGX Python/ARM64 target.
@@ -122,7 +155,7 @@ The CI workflow now builds the complete project plus test-dependency wheelhouse 
 9. Test backup, restore to a separate candidate path, and rollback without touching production data.
 10. Complete Open WebUI/client, sandbox and real-model quality acceptance before any production cutover.
 
-## 7. Explicit release blockers
+## 8. Explicit release blockers
 
 The source candidate is not yet a production-ready DGX installation package. At minimum, the following remain open and must be closed with evidence:
 
@@ -139,7 +172,7 @@ The source candidate is not yet a production-ready DGX installation package. At 
 - Versioned database/config backup, migration-on-copy and tested rollback.
 - Final operator runbook with exact install, health-check, upgrade, backup and rollback commands.
 
-## 8. Cutover authorization
+## 9. Cutover authorization
 
 Staging is not installation. Do not replace the current application, modify systemd units, change model containers, enable the broker, enable workers, or restart any service until:
 - all source and offline-install gates are closed;
