@@ -211,10 +211,10 @@ For either option, create and populate the local NuGet feed separately before th
 
 The source candidate is not yet a production-ready DGX installation package. At minimum, the following remain open and must be closed with evidence:
 
-- Exact DGX ARM64/Python wheelhouse and a clean offline install.
+- Exact DGX ARM64/Python wheelhouse compatibility and a clean offline install on the target OS/Python ABI.
 - A reviewed Orchestrator systemd service template, secret/environment file layout, filesystem ownership and health/restart policy.
-- Existing Docker sandbox runtime images available locally, including the TypeScript image, plus a safe image inventory/checksum procedure.
-- Multi-file workspace snapshot build/test integration through the existing approval broker and Docker runner. The current runner supports approved single-file snippets only; workstation .NET build/test still runs on the workstation host.
+- DGX-side preparation and read-only verification of every digest-pinned ARM64 sandbox image, the generated image lock, and the root-owned offline NuGet feed; no runtime broker activation has been accepted.
+- Live DGX acceptance of the multi-file workspace snapshot Build/Test path through the existing approval broker and Docker runner, including exact approval binding, no-network execution, offline NuGet restore, output handling and cancellation.
 - Packaged IDE integration and approval/diff/apply UI.
 - Attachment expiry/retention, robust image decoding/content validation and malware scanning.
 - Audit retention/signing/alerting and internal TLS/reverse-proxy verification.
