@@ -230,8 +230,8 @@ def test_assistant_markdown_renders_code_blocks_without_html_injection():
 
             async def complete_chat(route):
                 markdown = (
-                    "## نتیجه\\n\\nاین **مهم** است.\\n\\n"
-                    "```python\\nprint('hello')\\n```\\n\\n"
+                    "## نتیجه\n\nاین **مهم** است.\n\n"
+                    "```python\nprint('hello')\n```\n\n"
                     "متن <img src=x onerror=alert(1)>"
                 )
                 payload = json.dumps({
@@ -240,7 +240,7 @@ def test_assistant_markdown_renders_code_blocks_without_html_injection():
                 await route.fulfill(
                     status=200,
                     headers={"content-type": "text/event-stream"},
-                    body=f"data: {payload}\\n\\ndata: [DONE]\\n\\n",
+                    body=f"data: {payload}\n\ndata: [DONE]\n\n",
                 )
 
             await page.route("**/api/v1/conversations", create_conversation)
