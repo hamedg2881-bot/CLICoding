@@ -1,9 +1,14 @@
 import hashlib
+import importlib.util
 import json
+from pathlib import Path
 
 import pytest
 
-from sandbox import clicoding_sandbox_runner as runner
+_runner_path = Path(__file__).parents[1] / "sandbox" / "clicoding_sandbox_runner.py"
+_runner_spec = importlib.util.spec_from_file_location("clicoding_sandbox_runner", _runner_path)
+runner = importlib.util.module_from_spec(_runner_spec)
+_runner_spec.loader.exec_module(runner)
 
 
 def workspace_request():
