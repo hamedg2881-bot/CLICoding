@@ -137,7 +137,7 @@ def test_workspace_sandbox_api_forwards_execute_request_to_existing_broker(tmp_p
     executed = client.post(
         f"/api/v1/workspace-sandbox-approvals/{approval_id}/execute"
     )
-    assert executed.status_code == 200
+    assert executed.status_code == 200, executed.text
     assert executed.json()["status"] == "succeeded"
     assert sent == [{"approval_id": approval_id}]
 
@@ -184,6 +184,6 @@ def test_workspace_sandbox_api_forwards_cancel_request_to_existing_broker(tmp_pa
     cancelled = client.post(
         f"/api/v1/workspace-sandbox-approvals/{approval_id}/cancel"
     )
-    assert cancelled.status_code == 200
+    assert cancelled.status_code == 200, cancelled.text
     assert cancelled.json()["status"] == "cancel_requested"
     assert sent == [{"cancel_approval_id": approval_id}]
