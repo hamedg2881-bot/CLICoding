@@ -42,7 +42,6 @@ sudo install -d -o root -g cds-ai -m 0750 /etc/cds-ai
 sudo install -d -o cds-ai -g cds-ai -m 0750 /var/lib/cds-ai
 sudo install -d -o root -g root -m 0755 /opt/ai/clicoding
 sudo install -d -o root -g root -m 0755 /opt/ai/clicoding/releases
-sudo install -d -o root -g root -m 0755 /opt/ai/clicoding/releases
 ```
 
 If either identity already exists, inspect it and do not recreate or change it blindly.
