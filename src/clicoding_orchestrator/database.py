@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import sqlite3
 import uuid
 from typing import Any, Iterator
@@ -164,6 +164,23 @@ class Database:
 
                 CREATE INDEX IF NOT EXISTS ix_sandbox_approvals_task
                     ON sandbox_approvals(execution_id, task_id, created_at);
+
+                CREATE TABLE IF NOT EXISTS sandbox_workspace_approvals (
+                    id TEXT PRIMARY KEY,
+                    owner_id TEXT NOT NULL,
+                    workspace_id TEXT NOT NULL,
+                    action TEXT NOT NULL CHECK (action IN ('build', 'test')),
+                    project_path TEXT NOT NULL,
+                    files_json TEXT NOT NULL,
+                    snapshot_sha256 TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'expired')),
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    decided_at TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS ix_sandbox_workspace_approvals_owner
+                    ON sandbox_workspace_approvals(owner_id, workspace_id, created_at);
                 """
             )
         self._migrate_event_metadata()
@@ -950,6 +967,218 @@ class Database:
         if expired:
             raise ValueError("approval has expired")
         return self.get_sandbox_approval(approval_id)
+
+    @staticmethod
+    def _canonical_workspace_snapshot(
+        files: list[dict[str, str]], project_path: str
+    ) -> tuple[str, str, int]:
+        """Validate a bounded text-only workspace and return canonical JSON, digest and bytes."""
+        if not isinstance(files, list) or not 1 <= len(files) <= 200:
+            raise ValueError("workspace snapshot must contain 1 to 200 files")
+        if (
+            not isinstance(project_path, str)
+            or not project_path
+            or len(project_path) > 512
+            or "\\\\" in project_path
+            or "\\x00" in project_path
+            or PurePosixPath(project_path).is_absolute()
+            or PureWindowsPath(project_path).is_absolute()
+            or any(part in {"", ".", ".."} for part in PurePosixPath(project_path).parts)
+            or PurePosixPath(project_path).suffix.lower() not in {".sln", ".slnx", ".csproj"}
+        ):
+            raise ValueError("project_path must be a safe relative .sln, .slnx or .csproj path")
+
+        blocked_dirs = {
+            ".git", ".ssh", ".aws", ".azure", ".gnupg", ".venv", "venv",
+            "node_modules", "bin", "obj", "__pycache__", ".idea", ".vs",
+            "secrets", "credentials",
+        }
+        blocked_names = {
+            ".env", ".git-credentials", "id_rsa", "id_ed25519",
+            "credentials.json", "secrets.json", ".npmrc", ".pypirc",
+            "nuget.config",
+        }
+        blocked_suffixes = {".pem", ".key", ".p12", ".pfx", ".kdb"}
+        seen: set[str] = set()
+        normalized: list[dict[str, Any]] = []
+        total_bytes = 0
+        target_found = False
+        for item in files:
+            if not isinstance(item, dict) or set(item) != {"path", "content"}:
+                raise ValueError("each snapshot file must contain only path and content")
+            path = item["path"]
+            text = item["content"]
+            if (
+                not isinstance(path, str)
+                or not path
+                or len(path) > 512
+                or "\\\\" in path
+                or "\\x00" in path
+                or PurePosixPath(path).is_absolute()
+                or PureWindowsPath(path).is_absolute()
+            ):
+                raise ValueError("snapshot file path must be a bounded relative path")
+            relative = PurePosixPath(path)
+            if any(part in {"", ".", ".."} for part in relative.parts):
+                raise ValueError("snapshot path traversal is not allowed")
+            parts = [part.casefold() for part in relative.parts]
+            if any(part in blocked_dirs for part in parts[:-1]):
+                raise ValueError("snapshot contains a blocked directory")
+            filename = parts[-1]
+            if filename in blocked_names or (
+                filename.startswith(".env.") and filename != ".env.example"
+            ) or Path(filename).suffix.lower() in blocked_suffixes:
+                raise ValueError("snapshot contains a blocked secret or credential file")
+            key = relative.as_posix().casefold()
+            if key in seen:
+                raise ValueError("snapshot contains duplicate or case-colliding paths")
+            seen.add(key)
+            if not isinstance(text, str):
+                raise ValueError("snapshot files must contain UTF-8 text")
+            try:
+                encoded = text.encode("utf-8")
+            except UnicodeEncodeError as exc:
+                raise ValueError("snapshot file contains invalid UTF-8 text") from exc
+            if len(encoded) > 1_000_000:
+                raise ValueError("a workspace file exceeds 1 MiB")
+            total_bytes += len(encoded)
+            if total_bytes > 5 * 1024 * 1024:
+                raise ValueError("workspace snapshot exceeds 5 MiB")
+            if relative.as_posix() == project_path:
+                target_found = True
+            normalized.append({
+                "path": relative.as_posix(),
+                "content": text,
+                "sha256": hashlib.sha256(encoded).hexdigest(),
+                "bytes": len(encoded),
+            })
+        if not target_found:
+            raise ValueError("project_path is not present in the workspace snapshot")
+        normalized.sort(key=lambda entry: entry["path"])
+        manifest = [
+            {"path": item["path"], "sha256": item["sha256"], "bytes": item["bytes"]}
+            for item in normalized
+        ]
+        manifest_bytes = json.dumps(
+            manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        snapshot_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+        files_json = json.dumps(
+            normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+        return files_json, snapshot_sha256, total_bytes
+
+    def create_workspace_sandbox_approval(
+        self,
+        owner_id: str,
+        workspace_id: str,
+        action: str,
+        project_path: str,
+        files: list[dict[str, str]],
+        ttl_seconds: int = 900,
+    ) -> dict[str, Any]:
+        """Create a human approval bound to the complete immutable workspace snapshot."""
+        owner_id = self._validate_owner_id(owner_id)
+        if (
+            not isinstance(workspace_id, str)
+            or not workspace_id
+            or len(workspace_id) > 128
+            or not all(ch.isalnum() or ch in "._-" for ch in workspace_id)
+        ):
+            raise ValueError("workspace_id has an invalid format")
+        if action not in {"build", "test"}:
+            raise ValueError("workspace action must be build or test")
+        if not isinstance(ttl_seconds, int) or ttl_seconds < 60 or ttl_seconds > 3600:
+            raise ValueError("approval TTL must be between 60 and 3600 seconds")
+        files_json, digest, total_bytes = self._canonical_workspace_snapshot(
+            files, project_path
+        )
+        now = datetime.now(timezone.utc)
+        created_at = now.isoformat()
+        expires_at = (now + timedelta(seconds=ttl_seconds)).isoformat()
+        approval_id = str(uuid.uuid4())
+        with self.session() as connection:
+            connection.execute(
+                """
+                INSERT INTO sandbox_workspace_approvals
+                    (id, owner_id, workspace_id, action, project_path, files_json,
+                     snapshot_sha256, status, created_at, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+                """,
+                (approval_id, owner_id, workspace_id, action, project_path,
+                 files_json, digest, created_at, expires_at),
+            )
+        result = self.get_workspace_sandbox_approval(approval_id)
+        assert result is not None
+        result["total_bytes"] = total_bytes
+        return result
+
+    def get_workspace_sandbox_approval(
+        self, approval_id: str, owner_id: str | None = None
+    ) -> dict[str, Any] | None:
+        with self.session() as connection:
+            query = """
+                SELECT id, owner_id, workspace_id, action, project_path, files_json,
+                       snapshot_sha256, status, created_at, expires_at, decided_at
+                FROM sandbox_workspace_approvals WHERE id = ?
+            """
+            params: tuple[Any, ...] = (approval_id,)
+            if owner_id is not None:
+                query += " AND owner_id = ?"
+                params = (approval_id, owner_id)
+            row = connection.execute(query, params).fetchone()
+            if row is None:
+                return None
+            result = dict(row)
+            if result["status"] == "pending" and result["expires_at"] <= utc_now():
+                connection.execute(
+                    "UPDATE sandbox_workspace_approvals SET status = 'expired' "
+                    "WHERE id = ? AND status = 'pending'",
+                    (approval_id,),
+                )
+                result["status"] = "expired"
+        result["files"] = json.loads(result.pop("files_json"))
+        return result
+
+    def decide_workspace_sandbox_approval(
+        self, approval_id: str, owner_id: str, decision: str
+    ) -> dict[str, Any] | None:
+        if decision not in {"approve", "reject"}:
+            raise ValueError("decision must be approve or reject")
+        now = utc_now()
+        target = "approved" if decision == "approve" else "rejected"
+        expired = False
+        with self.session() as connection:
+            row = connection.execute(
+                "SELECT status, expires_at FROM sandbox_workspace_approvals "
+                "WHERE id = ? AND owner_id = ?",
+                (approval_id, owner_id),
+            ).fetchone()
+            if row is None:
+                return None
+            if row["status"] != "pending":
+                raise ValueError(f"approval is not pending (status={row['status']})")
+            if row["expires_at"] <= now:
+                connection.execute(
+                    "UPDATE sandbox_workspace_approvals SET status = 'expired' "
+                    "WHERE id = ? AND status = 'pending'",
+                    (approval_id,),
+                )
+                expired = True
+            else:
+                cursor = connection.execute(
+                    """
+                    UPDATE sandbox_workspace_approvals
+                    SET status = ?, decided_at = ?
+                    WHERE id = ? AND owner_id = ? AND status = 'pending' AND expires_at > ?
+                    """,
+                    (target, now, approval_id, owner_id, now),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("approval state changed; fetch it and try again")
+        if expired:
+            raise ValueError("approval has expired")
+        return self.get_workspace_sandbox_approval(approval_id, owner_id)
 
     def get_sandbox_execution_result(self, approval_id: str) -> dict[str, Any] | None:
         """Read the structured result persisted by the privileged broker."""
