@@ -18,7 +18,7 @@ from typing import Any
 
 DOCKER = "/usr/bin/docker"
 MAX_REQUEST_BYTES = 128 * 1024
-MAX_WORKSPACE_REQUEST_BYTES = 8 * 1024 * 1024
+MAX_WORKSPACE_REQUEST_BYTES = 32 * 1024 * 1024
 MAX_WORKSPACE_FILES = 200
 MAX_WORKSPACE_FILE_BYTES = 1 * 1024 * 1024
 MAX_WORKSPACE_BYTES = 5 * 1024 * 1024
@@ -196,7 +196,12 @@ def validate_workspace_request(request: dict[str, Any]) -> dict[str, Any]:
         except UnicodeEncodeError as exc:
             raise RequestError("Workspace snapshot contains invalid UTF-8") from exc
         digest = hashlib.sha256(encoded).hexdigest()
-        if len(encoded) > MAX_WORKSPACE_FILE_BYTES or item["bytes"] != len(encoded):
+        if (
+            isinstance(item["bytes"], bool)
+            or not isinstance(item["bytes"], int)
+            or len(encoded) > MAX_WORKSPACE_FILE_BYTES
+            or item["bytes"] != len(encoded)
+        ):
             raise RequestError("Workspace snapshot file size mismatch")
         if not isinstance(item["sha256"], str) or not hmac.compare_digest(digest, item["sha256"]):
             raise RequestError("Workspace snapshot file digest mismatch")
