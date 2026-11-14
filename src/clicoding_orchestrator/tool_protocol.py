@@ -94,7 +94,7 @@ def _validate_schema_definition(
             or not isinstance(schema[key], int)
             or isinstance(schema[key], bool)
             or schema[key] < 0
-            or schema[key] > 20000
+            or schema[key] > 1000000
         ):
             raise ToolProtocolError(f"{path}.{key} is invalid for {schema_type}")
     for low, high in (("minLength", "maxLength"), ("minItems", "maxItems")):
