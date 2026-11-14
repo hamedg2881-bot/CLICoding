@@ -968,7 +968,6 @@ def create_app(
                 )
                 db.invalidate_summaries_from_sequence(conversation_id, regeneration_event["sequence"])
                 input_event = db.list_events(conversation_id)[-2]
-                stored_events = db.list_events(conversation_id)[:-1]
             elif edit_event_id is not None:
                 edit_target, stored_events = _prepare_edit(
                     db, conversation_id, edit_event_id
@@ -1247,6 +1246,7 @@ def create_app(
         response_id: str,
         created_at: int,
         prepared_history: list[dict[str, Any]],
+        prepared_event_ids: list[str],
         generation_options: dict[str, Any] | None = None,
         tool_definitions: dict[str, dict[str, Any]] | None = None,
         tool_choice: str | dict[str, Any] | None = None,
@@ -1259,6 +1259,21 @@ def create_app(
         system_messages = effective_system_messages(system_messages)
         lock = conversation_locks.setdefault(conversation_id, asyncio.Lock())
         async with lock:
+            # The preflight runs before the SSE body is opened. Fail closed if
+            # another request changed this conversation before the stream acquired
+            # its turn lock, rather than serving a stale prepared transcript.
+            current_event_ids = [
+                event["id"] for event in db.list_events(conversation_id)
+            ]
+            if current_event_ids != prepared_event_ids:
+                yield "data: " + json.dumps({
+                    "error": {
+                        "message": "The conversation changed while the stream was starting. Please retry.",
+                        "type": "conflict_error",
+                    }
+                }, ensure_ascii=False) + "\n\n"
+                yield "data: [DONE]\n\n"
+                return
             regeneration_event = None
             edit_target = None
             if regenerate:
@@ -1276,7 +1291,7 @@ def create_app(
                 stored_events = db.list_events(conversation_id)[:-1]
             elif edit_event_id is not None:
                 try:
-                    edit_target, stored_events = _prepare_edit(
+                    edit_target, _ = _prepare_edit(
                         db, conversation_id, edit_event_id
                     )
                     db.invalidate_summaries_from_sequence(conversation_id, edit_target["sequence"])
@@ -1286,8 +1301,6 @@ def create_app(
                     }, ensure_ascii=False) + "\n\n"
                     yield "data: [DONE]\n\n"
                     return
-            else:
-                stored_events = db.list_events(conversation_id)
             # Context was validated once before the SSE response was opened.
             # Reuse the exact prepared messages instead of rebuilding history,
             # resolving attachments, or compacting the same turn a second time.
@@ -1860,7 +1873,8 @@ def create_app(
             return StreamingResponse(
                 stream_direct_turn(
                     conversation_id, last_user, supplied_system, stream_worker,
-                    stream_gateway, response_id, created_at, history, generation_options,
+                    stream_gateway, response_id, created_at, history,
+                    [event["id"] for event in existing_events], generation_options,
                     tool_definitions or None, chat_request.tool_choice,
                     last_message.role,
                     (
