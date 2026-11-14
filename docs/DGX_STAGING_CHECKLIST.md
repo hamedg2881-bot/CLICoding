@@ -66,14 +66,20 @@ Confirm ARM64 architecture, Python 3.11+, disk location for SQLite and attachmen
 
 ## 4. Offline dependency preparation (not yet an install command)
 
-- Stage wheels for the exact DGX Python minor version and ARM64 architecture on an approved compatible staging machine or internal package mirror.
-- Resolve the complete dependency closure from `pyproject.toml`; include build-system dependencies and the optional test dependencies if tests will run on DGX.
-- Do not copy an x86_64 virtual environment or x86_64 wheels.
-- Keep the wheelhouse, virtual environment, secrets and runtime data outside the source tree.
-- Installation must use pip offline mode and an explicit local wheelhouse; public package indexes must not be fallback sources.
-- Verify wheel hashes and retain the dependency lock/inventory with the release record.
+1. From the same successful Actions run and exact source commit, download the artifact named `CDS_AI-wheelhouse-cp312-arm64-<full-commit-sha>`.
+2. Transfer its `.tar.gz` and matching `.tar.gz.sha256` sidecar to the DGX staging directory.
+3. Verify and extract:
 
-The current repository does not yet contain a fully validated, DGX-Python-specific ARM64 wheelhouse. Therefore an offline installation is not yet authorized by this checklist.
+```bash
+sha256sum -c CDS_AI-wheelhouse-cp312-arm64-<12-char-sha>.tar.gz.sha256
+tar -xzf CDS_AI-wheelhouse-cp312-arm64-<12-char-sha>.tar.gz
+```
+
+4. Inspect `wheelhouse-manifest.json`: the Python implementation/version and `aarch64` machine must match the DGX target. Verify every wheel against its SHA-256 entry before installation.
+5. Keep the wheelhouse, virtual environment, secrets and runtime data outside the source tree.
+6. Install only with pip offline mode and an explicit local wheelhouse; public package indexes must not be fallback sources.
+
+The CI workflow now builds the complete project plus test-dependency wheelhouse on a native ARM64 runner using CPython 3.12.3. The last passing packaging run produced 32 wheels for aarch64. This is a reproducible candidate wheelhouse, not proof of compatibility with the exact DGX OS/glibc/runtime. Confirm the DGX Python minor version and platform first; do not use this artifact if they differ. No offline install on DGX has been performed yet.
 
 ## 5. Initial safe runtime configuration (after source and dependency gates)
 
