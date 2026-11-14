@@ -1,4 +1,5 @@
 import asyncio
+import json
 from pathlib import Path
 
 from playwright.async_api import async_playwright
@@ -214,6 +215,49 @@ def test_mobile_sidebar_navigation_and_enter_key_submission():
                 assert await page.evaluate(
                     "() => document.documentElement.scrollWidth <= window.innerWidth"
                 )
+            finally:
+                await browser.close()
+
+    asyncio.run(scenario())
+
+
+def test_assistant_markdown_renders_code_blocks_without_html_injection():
+    async def scenario():
+        async with async_playwright() as playwright:
+            browser, page = await open_chat_page(playwright)
+            async def create_conversation(route):
+                await route.fulfill(json={"id": "markdown-conversation"})
+
+            async def complete_chat(route):
+                markdown = (
+                    "## نتیجه\\n\\nاین **مهم** است.\\n\\n"
+                    "```python\\nprint('hello')\\n```\\n\\n"
+                    "متن <img src=x onerror=alert(1)>"
+                )
+                payload = json.dumps({
+                    "choices": [{"index": 0, "delta": {"content": markdown}, "finish_reason": None}]
+                }, ensure_ascii=False)
+                await route.fulfill(
+                    status=200,
+                    headers={"content-type": "text/event-stream"},
+                    body=f"data: {payload}\\n\\ndata: [DONE]\\n\\n",
+                )
+
+            await page.route("**/api/v1/conversations", create_conversation)
+            await page.route("**/v1/chat/completions", complete_chat)
+            try:
+                await page.locator("#prompt").fill("قالب‌بندی را نمایش بده")
+                await page.locator("#sendButton").click()
+                await page.wait_for_function(
+                    "() => document.querySelector('#status').textContent === 'پاسخ کامل شد'"
+                )
+                bubble = page.locator(".assistant .bubble").last
+                assert await bubble.locator("h3").inner_text() == "نتیجه"
+                assert await bubble.locator("strong").inner_text() == "مهم"
+                assert await bubble.locator("pre code").inner_text() == "print('hello')"
+                assert await bubble.locator(".copy-code").is_visible()
+                assert await bubble.locator("img").count() == 0
+                assert "<img src=x onerror=alert(1)>" in await bubble.inner_text()
             finally:
                 await browser.close()
 
