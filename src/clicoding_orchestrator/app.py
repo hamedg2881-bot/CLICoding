@@ -1246,6 +1246,7 @@ def create_app(
         selected_gateway: ModelGateway,
         response_id: str,
         created_at: int,
+        prepared_history: list[dict[str, Any]],
         generation_options: dict[str, Any] | None = None,
         tool_definitions: dict[str, dict[str, Any]] | None = None,
         tool_choice: str | dict[str, Any] | None = None,
@@ -1287,51 +1288,10 @@ def create_app(
                     return
             else:
                 stored_events = db.list_events(conversation_id)
-            events = []
-            for event in stored_events:
-                if event["role"] not in ("user", "assistant", "tool"):
-                    continue
-                item = {"role": event["role"], "content": _restore_content(event["content"])}
-                if event.get("metadata"):
-                    item.update(event["metadata"])
-                    if event["role"] == "assistant" and event["metadata"].get("tool_calls"):
-                        item["content"] = None
-                events.append(item)
-            input_message = {"role": input_role, "content": content}
-            if input_metadata:
-                input_message.update(input_metadata)
-            try:
-                history = await prepare_context_history(
-                    conversation_id,
-                    system_messages,
-                    stored_events,
-                    None if regeneration_event is not None else input_message,
-                    worker,
-                    selected_gateway,
-                    (
-                        generation_options.get("max_tokens", worker.max_output_tokens)
-                        if generation_options else worker.max_output_tokens
-                    ),
-                )
-            except ContextBudgetExceeded as exc:
-                yield "data: " + json.dumps({
-                    "error": {"message": str(exc), "type": "context_length_exceeded"}
-                }, ensure_ascii=False) + "\n\n"
-                yield "data: [DONE]\n\n"
-                return
-            except GatewayError:
-                logger.exception(
-                    "Context compaction failed during streaming (conversation_id=%s)",
-                    conversation_id,
-                )
-                yield "data: " + json.dumps({
-                    "error": {
-                        "message": "The assistant could not safely prepare conversation context.",
-                        "type": "server_error",
-                    }
-                }, ensure_ascii=False) + "\n\n"
-                yield "data: [DONE]\n\n"
-                return
+            # Context was validated once before the SSE response was opened.
+            # Reuse the exact prepared messages instead of rebuilding history,
+            # resolving attachments, or compacting the same turn a second time.
+            history = prepared_history
             if regeneration_event is None and edit_target is None:
                 _append_input_event(
                     db,
@@ -1900,7 +1860,7 @@ def create_app(
             return StreamingResponse(
                 stream_direct_turn(
                     conversation_id, last_user, supplied_system, stream_worker,
-                    stream_gateway, response_id, created_at, generation_options,
+                    stream_gateway, response_id, created_at, history, generation_options,
                     tool_definitions or None, chat_request.tool_choice,
                     last_message.role,
                     (
