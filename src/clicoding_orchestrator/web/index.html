@@ -185,7 +185,7 @@ main{display:flex;flex-direction:column;min-width:0;height:100%;position:relativ
       const requestText=text || "این تصویر را بررسی کن.";
       addMessage("user",state.pendingImage ? requestText + "\n[تصویر پیوست شد: " + state.pendingImage.name + "]" : requestText);
       const chat=state.chats.find(item=>item.id===id);
-      if (chat && chat.title==="گفت‌وگوی جدید") {chat.title=text.slice(0,42);persistIndex();renderChatList();}
+      if (chat && chat.title==="گفت‌وگوی جدید") {chat.title=requestText.slice(0,42);persistIndex();renderChatList();}
       $("prompt").value="";
       assistant=addMessage("assistant",""); bubble=assistant.bubble;
       let messageContent=requestText;
@@ -193,7 +193,7 @@ main{display:flex;flex-direction:column;min-width:0;height:100%;position:relativ
       if(state.pendingImage){
         const file=state.pendingImage;
         const uploaded=await api("/api/v1/conversations/"+encodeURIComponent(id)+"/attachments",{
-          method:"POST",
+          method:"POST",signal:controller.signal,
           headers:{"Content-Type":file.type || "application/octet-stream","X-Filename":file.name},
           body:file
         });
