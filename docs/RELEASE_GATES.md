@@ -51,6 +51,18 @@
 - [x] Cross-process lease exclusion/recovery and two-app cancellation tests pass in CI; retain single-worker deployment until live multi-process acceptance is complete.
 - [ ] Prove trusted Open WebUI headers are stripped/reinjected by the actual private proxy; otherwise use per-user tokens.
 
+## Response quality acceptance
+
+See [RESPONSE_QUALITY.md](RESPONSE_QUALITY.md) for the scoring rubric and evaluation protocol.
+
+- [ ] Run a versioned Persian/English quality benchmark against exact DGX model aliases and serving parameters.
+- [ ] Human-score factual reliability, completeness, context continuity, reasoning correctness, language/format and tool/action honesty.
+- [ ] Verify long-context compaction preserves exact names, paths, versions, decisions and recent instructions.
+- [ ] Verify partial specialist failures are clearly disclosed and never presented as complete success.
+- [ ] Run coding/debugging/review cases with actual workstation build/test evidence.
+- [ ] Run vision cases with real images and the exact multimodal runtime.
+- [ ] Record latency, token usage and unified-memory headroom alongside quality scores.
+
 ## Live DGX runtime acceptance
 - [ ] Verify exact served model aliases and ports at live `/v1/models` endpoints.
 - [ ] Test GPT-OSS-20B chat/planning, Qwen3-Coder-Next coding/review and Qwen3-VL-2B image understanding.
