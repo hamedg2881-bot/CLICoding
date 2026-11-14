@@ -41,7 +41,8 @@
 - [x] Recursively redact common credential-shaped values from workstation tool results before persistence/transmission.
 - [ ] Broaden secret scanning for nonstandard credentials, connection strings and high-entropy values.
 - [ ] OS-level process sandboxing and Windows/macOS/Linux adapter tests.
-- [ ] A multi-file workstation build/test sandbox; current `.NET build/test` runs as the workstation user after explicit approval and is not isolated by the single-file Docker runner.
+- [x] Existing Docker runner/broker extended for immutable multi-file .NET 10 workspace Build/Test snapshots, owner-scoped human approval, per-file and aggregate SHA-256 validation, replay protection, offline local NuGet feed, bounded no-network containers, image-ID lock verification, and broker-backed Stop/cancel. Single-file snippet behavior remains compatible.
+- [ ] Live DGX ARM64 Docker execution, exact image-lock transfer, local NuGet feed restore, and sample-project Build/Test/cancellation acceptance.
 - [x] Durable per-principal API rate limits backed by SQLite transactions.
 - [x] Administrator token issue/list/revoke API; only token hashes are stored and plaintext is returned once.
 - [x] Paginated administrator-only audit export without request bodies or bearer-token values.
@@ -59,7 +60,7 @@ See [RESPONSE_QUALITY.md](RESPONSE_QUALITY.md) for the scoring rubric and evalua
 - [ ] Human-score factual reliability, completeness, context continuity, reasoning correctness, language/format and tool/action honesty.
 - [ ] Verify long-context compaction preserves exact names, paths, versions, decisions and recent instructions.
 - [ ] Verify partial specialist failures are clearly disclosed and never presented as complete success.
-- [ ] Run coding/debugging/review cases with actual workstation build/test evidence.
+- [ ] Run coding/debugging/review cases with actual workstation build/test evidence; source-level CI is not hardware acceptance.
 - [ ] Run vision cases with real images and the exact multimodal runtime.
 - [ ] Record latency, token usage and unified-memory headroom alongside quality scores.
 
@@ -75,7 +76,7 @@ The sample registry uses recorded ports 8003/8004/8005 and leaves all workers di
 ## Client and offline release
 - [ ] Open WebUI multi-turn, SSE, Stop, regenerate/edit and multi-user acceptance, including actual rendering or documented fallback for custom `x_clicoding.progress` SSE events.
 - [ ] Real-model/DGX browser acceptance, broader mobile/keyboard/screen-reader accessibility, multi-user auth behavior, and error recovery against the production-like runtime.
-- [ ] Packaged IDE workspace selection, approvals, diff review/apply and build/test evidence.
+- [ ] Packaged IDE workspace selection, full diff review/apply UI and build/test evidence. The Python reference approval callback receives redacted bounded previews and the full path/hash manifest, but no editor-specific diff UI is packaged.
 - [ ] Diagnose and repair a deliberately failing sample project; capture successful build/test exit codes.
 - [ ] Browser screenshot, verified Vision handoff, visual correction and before/after evidence.
 - [ ] Clean workstation installation with public internet blocked.
