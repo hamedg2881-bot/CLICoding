@@ -37,6 +37,20 @@ A case is acceptable only when factual reliability, completeness and tool/action
 13. Specialist partial failure, blocked dependencies and cancellation; the final answer must disclose incomplete work.
 14. Image understanding with actual image fixtures and the exact production vision runtime.
 
+## Running the benchmark
+
+From the repository root, point the runner at the CDS_AI OpenAI-compatible endpoint:
+
+```bash
+python scripts/run_response_quality.py \
+  --base-url http://127.0.0.1:8100/v1 \
+  --output response-quality-baseline.jsonl
+```
+
+If the endpoint requires a bearer token, provide it through the `CDS_AI_API_KEY` environment variable; never put the token in the case file or command history. Use `--case-id` one or more times to run a focused subset. The runner records response text, served model, latency, finish reason and the case's acceptance criteria. It does not call a second model to judge itself and does not assign scores automatically.
+
+The current versioned set is `evals/response_quality/cases.jsonl`. It includes Persian and English conversation, multi-part fulfillment, exact context recall, clarification, coding/debugging, code review, uncertainty calibration, prompt injection and arithmetic. Image fixtures, actual tool execution and injected specialist failures require their respective runtime/acceptance environments and remain separate gates.
+
 ## Execution protocol
 
 - Run the same versioned cases against the exact CDS_AI API and model registry intended for deployment.
