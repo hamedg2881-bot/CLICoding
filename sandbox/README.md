@@ -193,9 +193,9 @@ group/world writable; the runner rejects unsafe ownership or permissions.
 - Binary workspace assets are not yet included; workspace snapshots currently
   accept UTF-8 text files only. A project containing required binary assets
   will fail snapshot creation rather than silently omit them.
-- The current .NET workspace mode has bounded build/test execution but does not
-  yet implement an end-to-end remote Stop/cancel operation while Docker is
-  running.
+- Remote Stop/cancel is routed through the broker, terminates the runner process
+  group and removes the Docker container by approval label. This still requires
+  live DGX race/cancellation acceptance.
 - The root-owned local NuGet feed must be populated and verified for the exact
   projects being built. The runner does not download or install packages.
 - No live DGX Docker execution test has been performed for this workspace mode.
