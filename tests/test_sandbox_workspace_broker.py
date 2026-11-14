@@ -106,3 +106,117 @@ def test_broker_rechecks_unsafe_paths_even_if_database_row_is_tampered(tmp_path,
 
     with pytest.raises(ValueError, match="path is unsafe"):
         broker.claim_workspace_approval(approval["id"])
+
+
+def test_broker_cancels_pending_workspace_approval_without_execution(tmp_path, monkeypatch):
+    database_path = tmp_path / "broker-cancel-pending.sqlite3"
+    database, approval = create_approved_workspace(database_path)
+    # Recreate a pending state to model cancellation while the approval dialog is open.
+    with database.session() as connection:
+        connection.execute(
+            "UPDATE sandbox_workspace_approvals SET status = 'pending' WHERE id = ?",
+            (approval["id"],),
+        )
+    monkeypatch.setattr(broker, "DATABASE_PATH", str(database_path))
+
+    result = broker.cancel_workspace_approval(approval["id"])
+    assert result["status"] == "cancelled"
+    assert database.get_workspace_sandbox_approval(approval["id"])["status"] == "rejected"
+
+
+def test_broker_cancels_approved_workspace_before_runner_claim(tmp_path, monkeypatch):
+    database_path = tmp_path / "broker-cancel-before-run.sqlite3"
+    database, approval = create_approved_workspace(database_path)
+    monkeypatch.setattr(broker, "DATABASE_PATH", str(database_path))
+
+    result = broker.cancel_workspace_approval(approval["id"])
+    assert result["status"] == "cancelled"
+    with pytest.raises(ValueError, match="not approved"):
+        broker.claim_workspace_approval(approval["id"])
+
+
+def test_broker_stops_running_workspace_container_by_approval_label(tmp_path, monkeypatch):
+    database_path = tmp_path / "broker-cancel-running.sqlite3"
+    database, approval = create_approved_workspace(database_path)
+    monkeypatch.setattr(broker, "DATABASE_PATH", str(database_path))
+    with database.session() as connection:
+        connection.execute(
+            """
+            CREATE TABLE sandbox_execution_claims (
+                approval_id TEXT PRIMARY KEY,
+                source_sha256 TEXT NOT NULL,
+                status TEXT NOT NULL,
+                claimed_at TEXT NOT NULL,
+                finished_at TEXT
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO sandbox_execution_claims VALUES (?, ?, 'running', ?, NULL)",
+            (approval["id"], approval["snapshot_sha256"], "2026-01-01T00:00:00+00:00"),
+        )
+
+    class FakeProcess:
+        pid = 12345
+
+        def wait(self, timeout=None):
+            return -15
+
+        def poll(self):
+            return -15
+
+    monkeypatch.setattr(broker, "RUNNING_EXECUTIONS", {approval["id"]: FakeProcess()})
+    monkeypatch.setattr(broker.os, "killpg", lambda *args: None)
+    monkeypatch.setattr(
+        broker.subprocess,
+        "run",
+        lambda args, **kwargs: broker.subprocess.CompletedProcess(
+            args, 0, stdout=b"", stderr=b""
+        ),
+    )
+    monkeypatch.setattr(broker.time, "sleep", lambda *_args: None)
+
+    result = broker.cancel_workspace_approval(approval["id"])
+    assert result["status"] == "cancel_requested"
+    assert result["container_stopped"] is True
+    with database.session() as connection:
+        claim = connection.execute(
+            "SELECT status FROM sandbox_execution_claims WHERE approval_id = ?",
+            (approval["id"],),
+        ).fetchone()
+    assert claim["status"] == "cancel_requested"
+
+
+def test_broker_persists_cancelled_status_when_cancel_races_runner_result(tmp_path, monkeypatch):
+    database_path = tmp_path / "broker-cancel-result.sqlite3"
+    database, approval = create_approved_workspace(database_path)
+    monkeypatch.setattr(broker, "DATABASE_PATH", str(database_path))
+    with database.session() as connection:
+        connection.execute(
+            """
+            CREATE TABLE sandbox_execution_claims (
+                approval_id TEXT PRIMARY KEY,
+                source_sha256 TEXT NOT NULL,
+                status TEXT NOT NULL,
+                claimed_at TEXT NOT NULL,
+                finished_at TEXT
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO sandbox_execution_claims VALUES (?, ?, 'cancel_requested', ?, NULL)",
+            (approval["id"], approval["snapshot_sha256"], "2026-01-01T00:00:00+00:00"),
+        )
+
+    broker.persist_result(
+        approval["id"],
+        approval["snapshot_sha256"],
+        {"status": "failed", "exit_code": 137},
+    )
+    with database.session() as connection:
+        row = connection.execute(
+            "SELECT status, result_json FROM sandbox_execution_results WHERE approval_id = ?",
+            (approval["id"],),
+        ).fetchone()
+    assert row["status"] == "cancelled"
+    assert json.loads(row["result_json"])["status"] == "cancelled"
