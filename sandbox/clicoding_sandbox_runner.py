@@ -2,7 +2,11 @@
 """Root-owned, allowlisted multi-language CLICoding sandbox launcher."""
 from __future__ import annotations
 
-import fcntl
+try:
+    import fcntl
+except ImportError:  # Image-export tooling can import the inventory on Windows.
+    fcntl = None
+
 import hashlib
 import hmac
 import json
@@ -30,6 +34,7 @@ WORKSPACE_MEMORY_LIMIT = "2g"
 WORKSPACE_CPU_LIMIT = "2"
 WORKSPACE_PID_LIMIT = "128"
 NUGET_FEED_PATH = "/var/cache/clicoding-sandbox/nuget-feed"
+IMAGE_LOCK_PATH = "/etc/cds-ai/sandbox-image-lock.json"
 DOTNET_WORKSPACE_IMAGE = "mcr.microsoft.com/dotnet/sdk:10.0.402@sha256:747cbade5bfd918a175ac32f8f1d931edec2c7d0d5397a3de72eaef1ac1f66d2"
 MEMORY_LIMIT = "512m"
 CPU_LIMIT = "1"
@@ -254,8 +259,68 @@ def cleanup_container(cid_file: str, execution_id: str) -> None:
             pass
 
 
+
+def resolve_runtime_image(source_reference: str, required_lock: bool = False) -> str:
+    lock_path = Path(IMAGE_LOCK_PATH)
+    if not lock_path.exists():
+        if required_lock:
+            raise RequestError("root-owned sandbox image lock is missing")
+        return source_reference
+    if lock_path.is_symlink():
+        raise RequestError("sandbox image lock must not be a symlink")
+    metadata = lock_path.stat()
+    if metadata.st_uid != 0 or metadata.st_mode & 0o022:
+        raise RequestError("sandbox image lock must be root-owned and not group/world writable")
+    try:
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RequestError("sandbox image lock is invalid") from exc
+    if lock.get("format_version") != 1 or lock.get("platform") != "linux/arm64":
+        raise RequestError("sandbox image lock format or platform is unsupported")
+    entries = lock.get("images")
+    if not isinstance(entries, list):
+        raise RequestError("sandbox image lock has no image inventory")
+    entry = next(
+        (item for item in entries if item.get("source_reference") == source_reference),
+        None,
+    )
+    if entry is None:
+        raise RequestError("sandbox image is not present in the root-owned image lock")
+    local_tag = entry.get("local_tag")
+    image_id = entry.get("image_id")
+    if (
+        not isinstance(local_tag, str) or not local_tag
+        or not isinstance(image_id, str)
+        or not image_id.startswith("sha256:")
+        or len(image_id) != 71
+        or any(ch not in "0123456789abcdef" for ch in image_id[7:])
+    ):
+        raise RequestError("sandbox image lock entry is invalid")
+    try:
+        inspected = subprocess.run(
+            [
+                DOCKER, "image", "inspect", "--format",
+                "{{.Id}}|{{.Os}}/{{.Architecture}}", local_tag,
+            ],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            timeout=15, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RequestError("could not inspect the locked sandbox image") from exc
+    if inspected.returncode != 0:
+        raise RequestError(f"locked sandbox image is missing: {local_tag}")
+    actual_id, separator, platform_value = inspected.stdout.strip().partition("|")
+    if not separator or actual_id != image_id or platform_value != "linux/arm64":
+        raise RequestError(f"locked sandbox image identity/platform mismatch: {local_tag}")
+    return image_id
+
+
 def run_container(language: str, source: bytes) -> dict[str, Any]:
     runtime = RUNTIMES[language]
+    try:
+        image_reference = resolve_runtime_image(runtime["image"])
+    except RequestError as exc:
+        return {"status": "runtime_error", "error": str(exc)}
     execution_id = uuid.uuid4().hex
     cid_fd, cid_file = tempfile.mkstemp(prefix="runner-", dir="/run/clicoding-sandbox")
     os.close(cid_fd)
@@ -273,7 +338,7 @@ def run_container(language: str, source: bytes) -> dict[str, Any]:
         "--env", "DOTNET_CLI_TELEMETRY_OPTOUT=1", "--env", "NUGET_PACKAGES=/tmp/nuget",
         "--env", "DOTNET_GCHeapHardLimit=0x10000000",
         "--env", "JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=50 -XX:InitialRAMPercentage=10",
-        runtime["image"], *runtime["argv"],
+        image_reference, *runtime["argv"],
     ]
     started = time.monotonic()
     deadline = started + TIME_LIMIT_SECONDS
@@ -442,6 +507,14 @@ def run_bounded_container(
 
 def run_workspace(request: dict[str, Any]) -> dict[str, Any]:
     request = validate_workspace_request(request)
+    try:
+        image_reference = resolve_runtime_image(DOTNET_WORKSPACE_IMAGE)
+    except RequestError as exc:
+        return {
+            "status": "unavailable",
+            "error": str(exc),
+            "snapshot_sha256": request["snapshot_sha256"],
+        }
     feed = Path(NUGET_FEED_PATH)
     if not feed.is_dir() or feed.is_symlink():
         return {
@@ -520,7 +593,7 @@ def run_workspace(request: dict[str, Any]) -> dict[str, Any]:
             "--env", "DOTNET_GCHeapHardLimit=0x60000000",
             "--env", f"PROJECT_PATH={request['project_path']}",
             "--env", f"ACTION={request['action']}",
-            DOTNET_WORKSPACE_IMAGE,
+            image_reference,
             "sh", "-lc",
             (
                 "set -eu; mkdir -p /tmp/workspace /tmp/nuget; "
@@ -574,6 +647,8 @@ def main() -> int:
     if not Path(DOCKER).is_file():
         return emit({"status": "runner_error", "error": "Docker CLI not found"}, 2)
     try:
+        if fcntl is None:
+            raise RuntimeError("sandbox runner execution is supported only on Linux")
         request = read_request()
         with open("/run/lock/clicoding-sandbox.lock", "w", encoding="ascii") as lock_file:
             try:
