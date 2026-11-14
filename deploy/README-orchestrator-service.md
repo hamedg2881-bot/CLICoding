@@ -33,18 +33,16 @@ Do not install from the public package index. Do not use a wheelhouse built for 
 
 ## 2. Create service identities and directories
 
-Run only once, after approval:
+Run only once, after approval. The identity checks make this section safe to repeat; if an identity already exists, inspect its UID/GID and memberships rather than changing it blindly.
 
 ```bash
-sudo groupadd --system clicoding-sandbox
-sudo useradd --system --home-dir /var/lib/cds-ai --shell /usr/sbin/nologin cds-ai
+getent group clicoding-sandbox >/dev/null || sudo groupadd --system clicoding-sandbox
+id cds-ai >/dev/null 2>&1 || sudo useradd --system --home-dir /var/lib/cds-ai --shell /usr/sbin/nologin cds-ai
 sudo install -d -o root -g cds-ai -m 0750 /etc/cds-ai
 sudo install -d -o cds-ai -g cds-ai -m 0750 /var/lib/cds-ai
 sudo install -d -o root -g root -m 0755 /opt/ai/clicoding
 sudo install -d -o root -g root -m 0755 /opt/ai/clicoding/releases
 ```
-
-If either identity already exists, inspect it and do not recreate or change it blindly.
 
 ## 3. Install the exact release and Python dependencies
 
@@ -115,7 +113,7 @@ sudo systemd-analyze verify \
 
 ## 5. Install the existing single-file sandbox (only if separately approved)
 
-The sandbox is a separate privileged component. Follow [sandbox/README.md](../sandbox/README.md) to install the root-owned runner and broker, stage all pinned ARM64 images, and configure the broker. The broker and Orchestrator must point to the exact same SQLite database path.
+The sandbox is a separate privileged component. Follow [sandbox/README.md](../sandbox/README.md) to install the root-owned runner and broker, stage all pinned ARM64 images, and configure the broker. The broker and Orchestrator must point to the exact same SQLite database path: `/var/lib/cds-ai/clicoding.db`.
 
 The runner and broker now implement approved multi-file .NET 10 workspace Build/Test snapshots. This is source-level implementation only: do not enable IDE build/test tools until the exact ARM64 image lock, root-owned offline NuGet feed, sample-project restore/build/test and broker-backed Stop/cancel behavior pass on the target DGX.
 
@@ -144,13 +142,13 @@ Then run the API, conversation, streaming, cancellation, edit/regenerate, backup
 
 Before every upgrade:
 1. Record the current symlink target and running commit.
-2. Create and verify a database/attachment backup.
+2. Create and verify a backup using the exact production paths documented in [BACKUP_RESTORE.md](../docs/BACKUP_RESTORE.md): database `/var/lib/cds-ai/clicoding.db`, attachments `/var/lib/cds-ai/attachments`. Store the backup outside `/var/lib/cds-ai` and verify it before proceeding.
 3. Preserve the old release directory and exact previous environment/config revision.
 4. Install the new source and dependencies side-by-side; never overwrite the active release.
-5. Run tests and migration-on-copy against a copy of the production database.
+5. Run tests and migration-on-copy against a copy of the production database and its matching attachment directory.
 6. Switch the symlink and restart only after explicit approval.
 
-Code rollback is safe only if the prior application version is compatible with the migrated database schema. If not proven, stop the service and restore the verified pre-upgrade database/attachment backup using the documented restore procedure. Keep the old source release until the new version has passed the agreed observation period.
+Code rollback is safe only if the prior application version is compatible with the migrated database schema. If compatibility is not proven, stop **both** `cds-ai-orchestrator.service` and `clicoding-sandbox-broker.service`, restore the verified pre-upgrade database/attachment backup, verify the restored paths, then switch the symlink back and start services only after explicit approval. The broker shares the SQLite database and must not remain active during restore. Keep the old source release until the new version has passed the agreed observation period.
 
 ## 8. Explicitly out of scope for this service unit
 
