@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import selectors
 import subprocess
 import sys
@@ -280,16 +281,21 @@ def resolve_runtime_image(source_reference: str, required_lock: bool = False) ->
     entries = lock.get("images")
     if not isinstance(entries, list):
         raise RequestError("sandbox image lock has no image inventory")
-    entry = next(
-        (item for item in entries if item.get("source_reference") == source_reference),
-        None,
-    )
-    if entry is None:
-        raise RequestError("sandbox image is not present in the root-owned image lock")
+    if any(not isinstance(item, dict) for item in entries):
+        raise RequestError("sandbox image lock contains an invalid entry")
+    matches = [
+        item for item in entries
+        if item.get("source_reference") == source_reference
+    ]
+    if len(matches) != 1:
+        raise RequestError("sandbox image lock must contain exactly one matching source reference")
+    entry = matches[0]
     local_tag = entry.get("local_tag")
     image_id = entry.get("image_id")
     if (
-        not isinstance(local_tag, str) or not local_tag
+        not isinstance(local_tag, str)
+        or not re.fullmatch(r"clicoding-sandbox/[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*", local_tag)
+        or entry.get("platform") != "linux/arm64"
         or not isinstance(image_id, str)
         or not image_id.startswith("sha256:")
         or len(image_id) != 71
