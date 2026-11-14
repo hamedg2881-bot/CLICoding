@@ -8,6 +8,7 @@ import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import shutil
+import signal
 import sqlite3
 import subprocess
 import tempfile
@@ -494,7 +495,10 @@ class WorkspaceToolHost:
         tool_name: str,
         summary: str,
         require_approval: bool = True,
+        cancellation_event: threading.Event | None = None,
     ) -> dict[str, Any]:
+        if cancellation_event is not None and cancellation_event.is_set():
+            return {"status": "cancelled"}
         if require_approval and (self.approval is None or not self.approval(
             ToolApproval(
                 tool_name=tool_name,
@@ -504,6 +508,8 @@ class WorkspaceToolHost:
             )
         )):
             return {"status": "approval_denied", "command": command}
+        if cancellation_event is not None and cancellation_event.is_set():
+            return {"status": "cancelled"}
         executable = shutil.which(command[0])
         if executable is None:
             return {"status": "unavailable", "error": f"{command[0]} is not installed"}
@@ -518,36 +524,86 @@ class WorkspaceToolHost:
             if key in allowed_env_names
         }
         environment.update({"DOTNET_CLI_TELEMETRY_OPTOUT": "1", "DOTNET_NOLOGO": "1"})
+        popen_options: dict[str, Any] = {}
+        if os.name == "nt":
+            popen_options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            popen_options["start_new_session"] = True
+
+        process = None
+
+        def stop_process() -> tuple[str, str]:
+            if process is None:
+                return "", ""
+            try:
+                if os.name == "nt":
+                    process.terminate()
+                else:
+                    os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            except OSError:
+                try:
+                    process.terminate()
+                except OSError:
+                    pass
+            try:
+                return process.communicate(timeout=2)
+            except subprocess.TimeoutExpired:
+                try:
+                    if os.name == "nt":
+                        process.kill()
+                    else:
+                        os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                except OSError:
+                    try:
+                        process.kill()
+                    except OSError:
+                        pass
+                return process.communicate()
+
         try:
-            completed = subprocess.run(
-                command,
-                cwd=self.root,
-                env=environment,
-                capture_output=True,
-                text=True,
-                timeout=self.command_timeout_seconds,
-                check=False,
-                shell=False,
+            process = subprocess.Popen(
+                command, cwd=self.root, env=environment,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, shell=False, **popen_options,
             )
-            stdout = completed.stdout[-self.max_output_chars:]
-            stderr = completed.stderr[-self.max_output_chars:]
-            return {
-                "status": "ok" if completed.returncode == 0 else "failed",
-                "exit_code": completed.returncode,
-                "stdout": stdout,
-                "stderr": stderr,
-                "output_truncated": (
-                    len(completed.stdout) > self.max_output_chars
-                    or len(completed.stderr) > self.max_output_chars
-                ),
-            }
-        except subprocess.TimeoutExpired as exc:
-            return {
-                "status": "timeout",
-                "timeout_seconds": self.command_timeout_seconds,
-                "stdout": str(exc.stdout or "")[-self.max_output_chars:],
-                "stderr": str(exc.stderr or "")[-self.max_output_chars:],
-            }
+            deadline = time.monotonic() + self.command_timeout_seconds
+            while True:
+                if cancellation_event is not None and cancellation_event.is_set():
+                    stdout, stderr = stop_process()
+                    return {
+                        "status": "cancelled",
+                        "stdout": stdout[-self.max_output_chars:],
+                        "stderr": stderr[-self.max_output_chars:],
+                    }
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    stdout, stderr = stop_process()
+                    return {
+                        "status": "timeout",
+                        "timeout_seconds": self.command_timeout_seconds,
+                        "stdout": stdout[-self.max_output_chars:],
+                        "stderr": stderr[-self.max_output_chars:],
+                    }
+                try:
+                    stdout, stderr = process.communicate(timeout=min(0.1, remaining))
+                    return {
+                        "status": "ok" if process.returncode == 0 else "failed",
+                        "exit_code": process.returncode,
+                        "stdout": stdout[-self.max_output_chars:],
+                        "stderr": stderr[-self.max_output_chars:],
+                        "output_truncated": (
+                            len(stdout) > self.max_output_chars
+                            or len(stderr) > self.max_output_chars
+                        ),
+                    }
+                except subprocess.TimeoutExpired:
+                    continue
+        except OSError as exc:
+            return {"status": "failed", "error": f"{type(exc).__name__}: {str(exc)[:500]}"}
 
     def _dispatch(
         self,
@@ -578,6 +634,7 @@ class WorkspaceToolHost:
                 name,
                 "Read Git status",
                 require_approval=False,
+                cancellation_event=cancellation_event,
             )
         if name == "workspace_git_diff":
             command = ["git", "diff", "--no-ext-diff", "--no-color", "--"]
@@ -585,7 +642,8 @@ class WorkspaceToolHost:
                 path = self._safe_path(arguments["path"])
                 command.append(path.relative_to(self.root).as_posix())
             return self._run_fixed_command(
-                command, name, "Read Git diff", require_approval=False
+                command, name, "Read Git diff", require_approval=False,
+                cancellation_event=cancellation_event,
             )
         if name in {"workspace_dotnet_build", "workspace_dotnet_test"}:
             project = arguments.get("project")
@@ -601,5 +659,6 @@ class WorkspaceToolHost:
                 name,
                 "Build the approved .NET project" if name.endswith("build")
                 else "Run the approved .NET test project",
+                cancellation_event=cancellation_event,
             )
         raise ToolProtocolError(f"tool is not registered: {name}")
