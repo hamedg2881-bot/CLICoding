@@ -174,34 +174,6 @@ main{display:flex;flex-direction:column;min-width:0;height:100%;position:relativ
     if (typeof delta === "string") { assistantBubble.textContent += delta; scrollBottom(); }
     return false;
   }
-  async function send() {
-    const text=$("prompt").value.trim();
-    if (!text || state.busy) return;
-    state.busy=true; $("sendButton").disabled=true; $("stopButton").hidden=false; $("prompt").disabled=true;
-    const taskType=$("taskType").value;
-    let assistant, assistantBubble;
-    try {
-      const id=await ensureConversation();
-      addMessage("user",text);
-      const chat=state.chats.find(item=>item.id===id);
-      if (chat && chat.title === "گفت‌وگوی جدید") { chat.title=text.slice(0,42); persistIndex(); renderChatList(); }
-      $("prompt").value="";
-      const response=await api("/v1/chat/completions", {
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({model:"CDS_AI",task_type:taskType,stream:true,conversation_id:id,messages:[{role:"user",content:text}]})
-      });
-      assistant=addMessage("assistant","");
-      assistantBubble=assistant.bubble;
-      state.controller=new AbortController();
-      // Reissue with an abortable stream so Stop closes the HTTP stream as well.
-      // The first request is not sent twice: this controller is attached below in the fetch path.
-    } catch(error) {
-      addMessage("assistant","ارسال درخواست ناموفق بود: "+error.message);
-    } finally {
-      state.busy=false; state.controller=null; $("sendButton").disabled=false; $("stopButton").hidden=true; $("prompt").disabled=false; $("prompt").focus(); renderChatList();
-    }
-  }
   async function sendStreaming() {
     const text=$("prompt").value.trim();
     if (!text || state.busy) return;
