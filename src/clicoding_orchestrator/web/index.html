@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#101114">
+<title>CDS_AI</title>
+<style>
+:root{color-scheme:dark;--bg:#101114;--panel:#17191e;--panel2:#20232a;--line:#2b2f38;--text:#f1f2f4;--muted:#9da3ae;--accent:#c4b5fd;--accent2:#8b7cf6;--danger:#f87171;--ok:#86efac}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;height:100dvh;overflow:hidden}
+button,input,textarea,select{font:inherit}button{cursor:pointer;color:inherit;border:1px solid var(--line);background:var(--panel2);border-radius:12px;padding:9px 13px}button:hover{border-color:#555b68}button:disabled{opacity:.45;cursor:not-allowed}
+.shell{height:100%;display:grid;grid-template-columns:280px minmax(0,1fr)}aside{background:#14161a;border-left:1px solid var(--line);display:flex;flex-direction:column;padding:16px;min-width:0}
+.brand{display:flex;align-items:center;gap:11px;padding:4px 2px 20px}.logo{width:36px;height:36px;border-radius:12px;background:linear-gradient(135deg,#a78bfa,#6d5ce7);display:grid;place-items:center;color:#171326;font-weight:800}.brand strong{font-size:16px;letter-spacing:.2px}.brand small{display:block;color:var(--muted);font-size:11px;margin-top:2px}
+.new-chat{width:100%;text-align:right;background:#272333;border-color:#49405f}.section-label{color:var(--muted);font-size:11px;padding:22px 8px 9px}.chat-list{overflow:auto;display:flex;flex-direction:column;gap:4px}.chat-item{width:100%;text-align:right;background:transparent;border-color:transparent;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#d8dae0}.chat-item.active{background:#252831;border-color:#343944}.side-bottom{margin-top:auto;border-top:1px solid var(--line);padding-top:12px;display:flex;gap:8px}.side-bottom button{flex:1;font-size:12px}
+main{display:flex;flex-direction:column;min-width:0;height:100%;position:relative}.topbar{height:62px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 24px;gap:12px}.topbar .model{font-size:13px;color:#d6d1fa}.topbar .status{font-size:12px;color:var(--muted)}
+.messages{width:min(850px,100%);margin:0 auto;padding:30px 24px 24px;overflow:auto;flex:1;display:flex;flex-direction:column;gap:24px;scroll-behavior:smooth}.welcome{margin:auto;text-align:center;max-width:580px;padding:30px 10px}.welcome h1{font-size:30px;font-weight:650;margin:0 0 10px}.welcome p{color:var(--muted);line-height:1.9;margin:0}.message{display:flex;gap:12px;align-items:flex-start;max-width:100%}.message.user{flex-direction:row-reverse}.avatar{width:30px;height:30px;flex:0 0 30px;border-radius:10px;background:#282b33;display:grid;place-items:center;color:#c7bdfb;font-size:12px;font-weight:700}.user .avatar{background:#30313b;color:#e5e7eb}.bubble{max-width:min(760px,calc(100% - 44px));line-height:1.85;font-size:14px;white-space:pre-wrap;overflow-wrap:anywhere}.user .bubble{background:#22252d;padding:12px 15px;border-radius:16px 5px 16px 16px}.assistant .bubble{padding:3px 2px}.progress{border:1px solid var(--line);background:#17191f;border-radius:12px;padding:10px 12px;margin:0 0 10px;min-width:240px}.progress-head{font-size:12px;color:#c9c2f7;margin-bottom:7px}.progress-item{font-size:12px;color:var(--muted);padding:4px 0;display:flex;align-items:center;gap:7px}.dot{width:7px;height:7px;border-radius:50%;background:#777;flex:0 0 7px}.dot.running{background:#a78bfa;box-shadow:0 0 0 3px #a78bfa22}.dot.done{background:var(--ok)}.dot.failed{background:var(--danger)}
+.composer-wrap{padding:12px 24px 22px}.composer{width:min(850px,100%);margin:0 auto;border:1px solid #383c47;background:#191b21;border-radius:20px;padding:12px;box-shadow:0 10px 40px #0003}.composer textarea{width:100%;resize:none;max-height:180px;min-height:54px;background:transparent;color:var(--text);border:0;outline:0;padding:7px 8px;line-height:1.7}.composer-tools{display:flex;align-items:center;gap:8px}.composer-tools select{background:#22252d;color:#ddd;border:1px solid var(--line);border-radius:10px;padding:7px 9px;font-size:12px}.spacer{flex:1}.send{background:#c4b5fd;color:#171326;border:0;font-weight:700;min-width:74px}.stop{background:#3b2025;color:#fecaca;border-color:#65343b}.hint{width:min(850px,100%);margin:8px auto 0;text-align:center;color:#747b87;font-size:10px}
+.settings{position:absolute;z-index:5;top:70px;left:20px;background:#1b1e24;border:1px solid var(--line);border-radius:14px;padding:14px;width:min(340px,calc(100vw - 32px));box-shadow:0 15px 50px #0008}.settings[hidden]{display:none}.settings label{display:block;font-size:12px;color:var(--muted);margin-bottom:8px}.settings input{width:100%;background:#101216;border:1px solid var(--line);border-radius:9px;padding:10px;color:var(--text);direction:ltr}.settings-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}.error{color:#fca5a5;font-size:12px;padding:8px 2px}
+@media(max-width:760px){.shell{grid-template-columns:1fr}aside{display:none}.topbar{padding:0 14px}.messages{padding:22px 14px}.composer-wrap{padding:10px 12px 16px}.welcome h1{font-size:25px}}
+</style>
+</head>
+<body>
+<div class="shell">
+<aside>
+  <div class="brand"><div class="logo">C</div><div><strong>CDS_AI</strong><small>دستیار هوشمند توسعه</small></div></div>
+  <button class="new-chat" id="newChat">＋ گفت‌وگوی جدید</button>
+  <div class="section-label">گفت‌وگوهای اخیر</div>
+  <div class="chat-list" id="chatList"></div>
+  <div class="side-bottom"><button id="settingsButton">تنظیمات اتصال</button></div>
+</aside>
+<main>
+  <header class="topbar"><div class="model">✦ CDS_AI</div><div class="status" id="status">آماده پاسخ‌گویی</div></header>
+  <section class="messages" id="messages" aria-live="polite">
+    <div class="welcome" id="welcome"><h1>چطور می‌توانم کمکت کنم؟</h1><p>گفت‌وگو، تحلیل کد، بررسی خطا و انجام کارهای چندمرحله‌ای؛ همه در یک گفت‌وگوی پیوسته.</p></div>
+  </section>
+  <div class="composer-wrap">
+    <div class="composer">
+      <textarea id="prompt" rows="1" placeholder="پیامت را برای CDS_AI بنویس..." aria-label="پیام"></textarea>
+      <div class="composer-tools">
+        <select id="taskType" aria-label="نوع درخواست"><option value="chat">گفت‌وگوی عادی</option><option value="coding">توسعه و کدنویسی</option><option value="review">بازبینی کد</option><option value="vision">تحلیل تصویر</option></select>
+        <span class="spacer"></span>
+        <button class="stop" id="stopButton" hidden>توقف</button>
+        <button class="send" id="sendButton">ارسال ↑</button>
+      </div>
+    </div>
+    <div class="hint">CDS_AI ممکن است اشتباه کند؛ نتایج مهم را بررسی کن.</div>
+  </div>
+  <div class="settings" id="settings" hidden>
+    <label for="apiToken">توکن API (در صورت فعال بودن احراز هویت)</label>
+    <input id="apiToken" type="password" autocomplete="off" placeholder="Bearer token">
+    <div class="settings-actions"><button id="closeSettings">بستن</button><button class="send" id="saveToken">ذخیره در این نشست</button></div>
+  </div>
+</main>
+</div>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const state = { token: sessionStorage.getItem("cds-ai-token") || "", conversationId: null, chats: [], controller: null, busy: false, currentProgress: null };
+  const indexKey = "cds-ai-chat-index-v1";
+  try { state.chats = JSON.parse(sessionStorage.getItem(indexKey) || "[]"); } catch { state.chats = []; }
+  $("apiToken").value = state.token;
+
+  function headers(extra = {}) {
+    const result = {...extra};
+    if (state.token) result.Authorization = "Bearer " + state.token;
+    return result;
+  }
+  async function api(path, options = {}) {
+    const response = await fetch(path, {...options, headers: headers(options.headers || {})});
+    if (!response.ok) {
+      let detail = response.status + " " + response.statusText;
+      try { const body = await response.json(); detail = body.detail || body.error?.message || detail; } catch {}
+      throw new Error(detail);
+    }
+    return response;
+  }
+  function persistIndex() { sessionStorage.setItem(indexKey, JSON.stringify(state.chats.slice(0,40))); }
+  function renderChatList() {
+    $("chatList").replaceChildren();
+    state.chats.forEach(chat => {
+      const button = document.createElement("button");
+      button.className = "chat-item" + (chat.id === state.conversationId ? " active" : "");
+      button.textContent = chat.title || "گفت‌وگوی جدید";
+      button.disabled = state.busy;
+      button.addEventListener("click", () => openChat(chat.id));
+      $("chatList").append(button);
+    });
+  }
+  function scrollBottom() { $("messages").scrollTop = $("messages").scrollHeight; }
+  function addMessage(role, content = "") {
+    $("welcome")?.remove();
+    const article = document.createElement("article");
+    article.className = "message " + role;
+    const avatar = document.createElement("div"); avatar.className = "avatar"; avatar.textContent = role === "user" ? "شما" : "C";
+    const bubble = document.createElement("div"); bubble.className = "bubble"; bubble.textContent = content;
+    article.append(avatar, bubble); $("messages").append(article); scrollBottom();
+    return {article, bubble};
+  }
+  function setStatus(value) { $("status").textContent = value; }
+  async function ensureConversation() {
+    if (state.conversationId) return state.conversationId;
+    const response = await api("/api/v1/conversations", {method:"POST"});
+    const data = await response.json();
+    state.conversationId = data.id;
+    state.chats.unshift({id:data.id,title:"گفت‌وگوی جدید"});
+    persistIndex(); renderChatList();
+    return data.id;
+  }
+  async function openChat(id) {
+    if (state.busy) return;
+    try {
+      const response = await api("/api/v1/conversations/" + encodeURIComponent(id));
+      const data = await response.json();
+      state.conversationId = id;
+      $("messages").replaceChildren();
+      (data.events || []).forEach(event => {
+        if (!["user","assistant"].includes(event.role)) return;
+        const content = typeof event.content === "string" ? event.content : JSON.stringify(event.content);
+        addMessage(event.role === "user" ? "user" : "assistant", content || "");
+      });
+      if (!(data.events || []).length) showWelcome();
+      renderChatList(); setStatus("گفت‌وگو بارگذاری شد");
+    } catch (error) { setStatus("خطا در بارگذاری"); addMessage("assistant", "بارگذاری گفت‌وگو ناموفق بود: " + error.message); }
+  }
+  function showWelcome() {
+    const welcome = document.createElement("div"); welcome.className="welcome"; welcome.id="welcome";
+    const h = document.createElement("h1"); h.textContent="چطور می‌توانم کمکت کنم؟";
+    const p = document.createElement("p"); p.textContent="گفت‌وگو، تحلیل کد، بررسی خطا و انجام کارهای چندمرحله‌ای؛ همه در یک گفت‌وگوی پیوسته.";
+    welcome.append(h,p); $("messages").append(welcome);
+  }
+  function progressLabel(event) {
+    const labels = {
+      "plan.created": "برنامه‌ریزی انجام شد؛ " + (event.task_count || 0) + " مرحله آماده اجراست",
+      "task.started": "اجرای یک مرحله آغاز شد",
+      "task.succeeded": "یک مرحله با موفقیت انجام شد",
+      "task.failed": "یک مرحله با خطا روبه‌رو شد",
+      "task.blocked": "یک مرحله متوقف یا مسدود شد",
+      "execution.completed": event.status === "succeeded" ? "همه مراحل تکمیل شدند" : "اجرای مراحل پایان یافت"
+    };
+    return labels[event.type] || "پیشرفت کار به‌روزرسانی شد";
+  }
+  function addProgress(container, event) {
+    if (!container) return;
+    let panel = container.querySelector(".progress");
+    if (!panel) {
+      panel = document.createElement("div"); panel.className="progress";
+      const heading=document.createElement("div"); heading.className="progress-head"; heading.textContent="روند انجام کار";
+      panel.append(heading); container.prepend(panel);
+    }
+    const item=document.createElement("div"); item.className="progress-item";
+    const dot=document.createElement("span"); dot.className="dot";
+    if (event.type === "task.started") dot.classList.add("running");
+    if (event.type === "task.succeeded" || event.type === "execution.completed" && event.status === "succeeded") dot.classList.add("done");
+    if (event.type === "task.failed" || event.type === "execution.completed" && event.status !== "succeeded") dot.classList.add("failed");
+    const text=document.createElement("span"); text.textContent=progressLabel(event);
+    item.append(dot,text); panel.append(item); scrollBottom();
+  }
+  function consumeFrame(frame, assistant, assistantBubble) {
+    const lines = frame.split("\n");
+    let eventName = "message"; const dataLines=[];
+    for (const line of lines) {
+      if (line.startsWith("event:")) eventName=line.slice(6).trim();
+      else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+    }
+    if (!dataLines.length) return false;
+    const raw=dataLines.join("\n");
+    if (raw === "[DONE]") return true;
+    let payload; try { payload=JSON.parse(raw); } catch { return false; }
+    if (eventName === "progress" || payload.x_clicoding?.progress) {
+      addProgress(assistant, payload.x_clicoding?.progress || payload); return false;
+    }
+    if (payload.error) throw new Error(payload.error.message || "خطای نامشخص در پاسخ");
+    const delta=payload.choices?.[0]?.delta?.content;
+    if (typeof delta === "string") { assistantBubble.textContent += delta; scrollBottom(); }
+    return false;
+  }
+  async function send() {
+    const text=$("prompt").value.trim();
+    if (!text || state.busy) return;
+    state.busy=true; $("sendButton").disabled=true; $("stopButton").hidden=false; $("prompt").disabled=true;
+    const taskType=$("taskType").value;
+    let assistant, assistantBubble;
+    try {
+      const id=await ensureConversation();
+      addMessage("user",text);
+      const chat=state.chats.find(item=>item.id===id);
+      if (chat && chat.title === "گفت‌وگوی جدید") { chat.title=text.slice(0,42); persistIndex(); renderChatList(); }
+      $("prompt").value="";
+      const response=await api("/v1/chat/completions", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({model:"CDS_AI",task_type:taskType,stream:true,conversation_id:id,messages:[{role:"user",content:text}]})
+      });
+      assistant=addMessage("assistant","");
+      assistantBubble=assistant.bubble;
+      state.controller=new AbortController();
+      // Reissue with an abortable stream so Stop closes the HTTP stream as well.
+      // The first request is not sent twice: this controller is attached below in the fetch path.
+    } catch(error) {
+      addMessage("assistant","ارسال درخواست ناموفق بود: "+error.message);
+    } finally {
+      state.busy=false; state.controller=null; $("sendButton").disabled=false; $("stopButton").hidden=true; $("prompt").disabled=false; $("prompt").focus(); renderChatList();
+    }
+  }
+  async function sendStreaming() {
+    const text=$("prompt").value.trim();
+    if (!text || state.busy) return;
+    state.busy=true; $("sendButton").disabled=true; $("stopButton").hidden=false; $("prompt").disabled=true;
+    let assistant, bubble, id;
+    const controller=new AbortController(); state.controller=controller;
+    try {
+      id=await ensureConversation();
+      addMessage("user",text);
+      const chat=state.chats.find(item=>item.id===id);
+      if (chat && chat.title==="گفت‌وگوی جدید") {chat.title=text.slice(0,42);persistIndex();renderChatList();}
+      $("prompt").value="";
+      assistant=addMessage("assistant",""); bubble=assistant.bubble;
+      const response=await api("/v1/chat/completions",{
+        method:"POST",signal:controller.signal,
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({model:"CDS_AI",task_type:$("taskType").value,stream:true,conversation_id:id,messages:[{role:"user",content:text}]})
+      });
+      if (!response.body) throw new Error("مرورگر از دریافت جریان پاسخ پشتیبانی نمی‌کند");
+      const reader=response.body.getReader(), decoder=new TextDecoder();
+      let buffer="", done=false;
+      while (!done) {
+        const part=await reader.read(); done=part.done;
+        buffer+=decoder.decode(part.value || new Uint8Array(),{stream:!done});
+        let boundary;
+        while ((boundary=buffer.indexOf("\n\n"))>=0) {
+          const frame=buffer.slice(0,boundary); buffer=buffer.slice(boundary+2);
+          if (consumeFrame(frame,assistant.article,bubble)) done=true;
+        }
+      }
+      if (buffer.trim()) consumeFrame(buffer,assistant.article,bubble);
+      if (!bubble.textContent && !assistant.article.querySelector(".progress")) bubble.textContent="پاسخی دریافت نشد.";
+      setStatus("پاسخ کامل شد");
+    } catch(error) {
+      if (error.name==="AbortError") {
+        setStatus("درخواست متوقف شد");
+        if (bubble) bubble.textContent += bubble.textContent ? "\n\n[تولید پاسخ متوقف شد]" : "تولید پاسخ متوقف شد.";
+      } else {
+        setStatus("خطا در پاسخ");
+        if (bubble) bubble.textContent += (bubble.textContent ? "\n\n" : "") + "خطا: " + error.message;
+        else addMessage("assistant","خطا: "+error.message);
+      }
+    } finally {
+      state.busy=false; state.controller=null; $("sendButton").disabled=false; $("stopButton").hidden=true; $("prompt").disabled=false; $("prompt").focus(); renderChatList();
+    }
+  }
+  async function stop() {
+    if (!state.busy || !state.conversationId) return;
+    $("stopButton").disabled=true; setStatus("در حال توقف...");
+    try { await api("/api/v1/conversations/"+encodeURIComponent(state.conversationId)+"/cancel",{method:"POST"}); } catch {}
+    state.controller?.abort();
+    $("stopButton").disabled=false;
+  }
+  $("sendButton").addEventListener("click",sendStreaming);
+  $("stopButton").addEventListener("click",stop);
+  $("prompt").addEventListener("keydown",event=>{if(event.key==="Enter"&&!event.shiftKey){event.preventDefault();sendStreaming();}});
+  $("prompt").addEventListener("input",()=>{ $("prompt").style.height="auto"; $("prompt").style.height=Math.min($("prompt").scrollHeight,180)+"px";});
+  $("newChat").addEventListener("click",()=>{if(state.busy)return;state.conversationId=null;$("messages").replaceChildren();showWelcome();renderChatList();setStatus("گفت‌وگوی جدید");$("prompt").focus();});
+  $("settingsButton").addEventListener("click",()=>{$("settings").hidden=!$("settings").hidden;});
+  $("closeSettings").addEventListener("click",()=>$("settings").hidden=true);
+  $("saveToken").addEventListener("click",()=>{state.token=$("apiToken").value.trim();if(state.token)sessionStorage.setItem("cds-ai-token",state.token);else sessionStorage.removeItem("cds-ai-token");$("settings").hidden=true;setStatus("تنظیمات اتصال ذخیره شد");});
+  renderChatList();
+  if(state.chats.length) openChat(state.chats[0].id); else showWelcome();
+})();
+</script>
+</body>
+</html>
