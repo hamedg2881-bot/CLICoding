@@ -105,9 +105,10 @@ def test_legacy_schema_migrations_preserve_records_and_are_idempotent(tmp_path):
         assert connection.execute(
             "SELECT content FROM conversation_events WHERE id = 'event-1'"
         ).fetchone()["content"] == "legacy event"
-        assert connection.execute(
+        legacy_approval = connection.execute(
             "SELECT language, source, status FROM sandbox_approvals WHERE id = 'approval-1'"
-        ).fetchone() == ("python", "print(1)", "approved")
+        ).fetchone()
+        assert tuple(legacy_approval) == ("python", "print(1)", "approved")
 
         connection.execute(
             """
