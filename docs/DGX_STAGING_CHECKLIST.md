@@ -83,24 +83,47 @@ The CI workflow builds the complete project plus test-dependency wheelhouse on a
 
 The sandbox requires the exact pinned ARM64 images in `sandbox/clicoding_sandbox_runner.py`, including the locally built TypeScript image. Do not pull these images on the DGX during offline deployment.
 
-On an internet-connected staging workstation with Docker and Buildx (native ARM64 is preferred; Docker Desktop must support `linux/arm64`), extract the transfer bundle, then extract its source archive and run:
+On a Windows staging workstation with Docker Desktop using **Linux containers**, Python 3 and Docker Buildx, download the exact transfer bundle from the successful Push workflow for the reviewed commit.
 
-```bash
-mkdir -p source
-unzip -q CDS_AI_<12-char-sha>.zip -d source
+First unpack the outer transfer bundle and verify the inner files. Then extract the source ZIP so the PowerShell script is available:
+
+~~~powershell
+$bundle = (Resolve-Path .\CDS_AI-transfer-bundle-d776.tar.gz).Path
+$work = Join-Path $PWD "CDS-AI-unpack"
+New-Item -ItemType Directory -Force $work | Out-Null
+tar.exe -xzf $bundle -C $work
+Set-Location $work
+Get-Content .\TRANSFER_MANIFEST.txt
+Get-FileHash .\CDS_AI_d776ba222a34.zip -Algorithm SHA256
+Get-FileHash .\CDS_AI-wheelhouse-cp312-arm64-d776ba222a34.tar.gz -Algorithm SHA256
+Expand-Archive .\CDS_AI_d776ba222a34.zip -DestinationPath .\source
+~~~
+
+Compare both hashes with the matching .sha256 sidecars before continuing. The expected commit is d776ba222a34cb33e23bbe890694cc24bd3abb0d.
+
+Run the staging script included in the extracted source:
+
+~~~powershell
+$out = Join-Path $PWD "DGX-transfer-d776"
+powershell -ExecutionPolicy Bypass -File .\source\CDS_AI\scripts\prepare_dgx_transfer.ps1 -BundlePath $bundle -OutputDirectory $out
+~~~
+
+The script verifies the outer bundle SHA-256, commit, inner source/wheelhouse checksums and ARM64 Buildx support. It pulls all pinned upstream images for linux/arm64, builds the repository-pinned TypeScript image, exports the local image archive and immutable image lock, then verifies generated checksums. It does not contact the DGX.
+
+If staging is performed on Linux instead, use the equivalent command from the extracted source tree:
+
+~~~bash
 python source/CDS_AI/scripts/export_sandbox_images.py \
-  --pull \
-  --build-typescript \
+  --pull --build-typescript \
   --output dist/clicoding-sandbox-images-arm64.tar
-```
+~~~
 
-This pulls the pinned upstream images for ARM64, builds `clicoding-typescript:7.0.2` from the repository Dockerfile and pinned Node base image, tags every image under a transfer-local name, and writes:
-- `clicoding-sandbox-images-arm64.tar`
-- `clicoding-sandbox-images-arm64.tar.sha256`
-- `sandbox-image-lock.json`
-- `sandbox-image-lock.json.sha256`
+The output directory must contain six files:
+- CDS_AI-transfer-bundle-d776.tar.gz and its .sha256 sidecar;
+- clicoding-sandbox-images-arm64.tar and its .sha256 sidecar;
+- sandbox-image-lock.json and its .sha256 sidecar.
 
-The lock records the source reference, local transfer tag, immutable Docker image ID and ARM64 platform. Transfer all four files to the DGX. The image archive may be large; ensure sufficient staging disk space.
+The image archive may be large; ensure sufficient staging disk space. Keep the complete output directory intact for WinSCP transfer.
 
 After explicit deployment approval, transfer all four files to `$release_root/incoming/`, then load the archive and install the lock:
 
