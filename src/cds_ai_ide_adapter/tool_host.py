@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
+import secrets
 import shutil
 import signal
 import sqlite3
@@ -340,6 +341,165 @@ class WorkspaceToolHost:
             raise PermissionError("access to secret or credential files is blocked")
         return resolved
 
+    def _open_parent_fd(self, relative_path: str) -> tuple[int, str]:
+        """Open a workspace parent by directory descriptors without following symlinks."""
+        self._safe_path(relative_path)
+        parts = PurePosixPath(relative_path).parts
+        parts = tuple(part for part in parts if part != ".")
+        if not parts:
+            raise ValueError("path must identify a file inside the workspace")
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        parent_fd = os.open(self.root, flags)
+        try:
+            for part in parts[:-1]:
+                next_fd = os.open(part, flags, dir_fd=parent_fd)
+                os.close(parent_fd)
+                parent_fd = next_fd
+            return parent_fd, parts[-1]
+        except Exception:
+            os.close(parent_fd)
+            raise
+
+    def _read_file_posix(self, relative_path: str) -> dict[str, Any]:
+        parent_fd, name = self._open_parent_fd(relative_path)
+        try:
+            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+            file_fd = os.open(name, flags, dir_fd=parent_fd)
+            try:
+                metadata = os.fstat(file_fd)
+                if not __import__("stat").S_ISREG(metadata.st_mode):
+                    raise ValueError("path must identify a regular file")
+                if metadata.st_size > self.max_file_bytes:
+                    raise ValueError(f"file exceeds the {self.max_file_bytes}-byte read limit")
+                chunks = []
+                remaining = self.max_file_bytes + 1
+                while remaining:
+                    chunk = os.read(file_fd, min(65536, remaining))
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+                raw = b"".join(chunks)
+                if len(raw) > self.max_file_bytes:
+                    raise ValueError(f"file exceeds the {self.max_file_bytes}-byte read limit")
+            finally:
+                os.close(file_fd)
+        finally:
+            os.close(parent_fd)
+        try:
+            content = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError("only UTF-8 text files can be read") from exc
+        return {
+            "status": "ok",
+            "path": PurePosixPath(relative_path).as_posix(),
+            "content": content,
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "bytes": len(raw),
+        }
+
+    def _write_file_posix(
+        self,
+        relative_path: str,
+        content: str,
+        expected_sha256: str | None,
+        cancellation_event: threading.Event | None,
+    ) -> dict[str, Any]:
+        parent_fd, name = self._open_parent_fd(relative_path)
+        temporary = None
+        try:
+            before_sha = None
+            try:
+                existing_fd = os.open(
+                    name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=parent_fd
+                )
+            except FileNotFoundError:
+                exists = False
+            else:
+                exists = True
+                try:
+                    metadata = os.fstat(existing_fd)
+                    if not __import__("stat").S_ISREG(metadata.st_mode):
+                        raise ValueError("target must be a regular file")
+                    if metadata.st_size > 10_000_000:
+                        raise ValueError("existing file is too large to replace safely")
+                    if expected_sha256 is None:
+                        raise ValueError("expected_sha256 is required before overwriting an existing file")
+                    digest = hashlib.sha256()
+                    while True:
+                        chunk = os.read(existing_fd, 65536)
+                        if not chunk:
+                            break
+                        digest.update(chunk)
+                    before_sha = digest.hexdigest()
+                finally:
+                    os.close(existing_fd)
+                if before_sha != expected_sha256:
+                    return {"status": "conflict", "error": "file changed since it was read"}
+            if not exists and expected_sha256 is not None:
+                return {"status": "conflict", "error": "expected existing file is missing"}
+
+            after_sha = hashlib.sha256(content.encode("utf-8")).hexdigest()
+            approval = ToolApproval(
+                tool_name="workspace_write_file",
+                workspace_id=self.workspace_id,
+                summary=f"Write {PurePosixPath(relative_path).as_posix()}",
+                details={
+                    "path": PurePosixPath(relative_path).as_posix(),
+                    "before_sha256": before_sha,
+                    "after_sha256": after_sha,
+                    "bytes": len(content.encode("utf-8")),
+                    "content_preview": content[:4000],
+                },
+            )
+            if self.approval is None or not self.approval(approval):
+                return {"status": "approval_denied", "path": relative_path}
+            if cancellation_event is not None and cancellation_event.is_set():
+                return {"status": "cancelled", "path": relative_path}
+
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+            for _ in range(10):
+                candidate = f".cds-ai-{secrets.token_hex(12)}"
+                try:
+                    temp_fd = os.open(candidate, flags, 0o600, dir_fd=parent_fd)
+                    temporary = candidate
+                    break
+                except FileExistsError:
+                    continue
+            else:
+                raise FileExistsError("could not allocate a unique workspace temporary file")
+            with os.fdopen(temp_fd, "w", encoding="utf-8", newline="") as stream:
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+            if cancellation_event is not None and cancellation_event.is_set():
+                return {"status": "cancelled", "path": relative_path}
+            # Re-check the leaf without following links immediately before atomic replacement.
+            try:
+                current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                current = None
+            if current is not None and not __import__("stat").S_ISREG(current.st_mode):
+                raise ValueError("target must remain a regular file")
+            os.replace(
+                temporary, name,
+                src_dir_fd=parent_fd, dst_dir_fd=parent_fd,
+            )
+            temporary = None
+            return {
+                "status": "ok",
+                "path": PurePosixPath(relative_path).as_posix(),
+                "sha256": after_sha,
+                "bytes": len(content.encode("utf-8")),
+            }
+        finally:
+            if temporary is not None:
+                try:
+                    os.unlink(temporary, dir_fd=parent_fd)
+                except FileNotFoundError:
+                    pass
+            os.close(parent_fd)
+
     @classmethod
     def _is_sensitive(cls, path: Path) -> bool:
         name = path.name.lower()
@@ -373,6 +533,8 @@ class WorkspaceToolHost:
         return {"status": "ok", "files": found, "truncated": False}
 
     def _read_file(self, relative_path: str) -> dict[str, Any]:
+        if os.name != "nt" and os.open in getattr(os, "supports_dir_fd", set()):
+            return self._read_file_posix(relative_path)
         path = self._safe_path(relative_path, must_exist=True)
         if not path.is_file():
             raise ValueError("path must identify a regular file")
@@ -432,6 +594,10 @@ class WorkspaceToolHost:
     ) -> dict[str, Any]:
         if not isinstance(content, str) or len(content.encode("utf-8")) > 300_000:
             raise ValueError("file content exceeds the 300000-byte write limit")
+        if os.name != "nt" and os.open in getattr(os, "supports_dir_fd", set()):
+            return self._write_file_posix(
+                relative_path, content, expected_sha256, cancellation_event
+            )
         target = self._safe_path(relative_path)
         if target == self.root or not target.parent.is_dir():
             raise ValueError("target parent directory must already exist inside the workspace")
