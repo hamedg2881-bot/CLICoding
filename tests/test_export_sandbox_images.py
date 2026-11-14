@@ -84,14 +84,19 @@ def test_lock_only_prepares_images_without_docker_save(tmp_path, monkeypatch):
         DOTNET_WORKSPACE_IMAGE="registry.example/dotnet@sha256:" + "c" * 64,
     )
     commands = []
+    local_images = {}
 
     def fake_run(command, timeout=1800):
         commands.append(command)
         if command[:3] == ["docker", "run", "--rm"]:
             return "Version 7.0.2"
+        if command[:2] == ["docker", "tag"]:
+            local_images[command[3]] = command[2]
         return ""
 
     def fake_inspect(docker, reference):
+        if reference in local_images:
+            return local_images[reference], "linux/arm64", []
         digest = hashlib.sha256(reference.encode()).hexdigest()
         repo_digests = (
             [reference] if "@sha256:" in reference else []
