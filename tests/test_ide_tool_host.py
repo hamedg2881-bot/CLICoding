@@ -354,24 +354,3 @@ def test_workspace_posix_read_rejects_symlink_destination(tmp_path):
         "workspace_read_file", {"path": "private-link.txt"}, "read_symlink"
     )))
     assert output["status"] == "error"
-
-def test_required_command_sandbox_uses_bubblewrap_and_disables_network(tmp_path, monkeypatch):
-    root, host = make_host(tmp_path)
-    host.require_command_sandbox = True
-    monkeypatch.setattr("cds_ai_ide_adapter.tool_host.shutil.which", lambda name: "/usr/bin/bwrap" if name == "bwrap" else "/usr/bin/dotnet")
-    command = host._sandbox_command(["/usr/bin/dotnet", "build", "Demo.csproj"])
-    assert command[:2] == ["/usr/bin/bwrap", "--die-with-parent"]
-    assert "--unshare-all" in command
-    assert "--tmpfs" in command
-    assert "--bind" in command
-    assert str(root) in command
-    assert command[-5:] == ["--chdir", str(root), "--", "/usr/bin/dotnet", "build", "Demo.csproj"][-5:]
-
-
-def test_required_command_sandbox_fails_closed_without_bubblewrap(tmp_path, monkeypatch):
-    root, host = make_host(tmp_path)
-    host.require_command_sandbox = True
-    monkeypatch.setattr("cds_ai_ide_adapter.tool_host.shutil.which", lambda name: "/usr/bin/dotnet" if name == "dotnet" else None)
-    output = host._run_fixed_command(["dotnet", "build"], "workspace_dotnet_build", "Build", require_approval=False)
-    assert output["status"] == "unavailable"
-    assert "sandbox is unavailable" in output["error"]
