@@ -362,6 +362,8 @@ def test_code_artifact_contract_triggers_one_repair_attempt(tmp_path):
             ]
         )
 
+        captured = {}
+
         class RepairGateway:
             def __init__(self, worker_id):
                 self.worker_id = worker_id
@@ -369,6 +371,8 @@ def test_code_artifact_contract_triggers_one_repair_attempt(tmp_path):
 
             async def complete(self, messages):
                 self.calls += 1
+                if self.worker_id == "coding-primary" and self.calls == 2:
+                    captured["repair_messages"] = messages
                 if self.worker_id == "fast-reasoning" and self.calls > 1:
                     return Completion(
                         "Implementation:\n\n```python\n"
@@ -417,11 +421,26 @@ def test_code_artifact_contract_triggers_one_repair_attempt(tmp_path):
         orchestrator = MultiModelOrchestrator(
             db, CapabilityRouter(registry), gateway_factory=gateway_factory
         )
+        original_request = (
+            "Write a Python duplicate finder. Preserve this exact expected value: "
+            "{2: 2, 3: 3}; explain in Persian."
+        )
+        prior_context = "Earlier decision: retain API name duplicate_lookup_v2."
         result = await orchestrator.run(
-            conversation["id"], "Write a Python duplicate finder"
+            conversation["id"], original_request, prior_context
         )
 
         assert result.execution.succeeded
+        repair_system = captured["repair_messages"][0]["content"]
+        repair_user = captured["repair_messages"][1]["content"]
+        assert original_request in repair_user
+        assert "Return complete Python source code" in repair_user
+        assert "{2: 2, 3: 3}" in repair_user
+        assert "explain in Persian" in repair_user
+        assert prior_context in repair_user
+        assert "preserving the entire original task contract" in repair_system
+        assert "Previous incomplete response" in repair_user
+        assert "The function counts values" in repair_user
         assert "def find_duplicates" in result.answer
         assert gateways["coding-primary"].calls == 2
         saved = db.get_execution(result.execution_id)
