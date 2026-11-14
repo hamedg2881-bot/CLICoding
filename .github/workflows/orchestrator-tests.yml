@@ -62,3 +62,59 @@ jobs:
           path: dist/*
           if-no-files-found: error
           retention-days: 30
+
+  wheelhouse-arm64:
+    needs: test
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12.3"
+          cache: pip
+      - name: Build offline CPython 3.12 ARM64 wheelhouse
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          mkdir -p dist/wheelhouse
+          python -m pip wheel --only-binary=:all: --wheel-dir dist/wheelhouse ".[test]"
+          python - <<'PY'
+          import hashlib, json, platform, sys
+          from pathlib import Path
+          wheels = sorted(Path("dist/wheelhouse").glob("*.whl"))
+          if not wheels:
+              raise SystemExit("wheelhouse is empty")
+          manifest = {
+              "format_version": 1,
+              "python": sys.version,
+              "implementation": sys.implementation.name,
+              "machine": platform.machine(),
+              "platform": platform.platform(),
+              "wheels": [
+                  {
+                      "file": p.name,
+                      "size": p.stat().st_size,
+                      "sha256": hashlib.sha256(p.read_bytes()).hexdigest(),
+                  }
+                  for p in wheels
+              ],
+          }
+          if manifest["machine"] not in {"aarch64", "arm64"}:
+              raise SystemExit(f"unexpected wheelhouse architecture: {manifest['machine']}")
+          Path("dist/wheelhouse-manifest.json").write_text(
+              json.dumps(manifest, indent=2) + "\\n", encoding="utf-8"
+          )
+          print(f"Built {len(wheels)} wheels for {manifest['machine']} / {sys.version.split()[0]}")
+          PY
+          tar -C dist -czf "dist/CDS_AI-wheelhouse-cp312-arm64-${GITHUB_SHA:0:12}.tar.gz" wheelhouse wheelhouse-manifest.json
+          cd dist
+          sha256sum CDS_AI-wheelhouse-cp312-arm64-${GITHUB_SHA:0:12}.tar.gz > CDS_AI-wheelhouse-cp312-arm64-${GITHUB_SHA:0:12}.tar.gz.sha256
+      - name: Publish ARM64 offline wheelhouse
+        uses: actions/upload-artifact@v4
+        with:
+          name: CDS_AI-wheelhouse-cp312-arm64-${{ github.sha }}
+          path: |
+            dist/CDS_AI-wheelhouse-cp312-arm64-*.tar.gz
+            dist/CDS_AI-wheelhouse-cp312-arm64-*.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 30
