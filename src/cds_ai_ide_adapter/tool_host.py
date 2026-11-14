@@ -709,7 +709,7 @@ class WorkspaceToolHost:
             except ValueError:
                 continue
             current = masked
-            for part in relative.parts[:-1]:
+            for part in relative.parts:
                 current = current / part
                 args.extend(["--dir", str(current)])
         args.extend([
