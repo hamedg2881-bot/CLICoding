@@ -154,12 +154,18 @@ def test_dotnet_build_uses_fixed_command_restricted_environment_and_approval(tmp
     monkeypatch.setenv("CLICODING_API_KEY", "must-not-enter-child-process")
     monkeypatch.setattr("cds_ai_ide_adapter.tool_host.shutil.which", lambda name: "/usr/bin/dotnet")
 
-    def fake_run(command, **kwargs):
-        captured["command"] = command
-        captured.update(kwargs)
-        return subprocess.CompletedProcess(command, 0, stdout="Build succeeded", stderr="")
+    class FakeProcess:
+        pid = 12345
+        returncode = 0
 
-    monkeypatch.setattr("cds_ai_ide_adapter.tool_host.subprocess.run", fake_run)
+        def __init__(self, command, **kwargs):
+            captured["command"] = command
+            captured.update(kwargs)
+
+        def communicate(self, timeout=None):
+            return "Build succeeded", ""
+
+    monkeypatch.setattr("cds_ai_ide_adapter.tool_host.subprocess.Popen", FakeProcess)
     output = result(host.execute_tool_call(call(
         "workspace_dotnet_build", {"project": "Demo.csproj"}
     )))
@@ -177,7 +183,7 @@ def test_dotnet_build_is_denied_without_explicit_approval(tmp_path, monkeypatch)
     root, host = make_host(tmp_path)
     (root / "Demo.csproj").write_text("<Project />", encoding="utf-8")
     monkeypatch.setattr(
-        "cds_ai_ide_adapter.tool_host.subprocess.run",
+        "cds_ai_ide_adapter.tool_host.subprocess.Popen",
         lambda *args, **kwargs: pytest.fail("denied command must not execute"),
     )
     output = result(host.execute_tool_call(call(
@@ -235,3 +241,57 @@ def test_workspace_tool_results_redact_credential_values(tmp_path):
     assert secret_api_key not in serialized
     assert secret_bearer not in serialized
     assert "[REDACTED]" in serialized
+
+
+def test_fixed_command_is_terminated_when_cancelled(tmp_path, monkeypatch):
+    import subprocess
+    import threading
+
+    root, host = make_host(tmp_path)
+    started = threading.Event()
+    cancelled = threading.Event()
+    captured = {}
+
+    class FakeProcess:
+        pid = 54321
+        returncode = -15
+
+        def __init__(self, command, **kwargs):
+            captured.update(kwargs)
+            self.calls = 0
+            self.terminated = False
+
+        def communicate(self, timeout=None):
+            self.calls += 1
+            if self.calls == 1:
+                started.set()
+                raise subprocess.TimeoutExpired("fake-command", timeout)
+            assert self.terminated
+            return "partial stdout", "partial stderr"
+
+        def terminate(self):
+            self.terminated = True
+
+        def kill(self):
+            self.terminated = True
+
+    monkeypatch.setattr("cds_ai_ide_adapter.tool_host.shutil.which", lambda name: "/usr/bin/fake")
+    monkeypatch.setattr("cds_ai_ide_adapter.tool_host.os.name", "nt")
+    monkeypatch.setattr("cds_ai_ide_adapter.tool_host.subprocess.Popen", FakeProcess)
+
+    def cancel_after_start():
+        assert started.wait(2)
+        cancelled.set()
+
+    cancel_thread = threading.Thread(target=cancel_after_start)
+    cancel_thread.start()
+    output = host._run_fixed_command(
+        ["fake", "build"], "workspace_dotnet_build", "Build",
+        require_approval=False, cancellation_event=cancelled,
+    )
+    cancel_thread.join(timeout=2)
+
+    assert output["status"] == "cancelled"
+    assert output["stdout"] == "partial stdout"
+    assert output["stderr"] == "partial stderr"
+    assert captured["shell"] is False
