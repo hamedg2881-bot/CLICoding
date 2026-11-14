@@ -5,7 +5,7 @@
 - Added deterministic incomplete-work reporting after synthesis so a partial specialist execution cannot be presented as fully completed; empty synthesis falls back to specialist evidence.
 - Added a regression test for a successful implementation task paired with a failed independent review task.
 - Reconciled context-budgeting documentation with the implemented worker-specific specialist compaction and bounded chunk summarization.
-- Added [RESPONSE_QUALITY.md](RESPONSE_QUALITY.md), a quality rubric and real-model evaluation plan, plus nine versioned Persian/English benchmark cases and a standard-library API runner that records raw outputs and latency without automatic self-scoring.
+- Added [RESPONSE_QUALITY.md](RESPONSE_QUALITY.md), a quality rubric and real-model evaluation plan, plus 15 versioned Persian/English benchmark cases and a standard-library API runner that records raw outputs, latency, usage, tool calls and orchestration metadata without automatic self-scoring.
 - Removed the unrequested standalone CDS_AI chat UI route, asset, browser tests, packaging hook and Playwright CI dependency. Open WebUI and supported IDE adapters remain the intended client surfaces.
 - Latest full CI run [43577684403](https://github.com/hamedg2881-bot/CLICoding/actions/runs/43577684403) passed: **171 tests in 4.50s** on current branch head `0443af8083a7d2e0af88ad7cc92580b25d3a600b`. CI also syntax-checks the benchmark runner.
 - Unit/CI tests validate prompt and orchestration contracts only. Real-model quality has not yet been measured; DGX/model acceptance remains open.
