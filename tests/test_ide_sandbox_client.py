@@ -99,3 +99,48 @@ def test_remote_sandbox_executor_denial_never_calls_execute():
 
     assert result["status"] == "approval_denied"
     assert not any(path.endswith("/execute") for path in paths)
+
+
+def test_remote_sandbox_executor_rejects_approval_if_stop_arrives_during_dialog():
+    import threading
+
+    event = threading.Event()
+    paths = []
+    approval_id = "d0a0f0d0-1111-4222-8333-444455556668"
+
+    def handler(request):
+        paths.append(request.url.path)
+        if request.url.path == "/api/v1/workspace-sandbox-approvals":
+            return httpx.Response(201, json={
+                "id": approval_id,
+                "status": "pending",
+                "snapshot_sha256": "d" * 64,
+                "total_bytes": 1,
+                "files": [],
+            })
+        if request.url.path.endswith("/decision"):
+            assert json.loads(request.content) == {"decision": "reject"}
+            return httpx.Response(200, json={"status": "rejected"})
+        return httpx.Response(500)
+
+    def approve_then_stop(_request):
+        event.set()
+        return True
+
+    executor = CDSAISandboxExecutor(
+        "http://orchestrator.local",
+        api_key=None,
+        approval=approve_then_stop,
+        transport=httpx.MockTransport(handler),
+    )
+    result = executor(
+        "demo-workspace",
+        "build",
+        "Demo.csproj",
+        [{"path": "Demo.csproj", "content": "<Project />"}],
+        None,
+        event,
+    )
+
+    assert result["status"] == "cancelled"
+    assert not any(path.endswith("/execute") for path in paths)
