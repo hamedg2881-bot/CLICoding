@@ -164,7 +164,9 @@ class WorkspaceToolHost:
     def definitions(self) -> list[dict[str, Any]]:
         return self._definitions
 
-    def execute_tool_call(self, call: dict[str, Any]) -> dict[str, str]:
+    def execute_tool_call(
+        self, call: dict[str, Any], conversation_id: str | None = None
+    ) -> dict[str, str]:
         normalized = validate_tool_calls([call], self._definitions_by_name)
         call = normalized[0]
         call_id = call["id"]
@@ -178,7 +180,20 @@ class WorkspaceToolHost:
                 separators=(",", ":"),
             ).encode("utf-8")
         ).hexdigest()
-        key = f"{self.workspace_id}:{call_id}"
+        if conversation_id is None:
+            # Preserve the standalone host API; the CDS_AI client always supplies
+            # the durable conversation ID so call IDs cannot collide across chats.
+            scope = "local"
+        elif (
+            not isinstance(conversation_id, str)
+            or not conversation_id
+            or len(conversation_id) > 256
+            or any(ord(character) < 32 for character in conversation_id)
+        ):
+            raise ValueError("conversation_id must be a bounded non-empty identifier")
+        else:
+            scope = hashlib.sha256(conversation_id.encode("utf-8")).hexdigest()
+        key = f"{self.workspace_id}:{scope}:{call_id}"
 
         try:
             cached = self.store.begin(key, request_sha)
