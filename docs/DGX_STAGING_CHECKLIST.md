@@ -84,8 +84,16 @@ python3 source/CDS_AI/scripts/verify_wheelhouse.py \
 ```
 
 5. The verifier checks the Python major/minor ABI, ARM64 architecture, exact wheel inventory, file sizes and every wheel SHA-256. It must succeed before installation.
-6. Keep the wheelhouse, virtual environment, secrets and runtime data outside the source tree.
-7. Install only with pip offline mode and an explicit local wheelhouse; public package indexes must not be fallback sources.
+6. After the pinned Docker images and local NuGet feed have been transferred, run the read-only runtime preflight:
+
+```bash
+sudo python3 source/CDS_AI/scripts/check_sandbox_runtime.py \
+  --nuget-feed /var/cache/clicoding-sandbox/nuget-feed
+```
+
+This inspects all pinned images and feed permissions without pulling images or changing Docker state. It must pass before enabling the workspace Build/Test broker.
+7. Keep the wheelhouse, virtual environment, secrets and runtime data outside the source tree.
+8. Install only with pip offline mode and an explicit local wheelhouse; public package indexes must not be fallback sources.
 
 The CI workflow now builds the complete project plus test-dependency wheelhouse on a native ARM64 runner using CPython 3.12.3. The last passing packaging run produced 32 wheels for aarch64. This is a reproducible candidate wheelhouse, not proof of compatibility with the exact DGX OS/glibc/runtime. Confirm the DGX Python minor version and platform first; do not use this artifact if they differ. No offline install on DGX has been performed yet.
 
