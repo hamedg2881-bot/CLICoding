@@ -257,21 +257,41 @@ def persist_result(approval_id: str, digest: str, result: dict) -> None:
         ).fetchone()
         if claim is not None and claim["status"] == "cancel_requested":
             result = {**result, "status": "cancelled", "cancel_requested": True}
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS sandbox_execution_results (
-                approval_id TEXT PRIMARY KEY,
-                source_sha256 TEXT NOT NULL,
-                status TEXT NOT NULL,
-                result_json TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                FOREIGN KEY (approval_id) REFERENCES sandbox_approvals(id)
+        workspace = connection.execute(
+            "SELECT 1 FROM sandbox_workspace_approvals WHERE id = ?",
+            (approval_id,),
+        ).fetchone()
+        if workspace is not None:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sandbox_workspace_execution_results (
+                    approval_id TEXT PRIMARY KEY,
+                    source_sha256 TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    result_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (approval_id) REFERENCES sandbox_workspace_approvals(id)
+                )
+                """
             )
-            """
-        )
+            table = "sandbox_workspace_execution_results"
+        else:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sandbox_execution_results (
+                    approval_id TEXT PRIMARY KEY,
+                    source_sha256 TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    result_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (approval_id) REFERENCES sandbox_approvals(id)
+                )
+                """
+            )
+            table = "sandbox_execution_results"
         connection.execute(
-            """
-            INSERT INTO sandbox_execution_results
+            f"""
+            INSERT INTO {table}
                 (approval_id, source_sha256, status, result_json, created_at)
             VALUES (?, ?, ?, ?, ?)
             """,
@@ -292,7 +312,6 @@ def persist_result(approval_id: str, digest: str, result: dict) -> None:
         raise
     finally:
         connection.close()
-
 
 
 def is_cancel_requested(approval_id: str) -> bool:
