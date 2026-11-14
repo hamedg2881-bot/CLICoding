@@ -19,13 +19,11 @@ dependencies = [
 cds-ai-backup = "clicoding_orchestrator.backup:main"
 
 [project.optional-dependencies]
-test = ["pytest>=8,<9", "httpx2>=2,<3", "playwright>=1.50,<2"]
+test = ["pytest>=8,<9", "httpx2>=2,<3"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
-[tool.setuptools.package-data]
-clicoding_orchestrator = ["web/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
