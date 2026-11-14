@@ -90,7 +90,7 @@ The example deliberately defaults approval to denial. Do not hard-code API keys;
 - Workspace snapshots currently support UTF-8 text files only; required binary assets are rejected rather than silently omitted.
 - Snapshot limits are intentionally conservative (200 files / 5 MiB / 1 MiB per file); large solutions need a reviewed limit increase and corresponding resource testing.
 - A root-owned offline NuGet feed must be populated with the exact dependencies required by each project. Package restore never accesses the public internet.
-- Remote Stop/cancel while a Docker workspace build/test is already running is not yet implemented.
+- Remote Stop/cancel is routed through the same broker and terminates the labeled Docker workspace container; live DGX cancellation acceptance is still required.
 - Live DGX ARM64 Docker execution, exact image availability, local NuGet feed restore and real sample-project Build/Test acceptance have not yet been performed.
 - Browser automation, Playwright screenshots, patch/diff application, project indexing, and non-.NET build adapters are not included yet.
 - The current tool protocol's JSON Schema validator supports a deliberately limited subset; unsupported schema keywords are rejected.
