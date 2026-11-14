@@ -27,7 +27,7 @@ jobs:
         run: |
           bash -n scripts/dgx_spark_model_preflight.sh
           python -c "import yaml; yaml.safe_load(open('config/workers.example.yaml', encoding='utf-8'))"
-          python -m py_compile scripts/run_response_quality.py
+          python -m py_compile scripts/run_response_quality.py scripts/verify_wheelhouse.py
           sudo install -d /opt/ai/clicoding/current/venv/bin
           printf '#!/bin/sh\\nexit 0\\n' | sudo tee /opt/ai/clicoding/current/venv/bin/uvicorn >/dev/null
           sudo chmod 0755 /opt/ai/clicoding/current/venv/bin/uvicorn
@@ -47,15 +47,29 @@ jobs:
           )
           printf 'revision=%s\narchive=%s\n' "${GITHUB_SHA}" "${archive}" > dist/RELEASE_INFO.txt
           python - <<'PY'
+          import stat
           from pathlib import Path
           from zipfile import ZipFile
           archive = next(Path("dist").glob("CDS_AI_*.zip"))
+          blocked_names = {
+              ".env", ".git-credentials", "id_rsa", "id_ed25519",
+              "credentials.json", "secrets.json", ".npmrc", ".pypirc",
+          }
           with ZipFile(archive) as bundle:
-              names = bundle.namelist()
+              infos = bundle.infolist()
+              names = [item.filename for item in infos]
               assert names and all(name.startswith("CDS_AI/") for name in names)
-              assert not any("/.env" in name and not name.endswith("/.env.example") for name in names)
-              assert not any(name.endswith((".pem", ".key", ".p12", ".pfx")) for name in names)
-              assert not any("/.git/" in name or "/__pycache__/" in name for name in names)
+              for item in infos:
+                  name = item.filename
+                  mode = item.external_attr >> 16
+                  parts = [part.casefold() for part in name.split("/") if part]
+                  assert not stat.S_ISLNK(mode), f"symlink is not allowed in source bundle: {name}"
+                  assert not any(part in {".git", "__pycache__", ".venv", "node_modules"} for part in parts)
+                  filename = parts[-1] if parts else ""
+                  assert filename not in blocked_names, f"credential file in source bundle: {name}"
+                  assert not (filename.startswith(".env.") and filename != ".env.example")
+                  assert not filename.endswith((".pem", ".key", ".p12", ".pfx", ".kdb"))
+                  assert not filename.endswith((".sqlite", ".sqlite3", ".db"))
           print(f"Validated {len(names)} archive entries in {archive}")
           PY
       - name: Publish source transfer artifact
@@ -109,6 +123,7 @@ jobs:
           )
           print(f"Built {len(wheels)} wheels for {manifest['machine']} / {sys.version.split()[0]}")
           PY
+          python scripts/verify_wheelhouse.py --wheelhouse dist/wheelhouse --manifest dist/wheelhouse-manifest.json
           tar -C dist -czf "dist/CDS_AI-wheelhouse-cp312-arm64-${GITHUB_SHA:0:12}.tar.gz" wheelhouse wheelhouse-manifest.json
           cd dist
           sha256sum CDS_AI-wheelhouse-cp312-arm64-${GITHUB_SHA:0:12}.tar.gz > CDS_AI-wheelhouse-cp312-arm64-${GITHUB_SHA:0:12}.tar.gz.sha256
