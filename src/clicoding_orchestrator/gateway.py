@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 import json
 from typing import Any, Protocol
@@ -44,11 +45,22 @@ class OpenAICompatibleGateway:
         model: str,
         api_key: str | None = None,
         timeout_seconds: float = 180.0,
+        client: httpx.AsyncClient | None = None,
     ):
         self.url = f"{base_url.rstrip('/')}/chat/completions"
         self.model = model
         self.api_key = api_key
         self.timeout_seconds = timeout_seconds
+        # Shared clients are owned by the application lifespan, never by a turn.
+        self._client = client
+
+    @asynccontextmanager
+    async def _client_context(self):
+        if self._client is not None:
+            yield self._client
+            return
+        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            yield client
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
@@ -84,8 +96,10 @@ class OpenAICompatibleGateway:
                 raise GatewayError(f"Unsupported generation options: {sorted(unknown)}")
             payload.update(options)
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-                response = await client.post(self.url, json=payload, headers=self._headers())
+            async with self._client_context() as client:
+                response = await client.post(
+                    self.url, json=payload, headers=self._headers(), timeout=self.timeout_seconds
+                )
                 response.raise_for_status()
                 data = response.json()
         except (httpx.HTTPError, ValueError) as exc:
@@ -141,9 +155,10 @@ class OpenAICompatibleGateway:
 
         saw_done = False
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            async with self._client_context() as client:
                 async with client.stream(
-                    "POST", self.url, json=payload, headers=self._headers()
+                    "POST", self.url, json=payload, headers=self._headers(),
+                    timeout=self.timeout_seconds,
                 ) as response:
                     response.raise_for_status()
                     async for line in response.aiter_lines():
@@ -205,7 +220,7 @@ class OpenAICompatibleGateway:
             payload.update(options)
         saw_done = False
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            async with self._client_context() as client:
                 async with client.stream(
                     "POST", self.url, json=payload, headers=self._headers()
                 ) as response:
