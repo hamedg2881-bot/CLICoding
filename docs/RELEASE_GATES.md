@@ -47,7 +47,7 @@
 - [ ] Audit retention/export signing and alerting policy.
 - [x] Serialize event-sequence allocation across SQLite connections with immediate write transactions.
 - [x] Durable SQLite-backed cross-process conversation turn leases with atomic acquisition, periodic renewal, expiry recovery, and cancellation requests observed by the owning API process; direct streaming and buffered/specialist turn paths share the lease gate. The lease monitor fails closed on storage/renewal errors, and caller disconnects cancel the child turn.
-- [x] Cross-process lease exclusion/recovery and two-app cancellation tests pass in CI; retain single-worker deployment until live multi-process acceptance is complete.
+- [x] Cross-process lease exclusion/recovery and two-app cancellation tests pass in CI; retain single-worker deployment until live supervisor acceptance is complete.
 - [ ] Prove trusted Open WebUI headers are stripped/reinjected by the actual private proxy; otherwise use per-user tokens.
 
 ## Response quality acceptance
@@ -64,12 +64,12 @@ See [RESPONSE_QUALITY.md](RESPONSE_QUALITY.md) for the scoring rubric and evalua
 
 ## Live DGX runtime acceptance
 - [ ] Verify exact served model aliases and ports at live `/v1/models` endpoints.
-- [ ] Test GPT-OSS-20B chat/planning, Qwen3-Coder-Next coding/review and Qwen3-VL-2B image understanding.
+- [ ] Test GPT-OSS-20B chat/planning, the verified coding endpoint alias `qwen-coder` on port 8004, and Qwen3-VL-2B image understanding.
 - [ ] Validate tool calling with the exact model/runtime/parser before enabling `tool_calling`.
 - [ ] Measure context/output limits, timeout/cancellation, concurrency and unified-memory headroom.
 - [ ] Verify routing, fallback and failure isolation without interrupting active requests.
 
-The sample registry uses recorded ports 8003/8004/8005 but leaves all workers disabled. Verify served aliases before enabling any worker.
+The sample registry uses recorded ports 8003/8004/8005 and leaves all workers disabled. The coding model's served alias is `qwen-coder`; verify all aliases again during read-only preflight before enabling any worker.
 
 ## Client and offline release
 - [ ] Open WebUI multi-turn, SSE, Stop, regenerate/edit and multi-user acceptance, including actual rendering or documented fallback for custom `x_clicoding.progress` SSE events.
