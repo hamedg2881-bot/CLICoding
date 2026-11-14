@@ -371,7 +371,7 @@ def test_required_command_sandbox_uses_bubblewrap_and_disables_network(tmp_path,
 def test_required_command_sandbox_fails_closed_without_bubblewrap(tmp_path, monkeypatch):
     root, host = make_host(tmp_path)
     host.require_command_sandbox = True
-    monkeypatch.setattr("cds_ai_ide_adapter.tool_host.shutil.which", lambda name: None)
+    monkeypatch.setattr("cds_ai_ide_adapter.tool_host.shutil.which", lambda name: "/usr/bin/dotnet" if name == "dotnet" else None)
     output = host._run_fixed_command(["dotnet", "build"], "workspace_dotnet_build", "Build", require_approval=False)
     assert output["status"] == "unavailable"
     assert "sandbox is unavailable" in output["error"]
