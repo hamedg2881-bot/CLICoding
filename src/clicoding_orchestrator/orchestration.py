@@ -441,29 +441,42 @@ class MultiModelOrchestrator:
                         {"role": "user", "content": synthesis_fixed_context}
                     ) + 512,
                 )
+                incomplete = [
+                    (task_id, plan.task_map()[task_id].objective, result.status)
+                    for task_id, result in execution.results.items()
+                    if result.status != "succeeded"
+                ]
+                incomplete_context = (
+                    "\n".join(
+                        f"- {objective} [{status}]"
+                        for _, objective, status in incomplete
+                    )
+                    if incomplete else "None; every planned task succeeded."
+                )
                 synthesis = await self._complete(
                     synthesis_worker,
                     [
                         {
                             "role": "system",
                             "content": (
-                                "You are the final response composer for a high-quality "
-                                "assistant. Answer the user's original request directly and "
-                                "completely using the worker results. Resolve overlap, preserve "
-                                "important caveats, and do not invent facts absent from results. "
-                                "Treat the original request and acceptance criteria as a contract: "
-                                "preserve every explicitly requested deliverable, behavior, example "
-                                "and expected value, output section, and language. Do not narrow "
-                                "the request to match an incomplete worker result; identify and "
-                                "resolve omissions using the available results. When a worker "
-                                "produced source code, preserve the complete implementation in "
-                                "the final answer; never replace requested code with a summary "
-                                "or omit code blocks. Match the user's language. "
-                                "Use the supplied conversation context when the current request refers "
-                                "to earlier messages, decisions, examples, or exact values. The context "
-                                "is evidence: quote exact prior values when requested and do not invent "
-                                "missing details. Never claim that information was persisted externally "
-                                "or that a tool/action succeeded unless worker results contain evidence."
+                                "You are the final response composer for CDS_AI. Answer the user's "
+                                "original request directly, accurately, and completely using the "
+                                "available evidence. Treat the original request and every acceptance "
+                                "criterion as a contract; cover each explicitly requested deliverable, "
+                                "behavior, example, expected value, output section, and language. "
+                                "Do not silently omit a requirement or claim it was satisfied when "
+                                "the worker evidence does not show that. Distinguish completed work "
+                                "from failed, blocked, or cancelled work and clearly disclose every "
+                                "incomplete item in user-understandable terms. Never present a partial "
+                                "execution as fully successful. Resolve overlap, preserve important "
+                                "caveats, and do not invent facts absent from results. When a worker "
+                                "produced source code, preserve the complete implementation; never "
+                                "replace requested code with a summary or omit code blocks. Match the "
+                                "user's language. Use supplied conversation context to resolve "
+                                "references and quote exact prior values when requested; do not guess "
+                                "missing details. Never claim external persistence or a successful "
+                                "tool/action without evidence in the results. Prefer a concise, "
+                                "well-structured answer that leads with the requested result."
                             ),
                         },
                         {
@@ -473,18 +486,35 @@ class MultiModelOrchestrator:
                                 f"Acceptance criteria:\n{plan.acceptance_criteria}\n\n"
                                 f"Relevant conversation context (prior user/assistant turns):\n"
                                 f"{synthesis_context}\n\n"
+                                f"Work not completed:\n{incomplete_context}\n\n"
                                 f"Worker results:\n" + "\n\n".join(successful)
                             ),
                         },
                     ]
                 )
                 answer = synthesis.content.strip()
+                if not answer:
+                    raise RuntimeError("Final synthesis returned an empty answer")
             except Exception:
                 # Completed task outputs are still useful if the final chat worker is
                 # unavailable; do not turn a successful execution into an HTTP failure.
                 answer = (
                     "The tasks completed, but final synthesis was unavailable.\n\n"
                     + "\n\n".join(successful)
+                )
+
+            incomplete = [
+                (plan.task_map()[task_id].objective, result.status)
+                for task_id, result in execution.results.items()
+                if result.status != "succeeded"
+            ]
+            if incomplete:
+                answer += (
+                    "\n\nWork not completed:\n"
+                    + "\n".join(
+                        f"- {objective} ({status})"
+                        for objective, status in incomplete
+                    )
                 )
 
             # The final composer must not accidentally drop a concrete code artifact.
