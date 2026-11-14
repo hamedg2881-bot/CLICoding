@@ -2,18 +2,24 @@ from __future__ import annotations
 
 from contextlib import closing
 from dataclasses import dataclass
+import errno
 import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
+import secrets
 import shutil
+import signal
 import sqlite3
+import stat
 import subprocess
 import tempfile
+import threading
 import time
 from typing import Any, Callable
 
+from clicoding_orchestrator.context import redact_sensitive_data
 from clicoding_orchestrator.tool_protocol import (
     ToolProtocolError,
     validate_tool_calls,
@@ -131,6 +137,7 @@ class WorkspaceToolHost:
         workspace_id: str,
         store: ToolExecutionStore,
         approval: Callable[[ToolApproval], bool] | None = None,
+        sandbox_executor: Callable[..., dict[str, Any]] | None = None,
         max_file_bytes: int = 1_000_000,
         max_output_chars: int = 64_000,
         command_timeout_seconds: int = 300,
@@ -153,6 +160,7 @@ class WorkspaceToolHost:
         if store_path == root or root in store_path.parents:
             raise ValueError("tool idempotency store must be outside the active workspace")
         self.approval = approval
+        self.sandbox_executor = sandbox_executor
         self.max_file_bytes = max_file_bytes
         self.max_output_chars = max_output_chars
         self.command_timeout_seconds = command_timeout_seconds
@@ -163,7 +171,12 @@ class WorkspaceToolHost:
     def definitions(self) -> list[dict[str, Any]]:
         return self._definitions
 
-    def execute_tool_call(self, call: dict[str, Any]) -> dict[str, str]:
+    def execute_tool_call(
+        self,
+        call: dict[str, Any],
+        conversation_id: str | None = None,
+        cancellation_event: threading.Event | None = None,
+    ) -> dict[str, str]:
         normalized = validate_tool_calls([call], self._definitions_by_name)
         call = normalized[0]
         call_id = call["id"]
@@ -177,8 +190,23 @@ class WorkspaceToolHost:
                 separators=(",", ":"),
             ).encode("utf-8")
         ).hexdigest()
-        key = f"{self.workspace_id}:{call_id}"
+        if conversation_id is None:
+            # Preserve the standalone host API; the CDS_AI client always supplies
+            # the durable conversation ID so call IDs cannot collide across chats.
+            scope = "local"
+        elif (
+            not isinstance(conversation_id, str)
+            or not conversation_id
+            or len(conversation_id) > 256
+            or any(ord(character) < 32 for character in conversation_id)
+        ):
+            raise ValueError("conversation_id must be a bounded non-empty identifier")
+        else:
+            scope = hashlib.sha256(conversation_id.encode("utf-8")).hexdigest()
+        key = f"{self.workspace_id}:{scope}:{call_id}"
 
+        if cancellation_event is not None and cancellation_event.is_set():
+            return self._tool_message(call_id, name, {"status": "cancelled"})
         try:
             cached = self.store.begin(key, request_sha)
         except ToolExecutionConflict as exc:
@@ -188,13 +216,18 @@ class WorkspaceToolHost:
             return self._tool_message(call_id, name, cached)
 
         try:
-            result = self._dispatch(name, arguments)
+            if cancellation_event is not None and cancellation_event.is_set():
+                result = {"status": "cancelled"}
+            else:
+                result = redact_sensitive_data(
+                    self._dispatch(name, arguments, cancellation_event)
+                )
             self.store.finish(key, result)
         except Exception as exc:
-            result = {
+            result = redact_sensitive_data({
                 "status": "error",
                 "error": f"{type(exc).__name__}: {str(exc)[:1000]}",
-            }
+            })
             try:
                 self.store.finish(key, result, status="failed")
             except ToolExecutionConflict:
@@ -270,13 +303,13 @@ class WorkspaceToolHost:
             ),
             function(
                 "workspace_dotnet_build",
-                "Run an approved offline .NET build with a fixed dotnet command and no shell.",
+                "Build a multi-file .NET workspace snapshot inside the existing approved Docker sandbox. Requires an offline local NuGet feed; no host project execution or network access is permitted.",
                 {"project": string},
                 [],
             ),
             function(
                 "workspace_dotnet_test",
-                "Run approved offline .NET tests with a fixed dotnet command and no shell.",
+                "Run .NET tests for a multi-file workspace snapshot inside the existing approved Docker sandbox. Requires an offline local NuGet feed; no host project execution or network access is permitted.",
                 {"project": string},
                 [],
             ),
@@ -312,6 +345,187 @@ class WorkspaceToolHost:
             raise PermissionError("access to secret or credential files is blocked")
         return resolved
 
+    def _open_parent_fd(self, relative_path: str) -> tuple[int, str]:
+        """Open a workspace parent by directory descriptors without following symlinks."""
+        self._safe_path(relative_path)
+        parts = PurePosixPath(relative_path).parts
+        parts = tuple(part for part in parts if part != ".")
+        if not parts:
+            raise ValueError("path must identify a file inside the workspace")
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        parent_fd = os.open(self.root, flags)
+        try:
+            for part in parts[:-1]:
+                next_fd = os.open(part, flags, dir_fd=parent_fd)
+                os.close(parent_fd)
+                parent_fd = next_fd
+            return parent_fd, parts[-1]
+        except Exception:
+            os.close(parent_fd)
+            raise
+
+    def _read_file_posix(self, relative_path: str) -> dict[str, Any]:
+        parent_fd, name = self._open_parent_fd(relative_path)
+        try:
+            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+            file_fd = os.open(name, flags, dir_fd=parent_fd)
+            try:
+                metadata = os.fstat(file_fd)
+                if not stat.S_ISREG(metadata.st_mode):
+                    raise ValueError("path must identify a regular file")
+                if metadata.st_size > self.max_file_bytes:
+                    raise ValueError(f"file exceeds the {self.max_file_bytes}-byte read limit")
+                chunks = []
+                remaining = self.max_file_bytes + 1
+                while remaining:
+                    chunk = os.read(file_fd, min(65536, remaining))
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+                raw = b"".join(chunks)
+                if len(raw) > self.max_file_bytes:
+                    raise ValueError(f"file exceeds the {self.max_file_bytes}-byte read limit")
+            finally:
+                os.close(file_fd)
+        finally:
+            os.close(parent_fd)
+        try:
+            content = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError("only UTF-8 text files can be read") from exc
+        return {
+            "status": "ok",
+            "path": PurePosixPath(relative_path).as_posix(),
+            "content": content,
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "bytes": len(raw),
+        }
+
+    def _write_file_posix(
+        self,
+        relative_path: str,
+        content: str,
+        expected_sha256: str | None,
+        cancellation_event: threading.Event | None,
+    ) -> dict[str, Any]:
+        parent_fd, name = self._open_parent_fd(relative_path)
+        temporary = None
+        try:
+            before_sha = None
+            try:
+                existing_fd = os.open(
+                    name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=parent_fd
+                )
+            except FileNotFoundError:
+                exists = False
+            else:
+                exists = True
+                try:
+                    metadata = os.fstat(existing_fd)
+                    if not __import__("stat").S_ISREG(metadata.st_mode):
+                        raise ValueError("target must be a regular file")
+                    if metadata.st_size > 10_000_000:
+                        raise ValueError("existing file is too large to replace safely")
+                    if expected_sha256 is None:
+                        raise ValueError("expected_sha256 is required before overwriting an existing file")
+                    digest = hashlib.sha256()
+                    while True:
+                        chunk = os.read(existing_fd, 65536)
+                        if not chunk:
+                            break
+                        digest.update(chunk)
+                    before_sha = digest.hexdigest()
+                finally:
+                    os.close(existing_fd)
+                if before_sha != expected_sha256:
+                    return {"status": "conflict", "error": "file changed since it was read"}
+            if not exists and expected_sha256 is not None:
+                return {"status": "conflict", "error": "expected existing file is missing"}
+
+            after_sha = hashlib.sha256(content.encode("utf-8")).hexdigest()
+            approval = ToolApproval(
+                tool_name="workspace_write_file",
+                workspace_id=self.workspace_id,
+                summary=f"Write {PurePosixPath(relative_path).as_posix()}",
+                details={
+                    "path": PurePosixPath(relative_path).as_posix(),
+                    "before_sha256": before_sha,
+                    "after_sha256": after_sha,
+                    "bytes": len(content.encode("utf-8")),
+                    "content_preview": content[:4000],
+                },
+            )
+            if self.approval is None or not self.approval(approval):
+                return {"status": "approval_denied", "path": relative_path}
+            if cancellation_event is not None and cancellation_event.is_set():
+                return {"status": "cancelled", "path": relative_path}
+
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+            for _ in range(10):
+                candidate = f".cds-ai-{secrets.token_hex(12)}"
+                try:
+                    temp_fd = os.open(candidate, flags, 0o600, dir_fd=parent_fd)
+                    temporary = candidate
+                    break
+                except FileExistsError:
+                    continue
+            else:
+                raise FileExistsError("could not allocate a unique workspace temporary file")
+            with os.fdopen(temp_fd, "w", encoding="utf-8", newline="") as stream:
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+            if cancellation_event is not None and cancellation_event.is_set():
+                return {"status": "cancelled", "path": relative_path}
+            # Revalidate the destination after approval and immediately before commit.
+            try:
+                current_fd = os.open(
+                    name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=parent_fd
+                )
+            except FileNotFoundError:
+                if exists:
+                    return {"status": "conflict", "error": "file changed before replacement"}
+            except OSError as exc:
+                if exc.errno in {errno.ELOOP, errno.EMLINK}:
+                    raise ValueError("symbolic links are not allowed in workspace tool paths") from exc
+                raise
+            else:
+                try:
+                    current_meta = os.fstat(current_fd)
+                    if not stat.S_ISREG(current_meta.st_mode):
+                        raise ValueError("target must remain a regular file")
+                    if not exists:
+                        return {"status": "conflict", "error": "target appeared before replacement"}
+                    current_digest = hashlib.sha256()
+                    while True:
+                        chunk = os.read(current_fd, 65536)
+                        if not chunk:
+                            break
+                        current_digest.update(chunk)
+                    if current_digest.hexdigest() != before_sha:
+                        return {"status": "conflict", "error": "file changed before replacement"}
+                finally:
+                    os.close(current_fd)
+            os.replace(
+                temporary, name,
+                src_dir_fd=parent_fd, dst_dir_fd=parent_fd,
+            )
+            temporary = None
+            return {
+                "status": "ok",
+                "path": PurePosixPath(relative_path).as_posix(),
+                "sha256": after_sha,
+                "bytes": len(content.encode("utf-8")),
+            }
+        finally:
+            if temporary is not None:
+                try:
+                    os.unlink(temporary, dir_fd=parent_fd)
+                except FileNotFoundError:
+                    pass
+            os.close(parent_fd)
+
     @classmethod
     def _is_sensitive(cls, path: Path) -> bool:
         name = path.name.lower()
@@ -345,6 +559,8 @@ class WorkspaceToolHost:
         return {"status": "ok", "files": found, "truncated": False}
 
     def _read_file(self, relative_path: str) -> dict[str, Any]:
+        if os.name != "nt" and os.open in getattr(os, "supports_dir_fd", set()):
+            return self._read_file_posix(relative_path)
         path = self._safe_path(relative_path, must_exist=True)
         if not path.is_file():
             raise ValueError("path must identify a regular file")
@@ -396,10 +612,18 @@ class WorkspaceToolHost:
         }
 
     def _write_file(
-        self, relative_path: str, content: str, expected_sha256: str | None
+        self,
+        relative_path: str,
+        content: str,
+        expected_sha256: str | None,
+        cancellation_event: threading.Event | None = None,
     ) -> dict[str, Any]:
         if not isinstance(content, str) or len(content.encode("utf-8")) > 300_000:
             raise ValueError("file content exceeds the 300000-byte write limit")
+        if os.name != "nt" and os.open in getattr(os, "supports_dir_fd", set()):
+            return self._write_file_posix(
+                relative_path, content, expected_sha256, cancellation_event
+            )
         target = self._safe_path(relative_path)
         if target == self.root or not target.parent.is_dir():
             raise ValueError("target parent directory must already exist inside the workspace")
@@ -433,6 +657,8 @@ class WorkspaceToolHost:
         )
         if self.approval is None or not self.approval(approval):
             return {"status": "approval_denied", "path": relative_path}
+        if cancellation_event is not None and cancellation_event.is_set():
+            return {"status": "cancelled", "path": relative_path}
 
         fd, temporary = tempfile.mkstemp(prefix=".cds-ai-", dir=target.parent)
         try:
@@ -440,6 +666,8 @@ class WorkspaceToolHost:
                 stream.write(content)
                 stream.flush()
                 os.fsync(stream.fileno())
+            if cancellation_event is not None and cancellation_event.is_set():
+                return {"status": "cancelled", "path": relative_path}
             if target.is_symlink():
                 raise ValueError("symbolic links are not allowed in workspace tool paths")
             os.replace(temporary, target)
@@ -459,16 +687,32 @@ class WorkspaceToolHost:
         tool_name: str,
         summary: str,
         require_approval: bool = True,
+        cancellation_event: threading.Event | None = None,
     ) -> dict[str, Any]:
+        if cancellation_event is not None and cancellation_event.is_set():
+            return {"status": "cancelled"}
         if require_approval and (self.approval is None or not self.approval(
             ToolApproval(
                 tool_name=tool_name,
                 workspace_id=self.workspace_id,
                 summary=summary,
-                details={"command": command, "cwd": str(self.root)},
+                details={
+                    "command": command,
+                    "cwd": str(self.root),
+                    "execution_boundary": "workstation_host_process",
+                    "sandboxed": False,
+                    "risk_warning": (
+                        "The project controls MSBuild targets, analyzers, generators and test code. "
+                        "They may execute child processes, access files available to the current user, "
+                        "and use host network access. shell=False prevents shell interpolation but "
+                        "does not sandbox project-controlled execution."
+                    ),
+                },
             )
         )):
             return {"status": "approval_denied", "command": command}
+        if cancellation_event is not None and cancellation_event.is_set():
+            return {"status": "cancelled"}
         executable = shutil.which(command[0])
         if executable is None:
             return {"status": "unavailable", "error": f"{command[0]} is not installed"}
@@ -483,38 +727,193 @@ class WorkspaceToolHost:
             if key in allowed_env_names
         }
         environment.update({"DOTNET_CLI_TELEMETRY_OPTOUT": "1", "DOTNET_NOLOGO": "1"})
-        try:
-            completed = subprocess.run(
-                command,
-                cwd=self.root,
-                env=environment,
-                capture_output=True,
-                text=True,
-                timeout=self.command_timeout_seconds,
-                check=False,
-                shell=False,
-            )
-            stdout = completed.stdout[-self.max_output_chars:]
-            stderr = completed.stderr[-self.max_output_chars:]
-            return {
-                "status": "ok" if completed.returncode == 0 else "failed",
-                "exit_code": completed.returncode,
-                "stdout": stdout,
-                "stderr": stderr,
-                "output_truncated": (
-                    len(completed.stdout) > self.max_output_chars
-                    or len(completed.stderr) > self.max_output_chars
-                ),
-            }
-        except subprocess.TimeoutExpired as exc:
-            return {
-                "status": "timeout",
-                "timeout_seconds": self.command_timeout_seconds,
-                "stdout": str(exc.stdout or "")[-self.max_output_chars:],
-                "stderr": str(exc.stderr or "")[-self.max_output_chars:],
-            }
+        popen_options: dict[str, Any] = {}
+        if os.name == "nt":
+            popen_options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            popen_options["start_new_session"] = True
 
-    def _dispatch(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        process = None
+
+        def stop_process() -> tuple[str, str]:
+            if process is None:
+                return "", ""
+            try:
+                if os.name == "nt":
+                    process.terminate()
+                else:
+                    os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            except OSError:
+                try:
+                    process.terminate()
+                except OSError:
+                    pass
+            try:
+                return process.communicate(timeout=2)
+            except subprocess.TimeoutExpired:
+                try:
+                    if os.name == "nt":
+                        process.kill()
+                    else:
+                        os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                except OSError:
+                    try:
+                        process.kill()
+                    except OSError:
+                        pass
+                return process.communicate()
+
+        try:
+            process = subprocess.Popen(
+                command, cwd=self.root, env=environment,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, shell=False, **popen_options,
+            )
+            deadline = time.monotonic() + self.command_timeout_seconds
+            while True:
+                if cancellation_event is not None and cancellation_event.is_set():
+                    stdout, stderr = stop_process()
+                    return {
+                        "status": "cancelled",
+                        "stdout": stdout[-self.max_output_chars:],
+                        "stderr": stderr[-self.max_output_chars:],
+                    }
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    stdout, stderr = stop_process()
+                    return {
+                        "status": "timeout",
+                        "timeout_seconds": self.command_timeout_seconds,
+                        "stdout": stdout[-self.max_output_chars:],
+                        "stderr": stderr[-self.max_output_chars:],
+                    }
+                try:
+                    stdout, stderr = process.communicate(timeout=min(0.1, remaining))
+                    return {
+                        "status": "ok" if process.returncode == 0 else "failed",
+                        "exit_code": process.returncode,
+                        "stdout": stdout[-self.max_output_chars:],
+                        "stderr": stderr[-self.max_output_chars:],
+                        "output_truncated": (
+                            len(stdout) > self.max_output_chars
+                            or len(stderr) > self.max_output_chars
+                        ),
+                    }
+                except subprocess.TimeoutExpired:
+                    continue
+        except OSError as exc:
+            return {"status": "failed", "error": f"{type(exc).__name__}: {str(exc)[:500]}"}
+
+
+    def _workspace_snapshot(
+        self, cancellation_event: threading.Event | None = None
+    ) -> list[dict[str, str]]:
+        files: list[dict[str, str]] = []
+        total_bytes = 0
+        for directory, dirnames, filenames in os.walk(self.root, topdown=True, followlinks=False):
+            current = Path(directory)
+            kept_directories = []
+            for name in sorted(dirnames):
+                child = current / name
+                if name.casefold() in {item.casefold() for item in self.IGNORED_DIRECTORIES}:
+                    continue
+                if child.is_symlink():
+                    raise ValueError("workspace snapshot refuses symbolic-link directories")
+                kept_directories.append(name)
+            dirnames[:] = kept_directories
+
+            for name in sorted(filenames):
+                if cancellation_event is not None and cancellation_event.is_set():
+                    raise InterruptedError("workspace snapshot was cancelled")
+                target = current / name
+                if target.is_symlink():
+                    raise ValueError("workspace snapshot refuses symbolic-link files")
+                if (
+                    name.casefold() in {item.casefold() for item in self.BLOCKED_FILENAMES}
+                    or name.casefold() in {".npmrc", ".pypirc", "nuget.config"}
+                    or (name.casefold().startswith(".env.") and name.casefold() != ".env.example")
+                    or target.suffix.lower() in self.BLOCKED_SUFFIXES
+                ):
+                    continue
+                relative = target.relative_to(self.root).as_posix()
+                metadata = target.stat(follow_symlinks=False)
+                if not stat.S_ISREG(metadata.st_mode):
+                    raise ValueError("workspace snapshot accepts regular files only")
+                if metadata.st_size > min(self.max_file_bytes, 1_000_000):
+                    raise ValueError(f"workspace file exceeds the 1 MiB snapshot limit: {relative}")
+                read = self._read_file(relative)
+                if read.get("status") != "ok":
+                    raise ValueError(f"workspace file could not be snapshotted: {relative}")
+                total_bytes += read["bytes"]
+                if total_bytes > 5 * 1024 * 1024:
+                    raise ValueError("workspace snapshot exceeds the 5 MiB limit")
+                files.append({"path": relative, "content": read["content"]})
+                if len(files) > 200:
+                    raise ValueError("workspace snapshot exceeds the 200-file limit")
+        return files
+
+    def _run_workspace_sandbox(
+        self,
+        action: str,
+        project: str | None,
+        cancellation_event: threading.Event | None = None,
+    ) -> dict[str, Any]:
+        if self.sandbox_executor is None:
+            return {
+                "status": "unavailable",
+                "error": "The existing Docker workspace sandbox is not configured; host Build/Test is disabled.",
+            }
+        if cancellation_event is not None and cancellation_event.is_set():
+            return {"status": "cancelled"}
+        files = self._workspace_snapshot(cancellation_event)
+        project_files = {
+            item["path"]
+            for item in files
+            if PurePosixPath(item["path"]).suffix.lower() in {".sln", ".slnx", ".csproj"}
+        }
+        if project:
+            safe_project = self._safe_path(project, must_exist=True)
+            if not safe_project.is_file() or safe_project.suffix.lower() not in {
+                ".sln", ".slnx", ".csproj",
+            }:
+                raise ValueError("project must be a .sln, .slnx, or .csproj file")
+            project_path = safe_project.relative_to(self.root).as_posix()
+        else:
+            solutions = sorted(
+                item for item in project_files
+                if PurePosixPath(item).suffix.lower() in {".sln", ".slnx"}
+            )
+            candidates = solutions or sorted(project_files)
+            if len(candidates) != 1:
+                raise ValueError(
+                    "specify a project path when the workspace does not contain exactly one solution/project"
+                )
+            project_path = candidates[0]
+        if project_path not in project_files:
+            raise ValueError("selected project file is not included in the workspace snapshot")
+        if cancellation_event is not None and cancellation_event.is_set():
+            return {"status": "cancelled"}
+        return self.sandbox_executor(
+            self.workspace_id,
+            action,
+            project_path,
+            files,
+            self.approval,
+            cancellation_event,
+        )
+
+    def _dispatch(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        cancellation_event: threading.Event | None = None,
+    ) -> dict[str, Any]:
+        if cancellation_event is not None and cancellation_event.is_set():
+            return {"status": "cancelled"}
         if name == "workspace_list_files":
             return self._list_files(arguments.get("directory", "."))
         if name == "workspace_read_file":
@@ -528,7 +927,7 @@ class WorkspaceToolHost:
             ):
                 raise ValueError("expected_sha256 must be a 64-character SHA-256 hex digest")
             return self._write_file(
-                arguments["path"], arguments["content"], expected
+                arguments["path"], arguments["content"], expected, cancellation_event
             )
         if name == "workspace_git_status":
             return self._run_fixed_command(
@@ -536,6 +935,7 @@ class WorkspaceToolHost:
                 name,
                 "Read Git status",
                 require_approval=False,
+                cancellation_event=cancellation_event,
             )
         if name == "workspace_git_diff":
             command = ["git", "diff", "--no-ext-diff", "--no-color", "--"]
@@ -543,21 +943,13 @@ class WorkspaceToolHost:
                 path = self._safe_path(arguments["path"])
                 command.append(path.relative_to(self.root).as_posix())
             return self._run_fixed_command(
-                command, name, "Read Git diff", require_approval=False
+                command, name, "Read Git diff", require_approval=False,
+                cancellation_event=cancellation_event,
             )
         if name in {"workspace_dotnet_build", "workspace_dotnet_test"}:
-            project = arguments.get("project")
-            command = ["dotnet", "build" if name.endswith("build") else "test"]
-            if project:
-                path = self._safe_path(project, must_exist=True)
-                if not path.is_file() or path.suffix.lower() not in {".sln", ".slnx", ".csproj"}:
-                    raise ValueError("project must be a .sln, .slnx, or .csproj file")
-                command.append(str(path))
-            command.append("--no-restore")
-            return self._run_fixed_command(
-                command,
-                name,
-                "Build the approved .NET project" if name.endswith("build")
-                else "Run the approved .NET test project",
+            return self._run_workspace_sandbox(
+                "build" if name.endswith("build") else "test",
+                arguments.get("project"),
+                cancellation_event,
             )
         raise ToolProtocolError(f"tool is not registered: {name}")

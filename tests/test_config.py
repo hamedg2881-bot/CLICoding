@@ -18,3 +18,15 @@ def test_settings_reject_invalid_user_api_key_configuration(monkeypatch):
 
     with pytest.raises(ValueError, match="at least 32"):
         Settings(user_api_keys={"alice": "short"})
+
+
+def test_settings_reject_duplicate_or_ambiguous_api_tokens():
+    token = "x" * 40
+    with pytest.raises(ValueError, match="reuse the same token"):
+        Settings(user_api_keys={"alice": token, "bob": token})
+
+    with pytest.raises(ValueError, match="different from every user"):
+        Settings(api_key=token, user_api_keys={"alice": token})
+
+    with pytest.raises(ValueError, match="at least 32 ASCII"):
+        Settings(api_key=("x" * 20) + " " + ("y" * 20))

@@ -79,22 +79,24 @@ Exit gate: retrieval improves task accuracy on a repeatable test set over plain 
 
 ## Phase 7 — Multi-user and resource management
 Deliverables:
-- Per-user authentication/authorization and quotas.
-- Fair queueing, concurrency limits, cancellation.
-- Model lifecycle/sleep/wake policy with safe release.
-- Load, isolation, and failure tests.
-- Usage and operational dashboards.
+- [x] Per-user authentication/ownership, environment and durable token lifecycle.
+- [x] Per-principal API rate limits and administrator audit export.
+- [x] Active-turn cancellation and bounded request admission.
+- [ ] Fair queueing and cross-process worker concurrency coordination; conversation turn leases/cancellation are implemented, but worker-wide distributed semaphores remain process-local.
+- [ ] Model lifecycle/sleep/wake policy with safe release.
+- [ ] Load, isolation, and failure tests.
+- [ ] Usage and operational dashboards.
 
 Exit gate: target number of simultaneous users passes defined latency/error/resource thresholds without interrupting active inference.
 
 ## Phase 8 — Offline packaging and production acceptance
 Deliverables:
-- Version-pinned installers, IDE extensions, SDKs, browser binaries, runtimes, model weights, NuGet packages, docs.
-- Internal artifact/package mirrors.
-- Firewall/egress policy and internal TLS.
-- Restore/backup and upgrade/rollback procedures.
-- Offline installation guide and operator runbook.
-- End-to-end acceptance report with network evidence.
+- [x] Verified offline SQLite/attachment backup and restore CLI with manifest hashes and retained pre-restore rollback paths.
+- [ ] Version-pinned installers, IDE extensions, SDKs, browser binaries, runtimes, model weights, NuGet packages, docs.
+- [ ] Internal artifact/package mirrors.
+- [ ] Firewall/egress policy and internal TLS.
+- [ ] Upgrade/rollback and clean offline installation guide/operator runbook.
+- [ ] End-to-end acceptance report with network evidence.
 
 Exit gate: a clean workstation can be provisioned from internal artifacts and complete the full workflow with public internet blocked.
 
@@ -103,31 +105,32 @@ A phase may be marked complete only when its exit gate has reproducible evidence
 
 ## Phase 2A — Conversation and orchestration core (required before multi-model workflows)
 
-**Status:** Conversation persistence, deterministic capability-based handoff, validated execution plans, durable task state, bounded dependency-wave execution, and opt-in planner-backed orchestration are implemented in source. When `CLICODING_ENABLE_PLANNING=true`, the standard non-streaming OpenAI-compatible chat route now invokes the Orchestrator while preserving one public assistant alias and canonical conversation history. Latest final-review CI passed (37 tests); Open WebUI mapping and production hardening remain open.
+**Status:** Source implementation is substantially complete for the conversation-first baseline: durable history, direct-chat streaming, explicit specialist routing, validated plans/tasks, tool-call transport, cancellation, context budgeting/compaction, image references, ownership and retry idempotency. Latest CI run [43563386491](https://github.com/hamedg2881-bot/CLICoding/actions/runs/43563386491) passes 168 tests in 4.40s on the current UI candidate; CI also validates the inline JavaScript and confirms the UI asset is included in the wheel. Live DGX compatibility, worker-wide distributed concurrency and production acceptance remain open; worker-specific specialist context compaction and structured specialist progress SSE are implemented.
 
 Deliverables:
 - [x] Initial conversation/event persistence contract with stable conversation identity independent of model (single-process SQLite slice).
 - [x] In-memory task and execution-plan contracts with dependency/cycle validation.
 - [x] Persistent task and execution-plan storage in SQLite.
 - [x] Structured LLM Planner component with local schema, graph, and capability allow-list validation.
-- [ ] Context assembly and multimodal attachment handoff.
+- [x] Context assembly, per-worker admission and multimodal attachment references for direct chat/tool turns; specialist-specific context acceptance remains open.
 - [x] Configuration-backed capability-based worker selection (deterministic task-type hint).
 - [x] Dependency-wave executor with bounded parallelism, dependency-output handoff, and failure blocking.
 - [x] Durable sequential/parallel task execution service and opt-in conversation API route.
 - [x] Integrate opt-in orchestration into the standard OpenAI chat route; Open WebUI mapping and safety/production validation remain pending.
 - [x] Non-streaming transparent worker handoff with shared conversation history.
-- [ ] Unified response streaming.
-- [ ] Bounded retry, partial failure recovery, cancellation, and approval gates.
+- [x] Upstream token/tool-call SSE for direct chat; specialist task lifecycle progress is emitted as custom SSE events while the final answer remains buffered until execution completes.
+- [x] Active-turn cancellation, retry idempotency for user/tool continuations, and workstation approval gates.
+- [ ] Bounded automatic specialist retries and end-to-end partial-failure recovery.
 - [ ] Contract/acceptance tests from [ORCHESTRATOR_SPEC.md](ORCHESTRATOR_SPEC.md).
-- [x] OpenAI-compatible non-streaming text endpoint with one public model alias and an explicit conversation ID extension.
+- [x] OpenAI-compatible streaming chat/tool-call endpoint with one public CDS_AI alias and canonical conversation IDs.
 
 Exit gate: pass the single-model continuity, model handoff, Vision-to-Coder handoff, sequential and parallel workflow, partial failure, cancellation, context integrity, and resource safety tests.
 
-Phase 2 gateway work must expose transport primitives required by this core, but LiteLLM or any other gateway must not become the owner of conversation or task state. The first implementation should be a thin vertical slice, not a large framework adoption. The current code includes a YAML-backed worker registry, deterministic capability routing, same-conversation history, a non-streaming OpenAI-compatible text API, validated execution plans, a structured LLM Planner, SQLite-persisted execution/task state, and a multi-model orchestration service with bounded dependency-wave execution. The service is available through both the standard OpenAI chat endpoint and the internal conversation route when planning is enabled; otherwise the standard endpoint retains deterministic single-worker routing. Worker concurrency limits are enforced per served runtime within one process. Open WebUI conversation mapping, streaming, multimodal image transport, cancellation/retry, cross-process locking, distributed admission, and resource-aware scheduling remain unimplemented. Open WebUI's ability to preserve the returned conversation ID remains unverified.
+Phase 2 gateway work exposes the transport primitives required by this core; LiteLLM or any other gateway does not own conversation or task state. The source includes a YAML-backed worker registry, deterministic capability routing, same-conversation history, direct upstream SSE, validated execution plans, a structured Planner, SQLite-persisted execution/task state, bounded dependency-wave execution, OpenAI tool-call round-trip, per-worker context budgeting/compaction, image attachment references, retry idempotency, and cancellation. Ordinary chat bypasses Planner. Specialist work uses explicit orchestration, emits structured live progress SSE, and returns a buffered final answer after execution. A first-party RTL-aware CDS_AI chat UI now renders progress and supports Stop; Open WebUI rendering of custom progress events and real-model/DGX plus mobile browser acceptance remain open. Playwright tests cover desktop and basic mobile navigation/Enter-to-send, mocked UI contracts, and a live FastAPI backend with a fake gateway, including history persistence, image upload/resolution and active-turn cancellation. Worker semaphores remain process-local; conversation turn leases/cancellation, SQLite event sequence allocation and rate limits are serialized across connections. Specialist context is compacted independently for each selected worker. Open WebUI progress-metadata consumption, model compatibility, worker-wide distributed concurrency, resource-aware model scheduling and operational acceptance remain open.
 
 ## Phase 2B — Conversation-first core and shared IDE agent contract (priority)
 
-**Status:** Approved; implementation started on branch `architecture/conversation-first-core`.
+**Status:** Implemented in source on the CDS_AI integration branch. The Python workstation adapter and typed tool protocol exist; packaged IDE UI, OS sandboxing and live workstation acceptance remain open.
 
 ### Architecture target
 - One model-independent Conversation Engine is the entry point for Open WebUI and IDE clients.
@@ -156,19 +159,19 @@ Phase 2 gateway work must expose transport primitives required by this core, but
 
 The existing Phase 3 workstation-side IDE requirement remains mandatory; this phase makes the shared conversation/tool contract a prerequisite rather than deferring it as a disconnected add-on.
 
-## Phase 2C — Modern assistant interaction quality (priority, 2026-11-11)
+## Phase 2C — Modern assistant interaction quality (2026-11-11)
 
-The detailed product and release contract is in docs/CHAT_EXPERIENCE_SPEC.md. This is a first-class architecture requirement, not UI polish.
+The product and release contract is in docs/CHAT_EXPERIENCE_SPEC.md.
 
-- Completed in this branch: true upstream SSE delta streaming for direct chat; persist assistant turn only after the full stream succeeds; cancel upstream iteration when the client disconnects; regression coverage.
-- Next: tool-call round-trip and workstation tool broker contract; context-window budgeting/compaction; cancellation and retry semantics; multimodal attachment references; reference IDE adapter.
-- Specialist execution continues to use explicit orchestration and currently streams only its completed final answer. Do not claim token-level specialist progress until implemented.
+- Implemented: conversation-first direct chat, true upstream SSE deltas, client-disconnect cleanup, tool-call delta transport, cancellation, regenerate/edit-resubmit, context budgeting/compaction, attachment references, per-user ownership, token lifecycle, per-principal rate limiting and audit export.
+- Specialist orchestration remains a buffered final-answer stream but now emits truthful structured live progress events; a first-party chat UI renders them and exposes Stop.
+- Live model/runtime tool-call and vision compatibility must be proven on DGX before enabling those capabilities in production.
 
 ## Phase 2D — Secure workstation tool protocol
 
 The tool-call and IDE-side execution boundary is specified in docs/IDE_TOOL_PROTOCOL.md.
 
-- The IDE adapter owns workspace, file, process, build/test, browser, and screenshot operations on the developer workstation.
+- Implemented: typed tool definitions/results, schema validation, pending-call correlation, workstation Python reference host/client, workspace scope, approval, idempotency, fixed Git/.NET commands, credential-pattern redaction and verified backup/restore tooling.
 - The DGX remains an inference/orchestration host and must not mount developer workspaces.
-- Next implementation: OpenAI tool-call message round-trip, typed tool definitions/results, and a reference local tool host with allow-list and approval gates.
-- No arbitrary shell tool is exposed; tools are introduced one at a time with schemas, policy, audit, idempotency, and tests.
+- No arbitrary shell tool is exposed. The model requests tools; the workstation host applies its own allow-list and approval policy before local execution.
+- Open: packaged editor UI, platform-specific path/TOCTOU protections, OS-level process sandboxing, browser/screenshot automation, cross-platform acceptance and live model compatibility.

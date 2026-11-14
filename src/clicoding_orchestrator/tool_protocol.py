@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from typing import Any
 
@@ -57,17 +58,49 @@ def validate_tool_definitions(
     return definitions
 
 
-def _validate_schema_definition(schema: dict[str, Any], path: str) -> None:
+def _validate_schema_definition(
+    schema: dict[str, Any], path: str, depth: int = 0
+) -> None:
+    if depth > 8:
+        raise ToolProtocolError(f"{path} exceeds the maximum schema nesting depth")
     unknown = set(schema) - _SCHEMA_KEYS
     if unknown:
         raise ToolProtocolError(f"{path} uses unsupported schema keywords: {sorted(unknown)}")
     schema_type = schema.get("type")
     if schema_type not in {"object", "array", "string", "integer", "number", "boolean"}:
         raise ToolProtocolError(f"{path}.type is unsupported")
-    if "enum" in schema and (
-        not isinstance(schema["enum"], list) or len(schema["enum"]) > 100
-    ):
-        raise ToolProtocolError(f"{path}.enum must be a bounded array")
+
+    if "enum" in schema:
+        values = schema["enum"]
+        if not isinstance(values, list) or not 1 <= len(values) <= 100:
+            raise ToolProtocolError(f"{path}.enum must contain 1-100 values")
+        if any(not _matches_type(value, schema_type) for value in values):
+            raise ToolProtocolError(f"{path}.enum values must match {schema_type}")
+
+    for key in ("minimum", "maximum"):
+        if key in schema and (
+            schema_type not in {"integer", "number"}
+            or not isinstance(schema[key], (int, float))
+            or isinstance(schema[key], bool)
+            or not math.isfinite(schema[key])
+        ):
+            raise ToolProtocolError(f"{path}.{key} is only valid as a numeric bound")
+    if "minimum" in schema and "maximum" in schema and schema["minimum"] > schema["maximum"]:
+        raise ToolProtocolError(f"{path} minimum cannot exceed maximum")
+
+    for key in ("minLength", "maxLength", "minItems", "maxItems"):
+        if key in schema and (
+            schema_type not in ({"string"} if "Length" in key else {"array"})
+            or not isinstance(schema[key], int)
+            or isinstance(schema[key], bool)
+            or schema[key] < 0
+            or schema[key] > 1000000
+        ):
+            raise ToolProtocolError(f"{path}.{key} is invalid for {schema_type}")
+    for low, high in (("minLength", "maxLength"), ("minItems", "maxItems")):
+        if low in schema and high in schema and schema[low] > schema[high]:
+            raise ToolProtocolError(f"{path}.{low} cannot exceed {high}")
+
     if schema_type == "object":
         properties = schema.get("properties", {})
         required = schema.get("required", [])
@@ -77,18 +110,20 @@ def _validate_schema_definition(schema: dict[str, Any], path: str) -> None:
             not isinstance(item, str) or item not in properties for item in required
         ):
             raise ToolProtocolError(f"{path}.required must reference declared properties")
+        if len(set(required)) != len(required):
+            raise ToolProtocolError(f"{path}.required cannot contain duplicates")
         additional = schema.get("additionalProperties", False)
         if not isinstance(additional, bool):
             raise ToolProtocolError(f"{path}.additionalProperties must be boolean")
         for key, value in properties.items():
-            if not isinstance(key, str) or not isinstance(value, dict):
-                raise ToolProtocolError(f"{path}.properties entries must be schemas")
-            _validate_schema_definition(value, f"{path}.properties.{key}")
+            if not isinstance(key, str) or not key or len(key) > 128 or not isinstance(value, dict):
+                raise ToolProtocolError(f"{path}.properties entries must have bounded names and schemas")
+            _validate_schema_definition(value, f"{path}.properties.{key}", depth + 1)
     elif schema_type == "array":
         items = schema.get("items")
         if not isinstance(items, dict):
             raise ToolProtocolError(f"{path}.items must be a schema")
-        _validate_schema_definition(items, f"{path}.items")
+        _validate_schema_definition(items, f"{path}.items", depth + 1)
 
 
 def _matches_type(value: Any, schema_type: str) -> bool:
@@ -101,7 +136,11 @@ def _matches_type(value: Any, schema_type: str) -> bool:
     if schema_type == "integer":
         return isinstance(value, int) and not isinstance(value, bool)
     if schema_type == "number":
-        return isinstance(value, (int, float)) and not isinstance(value, bool)
+        return (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(value)
+        )
     if schema_type == "boolean":
         return isinstance(value, bool)
     return False
@@ -188,19 +227,44 @@ def validate_tool_calls(
 def pending_tool_call(events: list[dict[str, Any]]) -> tuple[str, str] | None:
     """Return the single outstanding call ID/name, or None when the turn is complete."""
     pending: tuple[str, str] | None = None
-    for event in events:
+    seen_call_ids: set[str] = set()
+    for index, event in enumerate(events):
+        if not isinstance(event, dict):
+            raise ToolProtocolError(f"conversation event {index} must be an object")
         metadata = event.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            raise ToolProtocolError(f"conversation event {index} metadata must be an object")
         if event.get("role") == "assistant":
-            calls = metadata.get("tool_calls") if isinstance(metadata, dict) else None
-            if calls:
-                if pending is not None:
-                    raise ToolProtocolError("conversation contains overlapping pending tool calls")
-                call = calls[0]
-                pending = (call["id"], call["function"]["name"])
+            if "tool_calls" not in metadata:
+                continue
+            calls = metadata["tool_calls"]
+            if not isinstance(calls, list) or len(calls) != 1:
+                raise ToolProtocolError("assistant event must contain exactly one supported tool call")
+            call = calls[0]
+            if not isinstance(call, dict):
+                raise ToolProtocolError("assistant tool call must be an object")
+            call_id = call.get("id")
+            function = call.get("function")
+            if not isinstance(call_id, str) or not _CALL_ID.fullmatch(call_id):
+                raise ToolProtocolError("assistant tool call has an invalid call ID")
+            if call_id in seen_call_ids:
+                raise ToolProtocolError("conversation reuses a tool call ID")
+            if not isinstance(function, dict):
+                raise ToolProtocolError("assistant tool call function must be an object")
+            name = function.get("name")
+            if not isinstance(name, str) or not _TOOL_NAME.fullmatch(name):
+                raise ToolProtocolError("assistant tool call has an invalid function name")
+            if pending is not None:
+                raise ToolProtocolError("conversation contains overlapping pending tool calls")
+            seen_call_ids.add(call_id)
+            pending = (call_id, name)
         elif event.get("role") == "tool":
-            call_id = metadata.get("tool_call_id") if isinstance(metadata, dict) else None
+            call_id = metadata.get("tool_call_id")
+            tool_name = metadata.get("name")
             if pending is None or call_id != pending[0]:
                 raise ToolProtocolError("tool result does not match the pending assistant tool call")
+            if tool_name is not None and tool_name != pending[1]:
+                raise ToolProtocolError("tool result name does not match the pending assistant tool call")
             pending = None
     return pending
 

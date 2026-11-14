@@ -19,6 +19,10 @@ class Settings:
     api_key: str | None = None
     user_api_keys: dict[str, str] = field(default_factory=dict)
     trust_user_header: bool = False
+    attachment_storage_dir: str = "./data/attachments"
+    max_attachment_bytes: int = 10 * 1024 * 1024
+    rate_limit_requests_per_minute: int = 120
+    rate_limit_window_seconds: int = 60
 
     def __post_init__(self) -> None:
         if not self.database_path.strip():
@@ -27,8 +31,17 @@ class Settings:
             raise ValueError("request_timeout_seconds must be a finite positive number")
         if self.max_parallel_tasks < 1 or self.max_parallel_tasks > 3:
             raise ValueError("max_parallel_tasks must be between 1 and 3 for the three-runtime topology")
+        if not self.attachment_storage_dir.strip():
+            raise ValueError("attachment_storage_dir cannot be empty")
+        if self.max_attachment_bytes < 1024 or self.max_attachment_bytes > 25 * 1024 * 1024:
+            raise ValueError("max_attachment_bytes must be between 1 KiB and 25 MiB")
+        if self.rate_limit_requests_per_minute < 1 or self.rate_limit_requests_per_minute > 10000:
+            raise ValueError("rate_limit_requests_per_minute must be between 1 and 10000")
+        if self.rate_limit_window_seconds < 1 or self.rate_limit_window_seconds > 3600:
+            raise ValueError("rate_limit_window_seconds must be between 1 and 3600")
         if self.api_key is not None and (
             len(self.api_key) < 32 or not self.api_key.isascii() or not self.api_key.strip()
+            or any(character.isspace() for character in self.api_key)
         ):
             raise ValueError("api_key must be at least 32 ASCII characters")
         if not isinstance(self.user_api_keys, dict):
@@ -40,9 +53,15 @@ class Settings:
             or not isinstance(token, str)
             or len(token) < 32
             or not token.isascii()
+            or any(character.isspace() for character in token)
             for user_id, token in self.user_api_keys.items()
         ):
             raise ValueError("user_api_keys require non-empty IDs and tokens of at least 32 ASCII characters")
+        configured_tokens = list(self.user_api_keys.values())
+        if len(set(configured_tokens)) != len(configured_tokens):
+            raise ValueError("user_api_keys must not reuse the same token for multiple users")
+        if self.api_key is not None and self.api_key in configured_tokens:
+            raise ValueError("api_key must be different from every user API token")
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -73,4 +92,16 @@ class Settings:
             api_key=os.getenv("CLICODING_API_KEY") or None,
             user_api_keys=user_api_keys,
             trust_user_header=trust_user_header,
+            attachment_storage_dir=os.getenv(
+                "CLICODING_ATTACHMENT_STORAGE_DIR", "./data/attachments"
+            ),
+            max_attachment_bytes=int(
+                os.getenv("CLICODING_MAX_ATTACHMENT_BYTES", str(10 * 1024 * 1024))
+            ),
+            rate_limit_requests_per_minute=int(
+                os.getenv("CLICODING_RATE_LIMIT_PER_WINDOW", "120")
+            ),
+            rate_limit_window_seconds=int(
+                os.getenv("CLICODING_RATE_LIMIT_WINDOW_SECONDS", "60")
+            ),
         )

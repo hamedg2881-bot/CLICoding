@@ -1,6 +1,7 @@
 import asyncio
 import json
 
+import httpx
 import pytest
 
 from clicoding_orchestrator.gateway import GatewayError, OpenAICompatibleGateway
@@ -246,8 +247,7 @@ def test_openai_gateway_streams_structured_tool_call_deltas(monkeypatch):
             "parameters": {
                 "type": "object",
                 "properties": {"path": {"type": "string"}},
-                "required": ["path"],
-                "additionalProperties": False,
+                "required": ["path"],                "additionalProperties": False,
             },
         },
     }]
@@ -270,3 +270,351 @@ def test_openai_gateway_streams_structured_tool_call_deltas(monkeypatch):
     assert payload["parallel_tool_calls"] is False
     assert payload["tool_choice"] == "auto"
     assert payload["max_tokens"] == 128
+
+class SharedHTTPClient:
+    def __init__(self):
+        self.posts = []
+        self.streams = []
+        self.closed = False
+
+    async def post(self, url, **kwargs):
+        self.posts.append((url, kwargs))
+        return FakeJSONResponse({
+            "model": "served-model",
+            "choices": [{
+                "message": {"role": "assistant", "content": "pooled reply"},
+                "finish_reason": "stop",
+            }],
+        })
+
+    def stream(self, method, url, **kwargs):
+        self.streams.append((method, url, kwargs))
+        response = FakeResponse([
+            'data: ' + json.dumps({"choices": [{"delta": {"content": "pooled "}}]}),
+            'data: ' + json.dumps({"choices": [{"delta": {"content": "stream"}}]}),
+            "data: [DONE]",
+        ])
+        return FakeStreamContext(response)
+
+    async def aclose(self):
+        self.closed = True
+
+
+def test_openai_gateway_reuses_injected_client_for_completion_and_streaming(monkeypatch):
+    shared_client = SharedHTTPClient()
+
+    def unexpected_client(**kwargs):
+        raise AssertionError("gateway must reuse the injected application client")
+
+    monkeypatch.setattr("clicoding_orchestrator.gateway.httpx.AsyncClient", unexpected_client)
+    gateway = OpenAICompatibleGateway(
+        "http://model/v1", "served-model", client=shared_client
+    )
+    messages = [{"role": "user", "content": "Use the pooled connection"}]
+
+    async def exercise():
+        completion = await gateway.complete(messages)
+        events = [event async for event in gateway.stream_events(messages)]
+        return completion, events
+
+    completion, events = asyncio.run(exercise())
+
+    assert completion.content == "pooled reply"
+    assert [event.get("content") for event in events if "content" in event] == [
+        "pooled ", "stream"
+    ]
+    assert len(shared_client.posts) == 1
+    assert len(shared_client.streams) == 1
+    assert shared_client.posts[0][1]["timeout"] == 180.0
+    assert shared_client.streams[0][2]["timeout"] == 180.0
+    assert shared_client.closed is False
+
+
+
+
+class BlockingStreamResponse(FakeResponse):
+    def __init__(self):
+        super().__init__([])
+        self.started = asyncio.Event()
+        self.never = asyncio.Event()
+
+    async def aiter_lines(self):
+        yield 'data: ' + json.dumps({"choices": [{"delta": {"content": "first"}}]})
+        self.started.set()
+        await self.never.wait()
+
+
+class TrackingStreamContext(FakeStreamContext):
+    def __init__(self, response):
+        super().__init__(response)
+        self.exited = False
+        self.exit_exception = None
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        self.exited = True
+        self.exit_exception = exc_type
+        return False
+
+
+class CancellationTrackingClient:
+    def __init__(self, response):
+        self.response = response
+        self.context = TrackingStreamContext(response)
+
+    def stream(self, method, url, **kwargs):
+        return self.context
+
+
+@pytest.mark.parametrize("stream_method", ["stream", "stream_events"])
+def test_openai_gateway_closes_upstream_stream_when_consumer_is_cancelled(stream_method):
+    response = BlockingStreamResponse()
+    client = CancellationTrackingClient(response)
+    gateway = OpenAICompatibleGateway(
+        "http://model/v1", "served-model", client=client
+    )
+
+    async def exercise():
+        iterator = (
+            gateway.stream([{"role": "user", "content": "Keep streaming"}])
+            if stream_method == "stream"
+            else gateway.stream_events([{"role": "user", "content": "Keep streaming"}])
+        )
+        first = await anext(iterator)
+        assert first == ("first" if stream_method == "stream" else {"content": "first"})
+        next_piece = asyncio.create_task(anext(iterator))
+        await response.started.wait()
+        next_piece.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await next_piece
+        await iterator.aclose()
+
+    asyncio.run(exercise())
+    assert client.context.exited is True
+    assert client.context.exit_exception is asyncio.CancelledError
+
+
+
+class ConcurrentSharedClient:
+    def __init__(self):
+        self.started = 0
+        self.max_active = 0
+        self.both_started = asyncio.Event()
+        self.calls = []
+
+    async def post(self, url, **kwargs):
+        self.started += 1
+        active = self.started
+        self.max_active = max(self.max_active, active)
+        self.calls.append((url, kwargs))
+        if self.started == 2:
+            self.both_started.set()
+        await asyncio.wait_for(self.both_started.wait(), timeout=1)
+        self.started -= 1
+        return FakeJSONResponse({
+            "model": "served-model",
+            "choices": [{
+                "message": {"role": "assistant", "content": "concurrent reply"},
+                "finish_reason": "stop",
+            }],
+        })
+
+
+def test_openai_gateway_shared_client_supports_concurrent_completions():
+    client = ConcurrentSharedClient()
+    gateway = OpenAICompatibleGateway(
+        "http://model/v1", "served-model", client=client
+    )
+
+    async def exercise():
+        return await asyncio.gather(
+            gateway.complete([{"role": "user", "content": "first"}]),
+            gateway.complete([{"role": "user", "content": "second"}]),
+        )
+
+    results = asyncio.run(exercise())
+    assert [item.content for item in results] == [
+        "concurrent reply", "concurrent reply"
+    ]
+    assert len(client.calls) == 2
+    assert client.max_active == 2
+
+
+@pytest.mark.parametrize("stream_method", ["stream", "stream_events"])
+@pytest.mark.parametrize(
+    "event_payload, expected_message",
+    [
+        ('[]', "invalid streaming event"),
+        ('{"choices": {}}', "invalid streaming choices"),
+        ('{"choices": ["not-a-choice"]}', "invalid streaming choice"),
+        ('{"choices": [{"delta": []}]}', "invalid streaming delta"),
+    ],
+)
+def test_openai_gateway_rejects_malformed_sse_event_shapes(
+    stream_method, event_payload, expected_message
+):
+    response = FakeResponse([f"data: {event_payload}", "data: [DONE]"])
+    client = FakeAsyncClient(response)
+    gateway = OpenAICompatibleGateway(
+        "http://model/v1", "served-model", client=client
+    )
+
+    async def collect():
+        iterator = (
+            gateway.stream([{"role": "user", "content": "Hi"}])
+            if stream_method == "stream"
+            else gateway.stream_events([{"role": "user", "content": "Hi"}])
+        )
+        return [item async for item in iterator]
+
+    with pytest.raises(GatewayError, match=expected_message):
+        asyncio.run(collect())
+
+
+
+class InvalidJSONResponse:
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        raise json.JSONDecodeError("invalid", "{", 0)
+
+
+class FailingPostClient:
+    def __init__(self, error):
+        self.error = error
+
+    async def post(self, url, **kwargs):
+        raise self.error
+
+
+class FailingStreamResponse(FakeResponse):
+    def raise_for_status(self):
+        raise self.error
+
+
+class FailingStreamContext:
+    def __init__(self, error):
+        self.error = error
+
+    async def __aenter__(self):
+        raise self.error
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
+
+
+class FailingStreamClient:
+    def __init__(self, error):
+        self.error = error
+
+    def stream(self, method, url, **kwargs):
+        return FailingStreamContext(self.error)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx.ConnectTimeout("upstream timed out"),
+        httpx.ConnectError("upstream unavailable"),
+    ],
+)
+def test_openai_gateway_normalizes_completion_transport_errors(error):
+    gateway = OpenAICompatibleGateway(
+        "http://model/v1", "served-model", client=FailingPostClient(error)
+    )
+
+    with pytest.raises(GatewayError, match="Upstream model request failed"):
+        asyncio.run(gateway.complete([{"role": "user", "content": "Hi"}]))
+
+
+def test_openai_gateway_normalizes_malformed_completion_json():
+    gateway = OpenAICompatibleGateway(
+        "http://model/v1", "served-model",
+        client=FakeCompleteClient(InvalidJSONResponse()),
+    )
+
+    with pytest.raises(GatewayError, match="Upstream model request failed"):
+        asyncio.run(gateway.complete([{"role": "user", "content": "Hi"}]))
+
+
+@pytest.mark.parametrize("stream_method", ["stream", "stream_events"])
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx.ReadTimeout("upstream timed out"),
+        httpx.ConnectError("upstream unavailable"),
+    ],
+)
+def test_openai_gateway_normalizes_stream_transport_errors(stream_method, error):
+    gateway = OpenAICompatibleGateway(
+        "http://model/v1", "served-model",
+        client=FailingStreamClient(error),
+    )
+
+    async def collect():
+        iterator = (
+            gateway.stream([{"role": "user", "content": "Hi"}])
+            if stream_method == "stream"
+            else gateway.stream_events([{"role": "user", "content": "Hi"}])
+        )
+        return [item async for item in iterator]
+
+    with pytest.raises(GatewayError, match="Upstream streaming request failed"):
+        asyncio.run(collect())
+
+
+
+@pytest.mark.parametrize(
+    "payload, expected_message",
+    [
+        ([], "invalid chat-completion response"),
+        ({}, "invalid or empty chat-completion choices"),
+        ({"choices": {}}, "invalid or empty chat-completion choices"),
+        ({"choices": []}, "invalid or empty chat-completion choices"),
+        ({"choices": ["bad"]}, "invalid chat-completion choice"),
+        ({"choices": [{"message": []}]}, "invalid assistant message"),
+        ({"choices": [{"message": {"content": 7}}]}, "non-text assistant content"),
+        ({"choices": [{"message": {"content": None}}]}, "neither assistant content nor tool calls"),
+        ({"choices": [{"message": {"content": None, "tool_calls": {}}}]}, "invalid tool_calls"),
+        ({"choices": [{"message": {"content": None, "tool_calls": ["bad"]}}]}, "invalid tool call"),
+        (
+            {"choices": [{"message": {"content": None, "tool_calls": [
+                {"id": "call_1", "type": "function", "function": {"name": "run", "arguments": {}}}
+            ]}}]},
+            "non-text tool-call arguments",
+        ),
+        (
+            {"choices": [{"message": {"content": None, "tool_calls": [
+                {"id": "call_1", "type": "function", "function": {"name": "", "arguments": "{}"}}
+            ]}}]},
+            "valid function name",
+        ),
+    ],
+)
+def test_openai_gateway_rejects_malformed_completion_response_shapes(
+    payload, expected_message
+):
+    gateway = OpenAICompatibleGateway(
+        "http://model/v1", "served-model",
+        client=FakeCompleteClient(FakeJSONResponse(payload)),
+    )
+
+    with pytest.raises(GatewayError, match=expected_message):
+        asyncio.run(gateway.complete([{"role": "user", "content": "Validate response"}]))
+
+
+def test_openai_gateway_rejects_non_string_returned_model():
+    payload = {
+        "model": {"name": "unexpected"},
+        "choices": [{
+            "message": {"role": "assistant", "content": "hello"},
+            "finish_reason": "stop",
+        }],
+    }
+    gateway = OpenAICompatibleGateway(
+        "http://model/v1", "served-model",
+        client=FakeCompleteClient(FakeJSONResponse(payload)),
+    )
+
+    with pytest.raises(GatewayError, match="invalid model name"):
+        asyncio.run(gateway.complete([{"role": "user", "content": "Hi"}]))

@@ -1,7 +1,7 @@
 # Chat Experience and Interaction Contract
 
 **Status:** Target contract for the Conversation-First implementation  
-**Date:** 2026-11-11
+**Date:** 2026-11-14
 
 ## Product objective
 
@@ -57,11 +57,13 @@ CLICoding must feel like a high-quality modern AI assistant in Open WebUI and su
 
 The first public adapter remains OpenAI Chat Completions compatible for common clients. Compatibility must be tested against actual client behavior, not inferred from endpoint names. Required next additions include tool-call message round-trips, cancellation, request option forwarding, and clear streaming semantics. A future Responses-style event API may be added as a richer native interface without breaking the Chat Completions adapter.
 
-## Implementation status (2026-11-11)
+## Implementation status (2026-11-14)
 
 - Implemented: conversation-first direct chat routing; explicit specialist routing; persistent conversation history; Open WebUI identity mapping; actual upstream SSE token streaming for direct chat; completed-turn persistence only after successful stream completion.
-- Not yet implemented: client-visible cancellation endpoint/state; tool-call round-trip and safe workstation tool broker; context-window budgeting/compaction; regeneration/edit lineage; richer multimodal attachment storage; IDE reference adapter; specialist progress events.
-- Streaming specialist executions currently emit a final-answer SSE sequence after execution completes. They are not token-streamed and must not be described as such.
+- Implemented: specialist plan/task lifecycle events are streamed as custom `event: progress` SSE frames with safe status metadata; final specialist answer is sent after orchestration completes and is not represented as token-by-token streaming.
+- Implemented: backend tool-call round-trip and safe workstation tool broker, context-window budgeting/compaction, regenerate/edit lineage, typed image attachment storage, and IDE reference adapter.
+- Not yet accepted: actual Open WebUI rendering of the custom `x_clicoding.progress` event metadata, multi-turn/SSE/Stop/regenerate/edit behavior against supported clients, and real-model/DGX acceptance. These require acceptance tests against the actual client and runtime; source-level API tests are not a substitute.
+- Not yet implemented: automatic attachment expiry/retention, image decoding/content validation and malware scanning; packaged IDE UI and OS-level process sandboxing.
 
 ## Release gates
 

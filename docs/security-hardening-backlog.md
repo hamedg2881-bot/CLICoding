@@ -23,6 +23,7 @@ These controls reduce risk but do not eliminate vulnerabilities in the host kern
 - [ ] **Image and supply-chain maintenance:** document image provenance, digest refresh procedure, vulnerability scanning/update policy and offline update process. Keep runtime images pinned by digest.
 - [ ] **Kernel/runtime maintenance:** define a process for tracking and applying DGX host kernel, Docker Engine and runtime security updates.
 - [ ] **Operational safeguards:** add auditable execution records, bounded retention, clear user-visible risk warnings, and a kill/disable procedure that does not require exposing Docker control to the Orchestrator.
+- [ ] **IDE workspace build isolation:** the reference adapter's `.NET build/test` commands execute project-controlled MSBuild targets and tests directly as the workstation user. Design a multi-file, offline, no-host-network sandbox with explicit workspace and package-cache mounts; do not route these commands through the single-file source runner.
 - [ ] **Isolation alternatives:** evaluate gVisor and/or a MicroVM boundary for stronger isolation, with ARM64 compatibility, performance and operational costs measured.
 
 ## Release gate

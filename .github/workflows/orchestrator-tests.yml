@@ -2,9 +2,9 @@ name: Orchestrator tests
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/cds-ai-release-integration]
   pull_request:
-    branches: [main, architecture/conversation-first-core]
+    branches: [main, feature/cds-ai-regenerate-turns]
   workflow_dispatch:
 
 permissions:
@@ -14,8 +14,10 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: pip
@@ -25,5 +27,174 @@ jobs:
         run: |
           bash -n scripts/dgx_spark_model_preflight.sh
           python -c "import yaml; yaml.safe_load(open('config/workers.example.yaml', encoding='utf-8'))"
+          python -m py_compile scripts/run_response_quality.py scripts/verify_wheelhouse.py scripts/check_sandbox_runtime.py scripts/export_sandbox_images.py
+          sudo install -d /opt/ai/clicoding/current/venv/bin
+          printf '#!/bin/sh\nexit 0\n' | sudo tee /opt/ai/clicoding/current/venv/bin/uvicorn >/dev/null
+          sudo chmod 0755 /opt/ai/clicoding/current/venv/bin/uvicorn
+          systemd-analyze verify deploy/cds-ai-orchestrator.service sandbox/clicoding-sandbox-broker.service
       - name: Run test suite
         run: pytest
+      - name: Build immutable source transfer archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          archive="CDS_AI_${GITHUB_SHA:0:12}.zip"
+          git archive --format=zip --prefix=CDS_AI/ "${GITHUB_SHA}" > "dist/${archive}"
+          (
+            cd dist
+            sha256sum "${archive}" > "${archive}.sha256"
+          )
+          printf 'revision=%s\narchive=%s\n' "${GITHUB_SHA}" "${archive}" > dist/RELEASE_INFO.txt
+          python - <<'PY'
+          import stat
+          from pathlib import Path
+          from zipfile import ZipFile
+          archive = next(Path("dist").glob("CDS_AI_*.zip"))
+          blocked_names = {
+              ".env", ".git-credentials", "id_rsa", "id_ed25519",
+              "credentials.json", "secrets.json", "settings.secrets.json",
+              ".npmrc", ".pypirc", "nuget.config",
+          }
+          with ZipFile(archive) as bundle:
+              infos = bundle.infolist()
+              names = [item.filename for item in infos]
+              assert names and all(name.startswith("CDS_AI/") for name in names)
+              for item in infos:
+                  name = item.filename
+                  mode = item.external_attr >> 16
+                  parts = [part.casefold() for part in name.split("/") if part]
+                  assert not stat.S_ISLNK(mode), f"symlink is not allowed in source bundle: {name}"
+                  assert not any(part in {
+                      ".git", "__pycache__", ".venv", "node_modules",
+                      ".ssh", ".aws", ".azure", ".gnupg", "secrets", "credentials",
+                  } for part in parts)
+                  filename = parts[-1] if parts else ""
+                  assert filename not in blocked_names, f"credential file in source bundle: {name}"
+                  assert not (filename.startswith(".env.") and filename != ".env.example")
+                  assert not filename.endswith((".pem", ".key", ".p12", ".pfx", ".kdb"))
+                  assert not filename.endswith((".sqlite", ".sqlite3", ".db"))
+          print(f"Validated {len(names)} archive entries in {archive}")
+          PY
+      - name: Publish source transfer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CDS_AI-release-${{ github.sha }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+  wheelhouse-arm64:
+    needs: test
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12.3"
+          cache: pip
+      - name: Build offline CPython 3.12 ARM64 wheelhouse
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          mkdir -p dist/wheelhouse
+          python -m pip wheel --only-binary=:all: --wheel-dir dist/wheelhouse ".[test]"
+          python - <<'PY'
+          import hashlib, json, platform, sys
+          from pathlib import Path
+          wheels = sorted(Path("dist/wheelhouse").glob("*.whl"))
+          if not wheels:
+              raise SystemExit("wheelhouse is empty")
+          manifest = {
+              "format_version": 1,
+              "python": sys.version,
+              "implementation": sys.implementation.name,
+              "machine": platform.machine(),
+              "platform": platform.platform(),
+              "wheels": [
+                  {
+                      "file": p.name,
+                      "size": p.stat().st_size,
+                      "sha256": hashlib.sha256(p.read_bytes()).hexdigest(),
+                  }
+                  for p in wheels
+              ],
+          }
+          if manifest["machine"] not in {"aarch64", "arm64"}:
+              raise SystemExit(f"unexpected wheelhouse architecture: {manifest['machine']}")
+          Path("dist/wheelhouse-manifest.json").write_text(
+              json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+          )
+          print(f"Built {len(wheels)} wheels for {manifest['machine']} / {sys.version.split()[0]}")
+          PY
+          python scripts/verify_wheelhouse.py --wheelhouse dist/wheelhouse --manifest dist/wheelhouse-manifest.json
+          tar -C dist -czf "dist/CDS_AI-wheelhouse-cp312-arm64-${GITHUB_SHA:0:12}.tar.gz" wheelhouse wheelhouse-manifest.json
+          cd dist
+          sha256sum CDS_AI-wheelhouse-cp312-arm64-${GITHUB_SHA:0:12}.tar.gz > CDS_AI-wheelhouse-cp312-arm64-${GITHUB_SHA:0:12}.tar.gz.sha256
+      - name: Publish ARM64 offline wheelhouse
+        uses: actions/upload-artifact@v4
+        with:
+          name: CDS_AI-wheelhouse-cp312-arm64-${{ github.sha }}
+          path: |
+            dist/CDS_AI-wheelhouse-cp312-arm64-*.tar.gz
+            dist/CDS_AI-wheelhouse-cp312-arm64-*.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  powershell-check:
+    runs-on: windows-latest
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@v4
+      - name: Parse Windows staging script
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $PWD "scripts/prepare_dgx_transfer.ps1"),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | Format-List | Out-String | Write-Error
+          }
+          Write-Host "PowerShell staging script syntax is valid."
+
+  transfer-bundle:
+    needs: [test, wheelhouse-arm64, powershell-check]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download exact source archive
+        uses: actions/download-artifact@v4
+        with:
+          name: CDS_AI-release-${{ github.sha }}
+          path: bundle
+      - name: Download exact ARM64 wheelhouse
+        uses: actions/download-artifact@v4
+        with:
+          name: CDS_AI-wheelhouse-cp312-arm64-${{ github.sha }}
+          path: bundle
+      - name: Assemble one transfer bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          printf 'commit=%s\nsource_archive=%s\nwheelhouse_archive=%s\npython_abi=cp312\narchitecture=aarch64\n' \
+            "${GITHUB_SHA}" \
+            "$(basename "$(find bundle -maxdepth 1 -name 'CDS_AI_*.zip' -print -quit)")" \
+            "$(basename "$(find bundle -maxdepth 1 -name 'CDS_AI-wheelhouse-cp312-arm64-*.tar.gz' -print -quit)")" \
+            > bundle/TRANSFER_MANIFEST.txt
+          tar -C bundle -czf "dist/CDS_AI-transfer-bundle-${GITHUB_SHA:0:12}.tar.gz" .
+          cd dist
+          sha256sum "CDS_AI-transfer-bundle-${GITHUB_SHA:0:12}.tar.gz" \
+            > "CDS_AI-transfer-bundle-${GITHUB_SHA:0:12}.tar.gz.sha256"
+      - name: Publish single offline transfer bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: CDS_AI-transfer-bundle-${{ github.sha }}
+          path: |
+            dist/CDS_AI-transfer-bundle-*.tar.gz
+            dist/CDS_AI-transfer-bundle-*.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 30
