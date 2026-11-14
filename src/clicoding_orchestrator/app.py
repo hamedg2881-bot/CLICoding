@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 import base64
 import hashlib
 import hmac
@@ -10,6 +11,8 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any, Literal
+
+import httpx
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -554,6 +557,19 @@ def create_app(
             )
             return history
 
+    @asynccontextmanager
+    async def lifespan(application: FastAPI):
+        # One pooled transport per application process; gateways apply each
+        # worker's own timeout to every request and stream.
+        client = httpx.AsyncClient(
+            limits=httpx.Limits(max_connections=100, max_keepalive_connections=20)
+        )
+        application.state.http_client = client
+        try:
+            yield
+        finally:
+            await client.aclose()
+
     app = FastAPI(
         title="CDS_AI Assistant",
         version="0.4.0",
@@ -561,11 +577,28 @@ def create_app(
             "OpenAI-compatible single-assistant API with persistent conversations "
             "and capability-based internal worker selection."
         ),
+        lifespan=lifespan,
     )
     app.state.database = db
     app.state.registry = worker_registry
     app.state.router = router
     app.state.orchestrator = multi_model
+
+    def gateway_for_worker(worker: Worker) -> ModelGateway:
+        if gateway is not None:
+            return gateway
+        return OpenAICompatibleGateway(
+            base_url=worker.base_url,
+            model=worker.model,
+            api_key=worker.api_key,
+            timeout_seconds=worker.timeout_seconds,
+            client=getattr(app.state, "http_client", None),
+        )
+
+    # The app owns the default orchestrator's transport factory. Injected
+    # orchestrators keep their explicitly supplied gateway factory untouched.
+    if orchestrator is None and multi_model is not None:
+        multi_model.gateway_factory = gateway_for_worker
 
     @app.middleware("http")
     async def optional_bearer_auth(request: Request, call_next):
@@ -1046,12 +1079,7 @@ def create_app(
                             status_code=503,
                             detail="No enabled worker can prepare specialist conversation context",
                         ) from exc
-                context_gateway = gateway or OpenAICompatibleGateway(
-                    base_url=context_worker.base_url,
-                    model=context_worker.model,
-                    api_key=context_worker.api_key,
-                    timeout_seconds=context_worker.timeout_seconds,
-                )
+                context_gateway = gateway_for_worker(context_worker)
                 specialist_input = (
                     {"role": input_role, "content": content, **(input_metadata or {})}
                     if edit_target is not None else None
@@ -1116,12 +1144,7 @@ def create_app(
                 except NoEligibleWorker as exc:
                     raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-                selected_gateway = gateway or OpenAICompatibleGateway(
-                    base_url=worker.base_url,
-                    model=worker.model,
-                    api_key=worker.api_key,
-                    timeout_seconds=worker.timeout_seconds,
-                )
+                selected_gateway = gateway_for_worker(worker)
                 try:
                     if generation_options and "max_tokens" in generation_options:
                         if generation_options["max_tokens"] > worker.max_output_tokens:
@@ -1851,12 +1874,7 @@ def create_app(
                     stream_input["tool_call_id"] = last_message.tool_call_id
                     if last_message.name:
                         stream_input["name"] = last_message.name
-                stream_gateway = gateway or OpenAICompatibleGateway(
-                    base_url=stream_worker.base_url,
-                    model=stream_worker.model,
-                    api_key=stream_worker.api_key,
-                    timeout_seconds=stream_worker.timeout_seconds,
-                )
+                stream_gateway = gateway_for_worker(stream_worker)
                 prepared_history = await prepare_context_history(
                     conversation_id,
                     effective_system_messages(supplied_system),
