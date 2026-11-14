@@ -2320,7 +2320,7 @@ def create_app(
         if approval is None:
             raise HTTPException(status_code=404, detail="Workspace sandbox approval not found")
         result = await _cancel_approved_snapshot(approval_id)
-        if result.get("status") in {"not_cancellable", "already_finished"}:
+        if result.get("status") == "not_cancellable":
             raise HTTPException(status_code=409, detail=result)
         return result
 
