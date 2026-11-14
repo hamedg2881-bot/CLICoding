@@ -117,7 +117,7 @@ sudo systemd-analyze verify \
 
 The sandbox is a separate privileged component. Follow [sandbox/README.md](../sandbox/README.md) to install the root-owned runner and broker, stage all pinned ARM64 images, and configure the broker. The broker and Orchestrator must point to the exact same SQLite database path.
 
-The current sandbox supports approved single-file snippets only. Do not enable IDE build/test tools as sandboxed project builds until multi-file snapshot integration is implemented and tested.
+The runner and broker now implement approved multi-file .NET 10 workspace Build/Test snapshots. This is source-level implementation only: do not enable IDE build/test tools until the exact ARM64 image lock, root-owned offline NuGet feed, sample-project restore/build/test and broker-backed Stop/cancel behavior pass on the target DGX.
 
 ## 6. Candidate service acceptance
 
