@@ -49,7 +49,7 @@ python scripts/run_response_quality.py \
 
 If the endpoint requires a bearer token, provide it through the `CDS_AI_API_KEY` environment variable; never put the token in the case file or command history. Use `--case-id` one or more times to run a focused subset. The runner records response text, served model, latency, finish reason and the case's acceptance criteria. It does not call a second model to judge itself and does not assign scores automatically.
 
-The current versioned set is `evals/response_quality/cases.jsonl` and contains 15 Persian/English cases covering conversation, strict output format, exact context recall, clarification, evidence-vs-hypothesis, coding/debugging, code review, tool/action honesty, unavailable sources, prompt injection and arithmetic. The runner records response IDs, model/fingerprint, token usage, tool calls, orchestration metadata and latency, and rejects malformed/empty completion envelopes. Image fixtures, actual tool execution and injected specialist failures require their respective runtime/acceptance environments and remain separate gates.
+The current versioned set is `evals/response_quality/cases.jsonl` and contains 20 Persian/English cases covering conversation, strict output format, exact context recall, clarification, evidence-vs-hypothesis, coding/debugging, code review, tool/action honesty, unavailable sources, prompt injection and arithmetic. The runner records response IDs, model/fingerprint, token usage, tool calls, orchestration metadata and latency, and rejects malformed/empty completion envelopes. Image fixtures, actual tool execution and injected specialist failures require their respective runtime/acceptance environments and remain separate gates.
 
 ## Execution protocol
 
@@ -63,7 +63,7 @@ The current versioned set is `evals/response_quality/cases.jsonl` and contains 1
 
 ## Release gates
 
-- [x] Versioned Persian/English benchmark set with expected facts and acceptance criteria (15 cases).
+- [x] Versioned Persian/English benchmark set with expected facts and acceptance criteria (20 cases).
 - [ ] Baseline run against the exact DGX model/runtime configuration.
 - [ ] Human-scored baseline with per-dimension scores and critical-failure review.
 - [ ] Regression run after changes to prompts, routing, context compaction or synthesis.
