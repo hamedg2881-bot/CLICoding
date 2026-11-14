@@ -83,9 +83,11 @@ The CI workflow builds the complete project plus test-dependency wheelhouse on a
 
 The sandbox requires the exact pinned ARM64 images in `sandbox/clicoding_sandbox_runner.py`, including the locally built TypeScript image. Do not pull these images on the DGX during offline deployment.
 
-On an internet-connected staging workstation with Docker and Buildx (native ARM64 is preferred; Docker Desktop must support `linux/arm64`), extract the source archive and run:
+On an internet-connected staging workstation with Docker and Buildx (native ARM64 is preferred; Docker Desktop must support `linux/arm64`), extract the transfer bundle, then extract its source archive and run:
 
 ```bash
+mkdir -p source
+unzip -q CDS_AI_<12-char-sha>.zip -d source
 python source/CDS_AI/scripts/export_sandbox_images.py \
   --pull \
   --build-typescript \
