@@ -7,7 +7,7 @@ import hashlib
 import hmac
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import socketserver
 import sqlite3
 import stat
@@ -22,7 +22,7 @@ RUNNER_PATH = "/usr/local/sbin/clicoding-sandbox-run"
 SOCKET_GROUP = os.getenv("CLICODING_BROKER_GROUP", "clicoding-sandbox")
 MAX_REQUEST_BYTES = 4096
 MAX_RESPONSE_BYTES = 512 * 1024
-RUNNER_TIMEOUT_SECONDS = 75
+RUNNER_TIMEOUT_SECONDS = 660
 
 
 def now() -> str:
@@ -101,6 +101,134 @@ def claim_approval(approval_id: str) -> tuple[str, str, str]:
         connection.close()
 
 
+
+def claim_workspace_approval(approval_id: str) -> dict:
+    """Atomically consume an approved immutable multi-file workspace snapshot."""
+    if not isinstance(approval_id, str):
+        raise ValueError("approval_id must be a UUID string")
+    try:
+        approval_id = str(uuid.UUID(approval_id))
+    except (ValueError, AttributeError) as exc:
+        raise ValueError("invalid approval_id") from exc
+
+    connection = database_connection()
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute(
+            """
+            SELECT action, project_path, files_json, snapshot_sha256, status, expires_at
+            FROM sandbox_workspace_approvals WHERE id = ?
+            """,
+            (approval_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError("workspace approval not found")
+        if row["status"] != "approved":
+            raise ValueError(f"workspace approval is not approved (status={row['status']})")
+        if row["expires_at"] <= now():
+            raise ValueError("workspace approval has expired")
+        if row["action"] not in {"build", "test"}:
+            raise ValueError("unsupported workspace sandbox action")
+
+        try:
+            files = json.loads(row["files_json"])
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ValueError("workspace snapshot JSON is invalid") from exc
+        if not isinstance(files, list) or not 1 <= len(files) <= 200:
+            raise ValueError("workspace snapshot file count is invalid")
+        total_bytes = 0
+        seen: set[str] = set()
+        manifest = []
+        target_found = False
+        for item in files:
+            if not isinstance(item, dict) or set(item) != {"path", "content", "sha256", "bytes"}:
+                raise ValueError("workspace snapshot entry is invalid")
+            path = item["path"]
+            if (
+                not isinstance(path, str) or not path or len(path) > 512
+                or "\\" in path or "\x00" in path
+                or PurePosixPath(path).is_absolute()
+                or PureWindowsPath(path).is_absolute()
+                or any(part in {"", ".", ".."} for part in PurePosixPath(path).parts)
+            ):
+                raise ValueError("workspace snapshot path is unsafe")
+            relative = PurePosixPath(path)
+            key = relative.as_posix().casefold()
+            if key in seen:
+                raise ValueError("workspace snapshot contains duplicate paths")
+            seen.add(key)
+            if any(part.casefold() in {
+                ".git", ".ssh", ".aws", ".azure", ".gnupg", ".venv", "venv",
+                "node_modules", "bin", "obj", "__pycache__", ".idea", ".vs",
+                "secrets", "credentials",
+            } for part in relative.parts[:-1]):
+                raise ValueError("workspace snapshot contains a blocked directory")
+            filename = relative.name.casefold()
+            if filename in {
+                ".env", ".git-credentials", "id_rsa", "id_ed25519",
+                "credentials.json", "secrets.json", ".npmrc", ".pypirc", "nuget.config",
+            } or (filename.startswith(".env.") and filename != ".env.example") or Path(filename).suffix in {
+                ".pem", ".key", ".p12", ".pfx", ".kdb",
+            }:
+                raise ValueError("workspace snapshot contains a blocked credential file")
+            source = item["content"]
+            if not isinstance(source, str):
+                raise ValueError("workspace snapshot content must be UTF-8 text")
+            encoded = source.encode("utf-8")
+            digest = hashlib.sha256(encoded).hexdigest()
+            if len(encoded) > 1_000_000 or item["bytes"] != len(encoded):
+                raise ValueError("workspace snapshot file size mismatch")
+            if not isinstance(item["sha256"], str) or not hmac.compare_digest(
+                digest, item["sha256"]
+            ):
+                raise ValueError("workspace snapshot file digest mismatch")
+            total_bytes += len(encoded)
+            if total_bytes > 5 * 1024 * 1024:
+                raise ValueError("workspace snapshot exceeds 5 MiB")
+            manifest.append({"path": relative.as_posix(), "sha256": digest, "bytes": len(encoded)})
+            if relative.as_posix() == row["project_path"]:
+                target_found = True
+
+        project_path = row["project_path"]
+        if (
+            not isinstance(project_path, str)
+            or PurePosixPath(project_path).suffix.lower() not in {".sln", ".slnx", ".csproj"}
+            or not target_found
+        ):
+            raise ValueError("workspace project target is missing or unsupported")
+        manifest.sort(key=lambda entry: entry["path"])
+        canonical = json.dumps(
+            manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        snapshot_digest = hashlib.sha256(canonical).hexdigest()
+        if not hmac.compare_digest(snapshot_digest, row["snapshot_sha256"]):
+            raise ValueError("workspace snapshot digest mismatch")
+
+        connection.execute(
+            """
+            INSERT INTO sandbox_execution_claims
+                (approval_id, source_sha256, status, claimed_at)
+            VALUES (?, ?, 'running', ?)
+            """,
+            (approval_id, snapshot_digest, now()),
+        )
+        connection.commit()
+        return {
+            "action": row["action"],
+            "project_path": project_path,
+            "files": files,
+            "snapshot_sha256": snapshot_digest,
+        }
+    except sqlite3.IntegrityError as exc:
+        connection.rollback()
+        raise ValueError("approval has already been consumed") from exc
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
 def persist_result(approval_id: str, digest: str, result: dict) -> None:
     connection = database_connection()
     try:
@@ -143,10 +271,16 @@ def persist_result(approval_id: str, digest: str, result: dict) -> None:
 
 
 def execute_approval(approval_id: str) -> dict:
-    language, source, digest = claim_approval(approval_id)
-    payload = json.dumps(
-        {"language": language, "code": source}, ensure_ascii=False
-    ).encode("utf-8")
+    try:
+        language, source, digest = claim_approval(approval_id)
+        payload_object = {"language": language, "code": source}
+    except ValueError as exc:
+        if str(exc) != "approval not found":
+            raise
+        workspace = claim_workspace_approval(approval_id)
+        digest = workspace["snapshot_sha256"]
+        payload_object = {"mode": "workspace", **workspace}
+    payload = json.dumps(payload_object, ensure_ascii=False).encode("utf-8")
     try:
         completed = subprocess.run(
             [RUNNER_PATH],
