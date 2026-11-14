@@ -215,7 +215,7 @@ def test_broker_persists_cancelled_status_when_cancel_races_runner_result(tmp_pa
     )
     with database.session() as connection:
         row = connection.execute(
-            "SELECT status, result_json FROM sandbox_execution_results WHERE approval_id = ?",
+            "SELECT status, result_json FROM sandbox_workspace_execution_results WHERE approval_id = ?",
             (approval["id"],),
         ).fetchone()
     assert row["status"] == "cancelled"
