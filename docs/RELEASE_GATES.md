@@ -23,7 +23,8 @@
 ## Remaining source capabilities
 - [x] Worker-specific specialist context compaction for planning, each specialist task, and final synthesis; mandatory task/request/result context is reserved before summarizing history, and canonical conversation events are not rewritten.
 - [x] Specialist task lifecycle progress is emitted as structured `event: progress` SSE metadata alongside the final OpenAI-compatible completion stream; internal model reasoning and raw worker outputs are not exposed.
-- [x] First-party CDS_AI browser chat interface at `/` with RTL layout, independent session-scoped conversations, history reload, task-type selection, live specialist progress rendering, direct-chat token streaming and Stop wired to the authenticated cancellation API.
+- [x] First-party CDS_AI browser chat interface at `/` with RTL layout, API-identity-isolated session conversations, history reload, task-type selection, PNG/JPEG/GIF/WebP attachment upload, live specialist progress rendering, direct-chat token streaming and Stop wired to the authenticated cancellation API.
+- [x] CI syntax-checks the packaged UI JavaScript and verifies the HTML asset is present in the built Python wheel.
 - [x] Typed, conversation-scoped image attachment records, bounded binary upload, MIME sniffing, SHA-256 integrity checks, private storage and authenticated retrieval/deletion.
 - [x] Offline SQLite and attachment backup/restore CLI with versioned manifest, integrity verification and retained pre-restore rollback paths.
 - [ ] Automatic attachment retention/expiry, image decoding/content validation and malware scanning.
