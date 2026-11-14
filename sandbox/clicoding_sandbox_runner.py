@@ -263,12 +263,12 @@ def cleanup_container(cid_file: str, execution_id: str) -> None:
 
 def resolve_runtime_image(source_reference: str, required_lock: bool = False) -> str:
     lock_path = Path(IMAGE_LOCK_PATH)
+    if lock_path.is_symlink():
+        raise RequestError("sandbox image lock must not be a symlink")
     if not lock_path.exists():
         if required_lock:
             raise RequestError("root-owned sandbox image lock is missing")
         return source_reference
-    if lock_path.is_symlink():
-        raise RequestError("sandbox image lock must not be a symlink")
     metadata = lock_path.stat()
     if metadata.st_uid != 0 or metadata.st_mode & 0o022:
         raise RequestError("sandbox image lock must be root-owned and not group/world writable")
