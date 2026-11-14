@@ -181,6 +181,15 @@ class Database:
 
                 CREATE INDEX IF NOT EXISTS ix_sandbox_workspace_approvals_owner
                     ON sandbox_workspace_approvals(owner_id, workspace_id, created_at);
+
+                CREATE TABLE IF NOT EXISTS sandbox_workspace_execution_results (
+                    approval_id TEXT PRIMARY KEY,
+                    source_sha256 TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    result_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (approval_id) REFERENCES sandbox_workspace_approvals(id)
+                );
                 """
             )
         self._migrate_event_metadata()
@@ -1185,17 +1194,28 @@ class Database:
         import json
 
         with self.session() as connection:
+            row = None
             try:
                 row = connection.execute(
                     """
                     SELECT approval_id, source_sha256, status, result_json, created_at
-                    FROM sandbox_execution_results WHERE approval_id = ?
+                    FROM sandbox_workspace_execution_results WHERE approval_id = ?
                     """,
                     (approval_id,),
                 ).fetchone()
             except sqlite3.OperationalError:
-                # The broker creates this table on its first accepted execution.
-                return None
+                pass
+            if row is None:
+                try:
+                    row = connection.execute(
+                        """
+                        SELECT approval_id, source_sha256, status, result_json, created_at
+                        FROM sandbox_execution_results WHERE approval_id = ?
+                        """,
+                        (approval_id,),
+                    ).fetchone()
+                except sqlite3.OperationalError:
+                    return None
         if row is None:
             return None
         result = dict(row)
