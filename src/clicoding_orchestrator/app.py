@@ -40,7 +40,7 @@ from .security import SecurityStore
 
 
 SANDBOX_BROKER_SOCKET_PATH = os.environ.get(
-    "CLICODING_SANDBOX_BROKER_SOCKET", SANDBOX_BROKER_SOCKET_PATH
+    "CLICODING_SANDBOX_BROKER_SOCKET", "/run/clicoding-sandbox/broker.sock"
 )
 
 
