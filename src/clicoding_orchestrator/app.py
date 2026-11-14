@@ -967,8 +967,11 @@ def create_app(
                     db, conversation_id, input_role, content, input_metadata
                 )
                 db.invalidate_summaries_from_sequence(conversation_id, regeneration_event["sequence"])
-                stored_events = db.list_events(conversation_id)
-                input_event = stored_events[-2]
+                # Keep the prior assistant event durable, but exclude it from the
+                # regenerated prompt so the model receives the matching user input
+                # as the final conversation message.
+                stored_events = db.list_events(conversation_id)[:-1]
+                input_event = stored_events[-1]
             elif edit_event_id is not None:
                 edit_target, stored_events = _prepare_edit(
                     db, conversation_id, edit_event_id
