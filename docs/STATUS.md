@@ -1,3 +1,14 @@
+## 2026-11-14 — CDS_AI response-quality safeguards
+
+- Strengthened the shared assistant policy: answer the user's actual goal first, satisfy multi-part requirements, calibrate uncertainty, preserve conversation decisions, verify calculations/technical details, and distinguish evidence from assumptions.
+- Strengthened specialist final synthesis to cover every acceptance criterion, preserve complete requested code, and disclose failed, blocked or cancelled work.
+- Added deterministic incomplete-work reporting after synthesis so a partial specialist execution cannot be presented as fully completed; empty synthesis falls back to specialist evidence.
+- Added a regression test for a successful implementation task paired with a failed independent review task.
+- Reconciled context-budgeting documentation with the implemented worker-specific specialist compaction and bounded chunk summarization.
+- Added [RESPONSE_QUALITY.md](RESPONSE_QUALITY.md), a quality rubric and real-model evaluation plan covering Persian/English, context continuity, coding, debugging, review, tool honesty, long context, partial failure and vision.
+- Unit/CI tests validate prompt and orchestration contracts only. Real-model quality has not yet been measured; DGX/model acceptance remains open.
+- No DGX files, services, model runtimes or containers were changed.
+
 ## 2026-11-14 — First-party CDS_AI chat interface
 
 - Added a first-party browser chat interface at `/`, packaged with the Python distribution and served by FastAPI.
