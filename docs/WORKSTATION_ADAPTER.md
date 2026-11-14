@@ -25,6 +25,8 @@ The adapter's idempotency SQLite file must be stored outside the workspace. The 
 
 There is no arbitrary `shell`, `run_command`, or arbitrary executable tool. Build/test can still run project-defined MSBuild targets and therefore require explicit user approval. The adapter invokes subprocesses with argument arrays and `shell=False`, a fixed working directory, a restricted environment, and a timeout.
 
+**Important:** `.NET build/test` runs directly as the workstation user, not inside the Docker code sandbox. `--no-restore` disables NuGet restore but does not prevent project-controlled MSBuild targets, analyzers, generators, or tests from launching child processes, reading files available to the user, or accessing the host network. The approval prompt includes this risk boundary; approve only projects you trust. The separate Docker sandbox supports approved single-file snippets and does not currently provide a multi-file workspace build sandbox.
+
 ## Approval and idempotency
 
 Integrators provide an approval callback. If no callback is provided, file writes and build/test are denied. The approval request includes workspace ID, tool name, command or file path, hashes, and a bounded content preview.
