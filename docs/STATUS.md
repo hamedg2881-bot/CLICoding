@@ -9,15 +9,6 @@
 - Unit/CI tests validate prompt and orchestration contracts only. Real-model quality has not yet been measured; DGX/model acceptance remains open.
 - No DGX files, services, model runtimes or containers were changed.
 
-## 2026-11-14 — First-party CDS_AI chat interface
-
-- Added a first-party browser chat interface at `/`, packaged with the Python distribution and served by FastAPI.
-- The UI uses the existing authenticated conversation and OpenAI-compatible streaming APIs; it does not connect to internal worker endpoints.
-- Implemented RTL-first Persian layout, task-type selection, independent session-scoped chat list with API-identity isolation, server-backed history reload, direct token streaming, specialist progress rendering, Stop through the existing conversation cancellation endpoint, and PNG/JPEG/GIF/WebP upload through the authenticated attachment API.
-- The progress panel maps only safe lifecycle event types to user-facing status labels; it does not display internal worker IDs, task prompts, model reasoning or raw worker output.
-- Added a route-level UI smoke test. CI validates inline JavaScript syntax and confirms the HTML asset is included in the built wheel. Browser/Playwright acceptance, mobile/keyboard accessibility, cancellation race testing, and Open WebUI custom-progress rendering remain open. Image upload uses the existing bounded, MIME-checked, SHA-256-verified attachment API; changing API identity clears the browser's session-scoped chat index.
-- No DGX files, services, runtimes or containers were changed. No ZIP transfer or service restart occurred.
-
 ## 2026-11-11 — Offline backup and restore
 
 - Added the packaged cds-ai-backup CLI and a source-tree wrapper. The utility uses SQLite's online backup API, includes only attachment files referenced by the database snapshot, verifies SQLite integrity and SHA-256/size metadata, and writes a versioned manifest.
@@ -54,7 +45,6 @@
 - Conversation lifecycle: persistent history, exact retry idempotency, latest-turn regenerate and guarded edit/resubmit operations are present in PR #13; the integration candidate adds an authenticated active-turn cancellation endpoint.
 - Context lifecycle: direct chat and tool-call turns use model-assisted compaction with versioned summaries. Original events remain intact; recent three user turns are retained; summaries are invalidated when rewritten history intersects their coverage. Specialist planning, each task worker and final synthesis now receive independently budgeted context summaries when needed; canonical history is not rewritten.
 - Streaming: direct chat and tool-call deltas stream; specialist requests emit structured plan/task lifecycle progress during execution, followed by the buffered final answer. Progress is carried as `x_clicoding.progress` metadata in `event: progress` SSE frames; no internal reasoning or raw worker output is exposed.
-- First-party UI: `/` serves a packaged RTL-aware CDS_AI chat interface with session-scoped independent conversations, history reload, task-type selection, live progress rendering, direct token display and Stop wired to the authenticated cancellation API. Desktop and basic mobile Playwright tests pass for mocked UI contracts and a live FastAPI backend with a fake model gateway; real-model/DGX and broader accessibility acceptance remains open. Open WebUI custom progress rendering is not yet verified.
 - Workstation execution: approved, allow-listed reference tool host; no arbitrary shell tool.
 - Worker example uses recorded ports 8003/8004/8005 and leaves all workers disabled. Served aliases and tool-call capability require live verification.
 - Attachments: conversation-scoped PNG/JPEG/GIF/WebP upload, bounded size, MIME sniffing, SHA-256 integrity, private local storage, owner-scoped fetch/delete, and attachment-reference resolution into model vision payloads. Automatic expiry/retention and storage backup/restore policy remain open.
