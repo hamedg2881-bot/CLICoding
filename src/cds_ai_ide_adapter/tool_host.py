@@ -301,13 +301,13 @@ class WorkspaceToolHost:
             ),
             function(
                 "workspace_dotnet_build",
-                "Run an approved offline .NET build with a fixed dotnet command and no shell.",
+                "Run an approved .NET build on the workstation host. Project targets may execute code with the user's OS permissions and network access; this is not sandboxed.",
                 {"project": string},
                 [],
             ),
             function(
                 "workspace_dotnet_test",
-                "Run approved offline .NET tests with a fixed dotnet command and no shell.",
+                "Run approved .NET tests on the workstation host. Build targets and tests may execute code with the user's OS permissions and network access; this is not sandboxed.",
                 {"project": string},
                 [],
             ),
@@ -694,7 +694,18 @@ class WorkspaceToolHost:
                 tool_name=tool_name,
                 workspace_id=self.workspace_id,
                 summary=summary,
-                details={"command": command, "cwd": str(self.root)},
+                details={
+                    "command": command,
+                    "cwd": str(self.root),
+                    "execution_boundary": "workstation_host_process",
+                    "sandboxed": False,
+                    "risk_warning": (
+                        "The project controls MSBuild targets, analyzers, generators and test code. "
+                        "They may execute child processes, access files available to the current user, "
+                        "and use host network access. shell=False prevents shell interpolation but "
+                        "does not sandbox project-controlled execution."
+                    ),
+                },
             )
         )):
             return {"status": "approval_denied", "command": command}
