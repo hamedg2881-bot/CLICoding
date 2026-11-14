@@ -1,38 +1,55 @@
 # DGX Spark — controlled staging checklist
 
-**Status:** Staging instructions only. This document does not authorize installation, service changes, model changes, or runtime restarts.
+**Status:** Staging instructions only. This document does not authorize installation, service changes, model changes, enabling workers, or runtime restarts.
 
-## 1. Source revision
+**Transfer policy:** Download a checksummed ZIP artifact from GitHub Actions on the exact reviewed commit and transfer it with WinSCP or another approved LAN file-transfer method. The DGX host does not need Git and must not use Git commands.
 
-Use the canonical repository and the reviewed source revision recorded in `docs/STATUS.md`. Do not transfer a working tree with uncommitted changes.
+## 1. Select and download the exact source artifact
 
-On a machine with the repository checkout:
+1. Open the Draft PR for the reviewed candidate: https://github.com/hamedg2881-bot/CLICoding/pull/14
+2. Confirm the PR is still open and Draft. Record its exact head commit SHA.
+3. Open the successful GitHub Actions run for that exact SHA. Download the artifact named `CDS_AI-release-<full-commit-sha>`.
+4. The downloaded artifact contains:
+   - `CDS_AI_<12-char-sha>.zip` — source archive;
+   - matching `.zip.sha256` — SHA-256 checksum;
+   - `RELEASE_INFO.txt` — full source revision and archive filename.
+5. Do not use a GitHub branch ZIP, a stale artifact from another run, or a ZIP whose commit SHA does not match the reviewed PR head.
+
+The CI workflow creates the archive from the exact tested commit and publishes it only after its test job succeeds. The artifact is retained for 30 days; download and preserve it in the approved release store before expiry.
+
+## 2. Transfer and verify on DGX (read-only staging)
+
+Transfer the three artifact files to a new, version-specific staging directory, for example `/opt/ai/clicoding/releases/<full-commit-sha>/`. Do not overwrite the current application directory.
+
+On DGX:
 
 ```bash
-git fetch origin main
-git checkout main
-git pull --ff-only origin main
-git status --short
-git rev-parse HEAD
-git bundle create CLICoding-main.bundle main
-sha256sum CLICoding-main.bundle > CLICoding-main.bundle.sha256
+cd /opt/ai/clicoding/releases/<full-commit-sha>
+sha256sum -c CDS_AI_<12-char-sha>.zip.sha256
+unzip -t CDS_AI_<12-char-sha>.zip
+cat RELEASE_INFO.txt
 ```
 
-Copy both `CLICoding-main.bundle` and `CLICoding-main.bundle.sha256` to DGX through the approved LAN transfer path. On DGX, verify the checksum before importing:
+Confirm that:
+- the checksum reports `OK`;
+- ZIP integrity validation succeeds;
+- the full revision in `RELEASE_INFO.txt` exactly matches the reviewed PR head;
+- the archive contains the expected `CDS_AI/` root directory.
+
+Extract only into a new, empty staging directory:
 
 ```bash
-sha256sum -c CLICoding-main.bundle.sha256
-git clone CLICoding-main.bundle CLICoding
-cd CLICoding
-git checkout main
-git rev-parse HEAD
+mkdir source
+unzip -q CDS_AI_<12-char-sha>.zip -d source
+test -f source/CDS_AI/pyproject.toml
+test -f source/CDS_AI/orchestrator/README.md
 ```
 
-If using a direct Git fetch from DGX is permitted, verify the exact commit SHA against the reviewed SHA in the status record instead.
+Do not copy files over a live installation during staging.
 
-## 2. Read-only DGX preflight
+## 3. Read-only DGX preflight
 
-Before creating a virtual environment or changing any service, record:
+Before creating a virtual environment, installing packages, changing a service, or touching model runtimes, record:
 
 ```bash
 uname -a
@@ -45,50 +62,67 @@ nvidia-smi
 docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
 ```
 
-Confirm ARM64 architecture, Python version, disk location for the SQLite database, available host memory, and the actual OpenAI-compatible worker endpoints. Do not infer worker ports or model aliases from old configuration.
+Confirm ARM64 architecture, Python 3.11+, disk location for SQLite and attachments, available host memory, Docker availability for the existing sandbox, and the actual OpenAI-compatible worker endpoints. Do not infer worker ports or model aliases from an example file or old notes.
 
-## 3. Python dependencies and offline installation
+## 4. Offline dependency preparation (not yet an install command)
 
-- The package requires Python 3.11 or newer.
-- DGX Spark is ARM64; stage wheels for the exact DGX Python minor version and architecture. Do not copy an x86_64 virtual environment or x86_64 wheels.
-- Resolve and stage all package/build dependencies from the approved internal package mirror or a compatible ARM64 staging host before offline installation.
-- Keep the wheelhouse and virtual environment outside the Git working tree.
-- Install with pip in offline mode only after the wheelhouse is verified. Do not allow pip to fall back to public package indexes.
-- Run `pytest` on DGX before enabling the service.
+- Stage wheels for the exact DGX Python minor version and ARM64 architecture on an approved compatible staging machine or internal package mirror.
+- Resolve the complete dependency closure from `pyproject.toml`; include build-system dependencies and the optional test dependencies if tests will run on DGX.
+- Do not copy an x86_64 virtual environment or x86_64 wheels.
+- Keep the wheelhouse, virtual environment, secrets and runtime data outside the source tree.
+- Installation must use pip offline mode and an explicit local wheelhouse; public package indexes must not be fallback sources.
+- Verify wheel hashes and retain the dependency lock/inventory with the release record.
 
-## 4. Initial safe runtime configuration
+The current repository does not yet contain a fully validated, DGX-Python-specific ARM64 wheelhouse. Therefore an offline installation is not yet authorized by this checklist.
+
+## 5. Initial safe runtime configuration (after source and dependency gates)
 
 - Start with `CLICODING_ENABLE_PLANNING=false`.
-- Use an absolute persistent `CLICODING_DATABASE_PATH`.
-- Copy `config/workers.example.yaml` to a private file outside Git and replace every example endpoint/model alias with a verified live endpoint.
-- Keep worker concurrency conservative (start at 1); the configured limit is process-local.
-- Supply worker credentials through environment variables referenced by `api_key_env`.
-- Generate a random inbound secret of at least 32 ASCII characters and set `CLICODING_API_KEY` before any network exposure. The application rejects shorter or non-ASCII inbound secrets.
-- Keep Uvicorn bound to `127.0.0.1` for the first smoke test. `/health` is public; all other API/diagnostic endpoints require the Bearer key when configured.
-- Use one Uvicorn process. Multiple processes do not share conversation locks or worker concurrency semaphores.
-- Do not connect Open WebUI yet. Streaming is not implemented and preservation of the returned `conversation_id` has not been verified.
+- Use an absolute persistent `CLICODING_DATABASE_PATH` and attachment storage path outside the source tree.
+- Copy `config/workers.example.yaml` to a private configuration file outside Git. Replace every sample endpoint and model alias only after a read-only live preflight confirms them.
+- The example worker entries are disabled. Do not enable a worker merely because its entry exists.
+- Keep worker concurrency at one until measured on the actual runtime and memory headroom is accepted.
+- Supply worker credentials only through protected environment variables. Never commit or include secrets in the transfer ZIP.
+- Generate a random inbound secret of at least 32 ASCII characters and configure `CLICODING_API_KEY` before any network exposure.
+- Initially bind Uvicorn to `127.0.0.1`; use one process until live supervisor and multi-process acceptance is complete.
+- Do not connect Open WebUI until client acceptance validates conversation-ID persistence, SSE, Stop, regenerate/edit and the progress-event behavior.
 
-## 5. Smoke-test order
+## 6. Acceptance order
 
-1. Confirm `GET /health`.
-2. Confirm `GET /v1/models` requires the configured Bearer key and returns only the public `clicoding` alias.
-3. Verify each configured worker endpoint independently with a harmless chat-completions request.
-4. Run a single-worker text request with planning disabled.
-5. Verify the returned `conversation_id` can be reused and that canonical history persists after process restart.
-6. Enable planning only after planning, coding, vision (if configured), and synthesis capabilities have each been validated against their real served model.
-7. Test a small two-worker plan and inspect the persisted execution/tasks.
-8. Record actual latency, memory use, errors, and worker concurrency before increasing limits.
+1. Verify archive checksum, source revision and extracted file inventory.
+2. Verify the offline wheelhouse against the exact DGX Python/ARM64 target.
+3. Create an isolated candidate environment without replacing any current environment.
+4. Install from the wheelhouse with network access disabled.
+5. Run the full test suite and record the exact command, result and environment.
+6. Start a candidate instance bound only to localhost and using a new, isolated test database and attachment directory.
+7. Verify `GET /health`, authenticated `GET /v1/models`, direct chat, conversation persistence, SSE completion, cancellation, regenerate/edit and tool-call behavior.
+8. Validate each actual worker endpoint independently; test tool calling only if the exact model/runtime/parser supports it.
+9. Test backup, restore to a separate candidate path, and rollback without touching production data.
+10. Complete Open WebUI/client, sandbox and real-model quality acceptance before any production cutover.
 
-## 6. Explicit deployment blockers
+## 7. Explicit release blockers
 
-The current slice is not a production multi-user service. Before LAN/Open WebUI rollout, complete and validate:
+The source candidate is not yet a production-ready DGX installation package. At minimum, the following remain open and must be closed with evidence:
 
-- Open WebUI conversation-ID mapping and retry/regenerate behavior.
-- Streaming support or a proven client configuration that uses non-streaming requests.
-- Actual image payload transport to a vision worker.
-- Tenant/user isolation; the current Bearer key is shared by all authorized clients.
-- Internal TLS, rate limits, request quotas, cancellation, and safe idempotency.
-- Cross-process coordination or a strict single-process service design.
-- Live ARM64/DGX dependency and model-endpoint compatibility tests.
+- Exact DGX ARM64/Python wheelhouse and a clean offline install.
+- A reviewed Orchestrator systemd service template, secret/environment file layout, filesystem ownership and health/restart policy.
+- Existing Docker sandbox runtime images available locally, including the TypeScript image, plus a safe image inventory/checksum procedure.
+- Multi-file workspace snapshot build/test integration through the existing approval broker and Docker runner. The current runner supports approved single-file snippets only; workstation .NET build/test still runs on the workstation host.
+- Packaged IDE integration and approval/diff/apply UI.
+- Attachment expiry/retention, robust image decoding/content validation and malware scanning.
+- Audit retention/signing/alerting and internal TLS/reverse-proxy verification.
+- Live multi-process/supervisor acceptance; retain the conservative single-worker configuration until then.
+- Real-model Persian/English quality, tool-call, vision, context, latency, cancellation, concurrency and unified-memory tests.
+- Open WebUI acceptance, including custom `x_clicoding.progress` event rendering or a documented fallback.
+- Versioned database/config backup, migration-on-copy and tested rollback.
+- Final operator runbook with exact install, health-check, upgrade, backup and rollback commands.
 
-Do not mount developer workspaces into the model server. Keep build, test, browser, screenshot, and Git tools on the developer workstation.
+## 8. Cutover authorization
+
+Staging is not installation. Do not replace the current application, modify systemd units, change model containers, enable the broker, enable workers, or restart any service until:
+- all source and offline-install gates are closed;
+- the exact artifact SHA and test evidence are recorded;
+- a separate deployment plan and rollback point are reviewed; and
+- the user explicitly approves the deployment step.
+
+Record the deployed commit, archive SHA-256, dependency inventory, configuration revision (never secret values), test results, changed paths, service actions and rollback point.
