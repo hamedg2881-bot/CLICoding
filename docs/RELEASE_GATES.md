@@ -63,7 +63,8 @@ The sample registry uses recorded ports 8003/8004/8005 but leaves all workers di
 ## Client and offline release
 - [ ] Open WebUI multi-turn, SSE, Stop, regenerate/edit and multi-user acceptance, including actual rendering or documented fallback for custom `x_clicoding.progress` SSE events.
 - [x] Desktop Playwright browser-contract tests (mocked API): specialist progress rendering without internal task IDs, independent conversations, image attachment upload request and Stop-to-cancel API call.
-- [ ] Full first-party UI acceptance against the live backend, plus mobile/keyboard accessibility, history reload under real authentication, real cancellation race behavior and error recovery.
+- [x] Live FastAPI browser integration with a fake model gateway: actual conversation creation/history persistence, image upload and attachment resolution into the vision request, and cancellation of an active backend turn.
+- [ ] Real-model/DGX browser acceptance, plus mobile/keyboard accessibility, multi-user auth behavior, and error recovery against the production-like runtime.
 - [ ] Packaged IDE workspace selection, approvals, diff review/apply and build/test evidence.
 - [ ] Diagnose and repair a deliberately failing sample project; capture successful build/test exit codes.
 - [ ] Browser screenshot, verified Vision handoff, visual correction and before/after evidence.
