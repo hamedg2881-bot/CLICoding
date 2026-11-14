@@ -79,11 +79,47 @@ The verifier checks the Python major/minor ABI, ARM64 architecture, exact wheel 
 
 The CI workflow builds the complete project plus test-dependency wheelhouse on a native ARM64 runner using CPython 3.12.3. The latest completed packaging run produced 32 wheels for aarch64. This is a reproducible candidate wheelhouse, not proof of compatibility with the exact DGX OS/glibc/runtime. Confirm the DGX Python major/minor version and platform first; do not use the artifact if they differ. No offline install on DGX has been performed.
 
-## 5. Offline Docker sandbox image bundle
+## 5. Docker sandbox images — choose online DGX or offline staging
 
-The sandbox requires the exact pinned ARM64 images in `sandbox/clicoding_sandbox_runner.py`, including the locally built TypeScript image. Do not pull these images on the DGX during offline deployment.
+The existing sandbox runner uses a fixed inventory of digest-pinned upstream images plus the repository-built TypeScript image. All images must be ARM64 and are verified by immutable local image ID in the generated image lock. The runner uses `--pull=never`; it never downloads images during code execution.
 
-On a Windows staging workstation with Docker Desktop using **Linux containers**, Python 3 and Docker Buildx, download the transfer artifact ZIP from the successful Push workflow for the reviewed PR head. Extract the artifact ZIP so the transfer bundle and its .sha256 sidecar are beside each other.
+Choose one preparation path. Both produce the same ARM64 image inventory and lock.
+
+### Option A — prepare images directly on DGX (internet available)
+
+This is the shorter path when DGX can reach the required container registries. It avoids transferring a large Docker image archive from another machine.
+
+**This option changes the DGX Docker image cache and writes a local archive/lock. Do not run it until the user explicitly approves this preparation step.** It does not start the sandbox broker, run user code, replace the application, modify systemd, or change model containers.
+
+After the exact source bundle has been staged and verified (Sections 1–4), first perform read-only checks:
+
+```bash
+uname -m
+docker version
+docker buildx version
+```
+
+Confirm `aarch64`/ `arm64`, Docker daemon availability, and Buildx availability. Then, only after approval, run the exporter from the extracted source tree:
+
+```bash
+release_root=/opt/ai/clicoding/releases/<full-commit-sha>
+mkdir -p "$release_root/sandbox-prep"
+python3 "$release_root/source/CDS_AI/scripts/export_sandbox_images.py" \
+  --pull --build-typescript \
+  --output "$release_root/sandbox-prep/clicoding-sandbox-images-arm64.tar"
+```
+
+The exporter pulls each upstream reference by its digest-pinned reference for `linux/arm64`, builds the repository-pinned TypeScript image for `linux/arm64`, verifies each image's platform and ID, creates local immutable tags, and writes:
+- `clicoding-sandbox-images-arm64.tar` and its SHA-256 sidecar;
+- `sandbox-image-lock.json` and its SHA-256 sidecar.
+
+Because the images are already present in the DGX Docker image store, the tar archive is a local recovery/transfer artifact; it is not necessary to load it back into the same daemon. Keep it with the versioned release for recovery and reproducibility. Do not install the image lock into `/etc/cds-ai` or enable/start the broker until the separate deployment approval.
+
+If a registry is unreachable, an image digest is unavailable, Buildx fails, or any platform/ID check fails, stop. Do not substitute a mutable tag or a different image. Use Option B instead.
+
+### Option B — prepare images on an internet-connected staging workstation
+
+Use a staging workstation with Docker Desktop in **Linux containers** mode, Python 3 and Docker Buildx. Download the transfer artifact ZIP from the successful **push** workflow for the exact reviewed PR head. Extract the GitHub artifact ZIP so the transfer bundle and its `.sha256` sidecar are beside each other.
 
 First unpack the outer transfer bundle and verify its inner archives:
 
@@ -105,7 +141,7 @@ Compare the commit in TRANSFER_MANIFEST.txt with the exact reviewed PR head befo
 
 Run the staging script included in that source archive:
 
-~~~powershell
+~~~
 $out = Join-Path $PWD "DGX-transfer"
 powershell -ExecutionPolicy Bypass -File .\source\CDS_AI\scripts\prepare_dgx_transfer.ps1 -BundlePath $bundle -OutputDirectory $out -ExpectedCommit $manifest.commit
 ~~~
@@ -114,7 +150,7 @@ The script verifies the outer bundle SHA-256 sidecar, commit, release metadata, 
 
 If staging is performed on Linux instead, use the equivalent command from the extracted source tree:
 
-~~~bash
+~~~
 python source/CDS_AI/scripts/export_sandbox_images.py \
   --pull --build-typescript \
   --output dist/clicoding-sandbox-images-arm64.tar
@@ -125,9 +161,7 @@ The output directory must contain six files:
 - clicoding-sandbox-images-arm64.tar and its .sha256 sidecar;
 - sandbox-image-lock.json and its .sha256 sidecar.
 
-The image archive may be large; ensure sufficient staging disk space. Keep the complete output directory intact for WinSCP transfer.
-
-After explicit deployment approval, transfer all four files to `$release_root/incoming/`, then load the archive and install the lock:
+Transfer all six files together to the versioned DGX release incoming directory. After explicit deployment approval, verify the image archive and lock checksums, load the archive, and install the lock:
 
 ```bash
 release_root=/opt/ai/clicoding/releases/<full-commit-sha>
@@ -142,8 +176,11 @@ sudo python3 "$release_root/source/CDS_AI/scripts/check_sandbox_runtime.py" \
   --nuget-feed /var/cache/clicoding-sandbox/nuget-feed
 ```
 
-The runner resolves each pinned source reference to its locked local image ID at execution time; it does not depend on registry access or mutable tags. The preflight inspects every locked image ID/platform and the feed ownership/permissions without pulling images or changing Docker state. Do not start the broker if the image lock or any image check fails.
+### Common image-lock and runtime rules
 
+The runner resolves every pinned source reference to the locked local image ID at execution time; it does not depend on registry access or mutable tags. The read-only preflight inspects every locked image ID/platform and the feed ownership/permissions without pulling images or changing Docker state. Do not start the broker if the image lock or any image check fails.
+
+For either option, create and populate the local NuGet feed separately before the runtime preflight. The feed must contain all required packages for the actual sample/project restore and must be root-owned, contain no symlinks or special files, and not be group/world writable. No NuGet network access is available inside the build container.
 
 ## 6. Initial safe runtime configuration (after source, dependency and image gates)
 
