@@ -26,10 +26,10 @@ separately built local image `clicoding-typescript:7.0.2`.
 
 ## Install on DGX Spark
 
-After copying this repository version to the DGX:
+After staging the verified release ZIP under `/opt/ai/clicoding/releases/<full-commit-sha>/source/CDS_AI` (see the orchestrator deployment runbook), use that exact versioned source tree:
 
 ```bash
-cd /opt/ai/clicoding/CLICoding-main
+cd /opt/ai/clicoding/releases/<full-commit-sha>/source/CDS_AI
 test -f sandbox/clicoding_sandbox_runner.py
 sudo install -o root -g root -m 0755 \
   sandbox/clicoding_sandbox_runner.py \
@@ -102,8 +102,9 @@ the `clicoding-sandbox` supplementary group. The broker remains root-owned.
 Both services must point to the same persistent database path.
 
 ```bash
-sudo groupadd --system clicoding-sandbox
-sudo useradd --system --home-dir /var/lib/cds-ai --shell /usr/sbin/nologin cds-ai
+# Inspect existing identities first; create only those that are absent.
+getent group clicoding-sandbox >/dev/null || sudo groupadd --system clicoding-sandbox
+id cds-ai >/dev/null 2>&1 || sudo useradd --system --home-dir /var/lib/cds-ai --shell /usr/sbin/nologin cds-ai
 sudo install -d -o root -g cds-ai -m 0750 /etc/cds-ai
 sudo install -d -o cds-ai -g cds-ai -m 0750 /var/lib/cds-ai
 sudo install -d -o root -g root -m 0750 /etc/clicoding-sandbox
