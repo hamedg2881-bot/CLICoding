@@ -222,7 +222,8 @@ class OpenAICompatibleGateway:
         try:
             async with self._client_context() as client:
                 async with client.stream(
-                    "POST", self.url, json=payload, headers=self._headers()
+                    "POST", self.url, json=payload, headers=self._headers(),
+                    timeout=self.timeout_seconds,
                 ) as response:
                     response.raise_for_status()
                     async for line in response.aiter_lines():
