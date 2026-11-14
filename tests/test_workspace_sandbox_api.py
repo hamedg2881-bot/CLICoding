@@ -1,7 +1,9 @@
-import asyncio
 import json
+import socketserver
+import threading
 
 from fastapi.testclient import TestClient
+import clicoding_orchestrator.app as app_module
 
 from clicoding_orchestrator.app import create_app
 from clicoding_orchestrator.config import Settings
@@ -95,6 +97,24 @@ def test_workspace_sandbox_api_enforces_request_body_limit(tmp_path):
     assert response.status_code == 413
 
 
+def _start_fake_broker(tmp_path, monkeypatch, response):
+    socket_path = tmp_path / "fake-broker.sock"
+    received = []
+
+    class BrokerHandler(socketserver.StreamRequestHandler):
+        def handle(self):
+            request = self.rfile.readline()
+            received.append(json.loads(request))
+            self.wfile.write(json.dumps(response).encode("utf-8") + b"\n")
+
+    server = socketserver.ThreadingUnixStreamServer(str(socket_path), BrokerHandler)
+    server.daemon_threads = True
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    monkeypatch.setattr(app_module, "SANDBOX_BROKER_SOCKET_PATH", str(socket_path))
+    return server, thread, received
+
+
 def test_workspace_sandbox_api_forwards_execute_request_to_existing_broker(tmp_path, monkeypatch):
     database_path = str(tmp_path / "workspace-api-execute.sqlite3")
     database = Database(database_path)
@@ -107,39 +127,26 @@ def test_workspace_sandbox_api_forwards_execute_request_to_existing_broker(tmp_p
         f"/api/v1/workspace-sandbox-approvals/{approval_id}/decision",
         json={"decision": "approve"},
     )
-    sent = []
-
-    class FakeReader:
-        async def readline(self):
-            return json.dumps({
-                "status": "succeeded",
-                "exit_code": 0,
-                "snapshot_sha256": created.json()["snapshot_sha256"],
-            }).encode() + b"\n"
-
-    class FakeWriter:
-        def write(self, value):
-            sent.append(json.loads(value))
-
-        async def drain(self):
-            return None
-
-        def close(self):
-            return None
-
-        async def wait_closed(self):
-            return None
-
-    async def fake_open_unix_connection(*args, **kwargs):
-        return FakeReader(), FakeWriter()
-
-    monkeypatch.setattr(asyncio, "open_unix_connection", fake_open_unix_connection)
-    executed = client.post(
-        f"/api/v1/workspace-sandbox-approvals/{approval_id}/execute"
+    server, thread, received = _start_fake_broker(
+        tmp_path,
+        monkeypatch,
+        {
+            "status": "succeeded",
+            "exit_code": 0,
+            "snapshot_sha256": created.json()["snapshot_sha256"],
+        },
     )
-    assert executed.status_code == 200, executed.text
-    assert executed.json()["status"] == "succeeded"
-    assert sent == [{"approval_id": approval_id}]
+    try:
+        executed = client.post(
+            f"/api/v1/workspace-sandbox-approvals/{approval_id}/execute"
+        )
+        assert executed.status_code == 200, executed.text
+        assert executed.json()["status"] == "succeeded"
+        assert received == [{"approval_id": approval_id}]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
 
 
 def test_workspace_sandbox_api_forwards_cancel_request_to_existing_broker(tmp_path, monkeypatch):
@@ -154,36 +161,23 @@ def test_workspace_sandbox_api_forwards_cancel_request_to_existing_broker(tmp_pa
         f"/api/v1/workspace-sandbox-approvals/{approval_id}/decision",
         json={"decision": "approve"},
     )
-    sent = []
-
-    class FakeReader:
-        async def readline(self):
-            return json.dumps({
-                "status": "cancel_requested",
-                "approval_id": approval_id,
-                "container_stopped": True,
-            }).encode() + b"\n"
-
-    class FakeWriter:
-        def write(self, value):
-            sent.append(json.loads(value))
-
-        async def drain(self):
-            return None
-
-        def close(self):
-            return None
-
-        async def wait_closed(self):
-            return None
-
-    async def fake_open_unix_connection(*args, **kwargs):
-        return FakeReader(), FakeWriter()
-
-    monkeypatch.setattr(asyncio, "open_unix_connection", fake_open_unix_connection)
-    cancelled = client.post(
-        f"/api/v1/workspace-sandbox-approvals/{approval_id}/cancel"
+    server, thread, received = _start_fake_broker(
+        tmp_path,
+        monkeypatch,
+        {
+            "status": "cancel_requested",
+            "approval_id": approval_id,
+            "container_stopped": True,
+        },
     )
-    assert cancelled.status_code == 200, cancelled.text
-    assert cancelled.json()["status"] == "cancel_requested"
-    assert sent == [{"cancel_approval_id": approval_id}]
+    try:
+        cancelled = client.post(
+            f"/api/v1/workspace-sandbox-approvals/{approval_id}/cancel"
+        )
+        assert cancelled.status_code == 200, cancelled.text
+        assert cancelled.json()["status"] == "cancel_requested"
+        assert received == [{"cancel_approval_id": approval_id}]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
