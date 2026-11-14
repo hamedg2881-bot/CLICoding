@@ -28,6 +28,7 @@ jobs:
           bash -n scripts/dgx_spark_model_preflight.sh
           python -c "import yaml; yaml.safe_load(open('config/workers.example.yaml', encoding='utf-8'))"
           python -m py_compile scripts/run_response_quality.py
+          systemd-analyze verify deploy/cds-ai-orchestrator.service sandbox/clicoding-sandbox-broker.service
       - name: Run test suite
         run: pytest
       - name: Build immutable source transfer archive
