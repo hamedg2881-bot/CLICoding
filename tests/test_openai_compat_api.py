@@ -461,7 +461,7 @@ def test_explicit_specialist_task_uses_orchestrator(tmp_path):
     assert gateway.calls == []
 
 
-def test_direct_chat_streams_incremental_deltas_and_persists_complete_answer(tmp_path):
+def test_direct_chat_streams_incremental_deltas_and_persists_complete_answer(tmp_path, monkeypatch):
     class StreamingGateway:
         def __init__(self):
             self.messages = []
@@ -494,6 +494,15 @@ def test_direct_chat_streams_incremental_deltas_and_persists_complete_answer(tmp
         registry=registry,
     )
     client = TestClient(app)
+    summary_reads = 0
+    original_get_latest_summary = database.get_latest_summary
+
+    def count_summary_reads(conversation_id):
+        nonlocal summary_reads
+        summary_reads += 1
+        return original_get_latest_summary(conversation_id)
+
+    monkeypatch.setattr(database, "get_latest_summary", count_summary_reads)
 
     response = client.post(
         "/v1/chat/completions",
@@ -505,6 +514,7 @@ def test_direct_chat_streams_incremental_deltas_and_persists_complete_answer(tmp
     )
 
     assert response.status_code == 200
+    assert summary_reads == 1
     assert response.headers["content-type"].startswith("text/event-stream")
     assert '"content":"Hello"' in response.text
     assert '"content":" "' in response.text
