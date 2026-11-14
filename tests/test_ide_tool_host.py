@@ -200,6 +200,21 @@ def test_idempotency_key_cannot_be_reused_with_different_arguments(tmp_path):
     assert second["status"] == "conflict"
 
 
+def test_idempotency_scope_isolated_between_conversations(tmp_path):
+    root, host = make_host(tmp_path)
+    (root / "first.txt").write_text("first", encoding="utf-8")
+    invocation = call("workspace_list_files", {}, "reused_call_id")
+
+    first = result(host.execute_tool_call(invocation, conversation_id="conversation-one"))
+    (root / "second.txt").write_text("second", encoding="utf-8")
+    second = result(host.execute_tool_call(invocation, conversation_id="conversation-two"))
+
+    assert "first.txt" in first["files"]
+    assert "second.txt" not in first["files"]
+    assert "first.txt" in second["files"]
+    assert "second.txt" in second["files"]
+
+
 def test_workspace_tool_results_redact_credential_values(tmp_path):
     root, host = make_host(tmp_path)
     secret_api_key = "sk-abcdefghijklmnopqrstuvwx"
