@@ -308,3 +308,49 @@ def test_fixed_command_is_terminated_when_cancelled(tmp_path, monkeypatch):
     assert output["stdout"] == "partial stdout"
     assert output["stderr"] == "partial stderr"
     assert captured["shell"] is False
+
+
+def test_workspace_posix_write_rejects_symlink_destination_and_parent(tmp_path):
+    import os
+
+    if os.name == "nt" or os.open not in getattr(os, "supports_dir_fd", set()):
+        pytest.skip("directory-descriptor operations are POSIX-specific")
+    root, host = make_host(tmp_path, approval=lambda request: True)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("protected", encoding="utf-8")
+    (root / "linked.txt").symlink_to(outside)
+
+    symlink_write = result(host.execute_tool_call(call(
+        "workspace_write_file",
+        {"path": "linked.txt", "content": "overwrite"},
+        "write_symlink",
+    )))
+    assert symlink_write["status"] == "error"
+    assert outside.read_text(encoding="utf-8") == "protected"
+
+    outside_dir = tmp_path / "outside-dir"
+    outside_dir.mkdir()
+    (root / "linked-dir").symlink_to(outside_dir, target_is_directory=True)
+    parent_write = result(host.execute_tool_call(call(
+        "workspace_write_file",
+        {"path": "linked-dir/new.txt", "content": "escape"},
+        "write_parent_symlink",
+    )))
+    assert parent_write["status"] == "error"
+    assert not (outside_dir / "new.txt").exists()
+
+
+def test_workspace_posix_read_rejects_symlink_destination(tmp_path):
+    import os
+
+    if os.name == "nt" or os.open not in getattr(os, "supports_dir_fd", set()):
+        pytest.skip("directory-descriptor operations are POSIX-specific")
+    root, host = make_host(tmp_path)
+    outside = tmp_path / "private.txt"
+    outside.write_text("outside secret", encoding="utf-8")
+    (root / "private-link.txt").symlink_to(outside)
+
+    output = result(host.execute_tool_call(call(
+        "workspace_read_file", {"path": "private-link.txt"}, "read_symlink"
+    )))
+    assert output["status"] == "error"
