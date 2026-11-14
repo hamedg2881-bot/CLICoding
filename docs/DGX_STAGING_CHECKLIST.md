@@ -83,32 +83,34 @@ The CI workflow builds the complete project plus test-dependency wheelhouse on a
 
 The sandbox requires the exact pinned ARM64 images in `sandbox/clicoding_sandbox_runner.py`, including the locally built TypeScript image. Do not pull these images on the DGX during offline deployment.
 
-On a Windows staging workstation with Docker Desktop using **Linux containers**, Python 3 and Docker Buildx, download the exact transfer bundle from the successful Push workflow for the reviewed commit.
+On a Windows staging workstation with Docker Desktop using **Linux containers**, Python 3 and Docker Buildx, download the transfer artifact ZIP from the successful Push workflow for the reviewed PR head. Extract the artifact ZIP so the transfer bundle and its .sha256 sidecar are beside each other.
 
-First unpack the outer transfer bundle and verify the inner files. Then extract the source ZIP so the PowerShell script is available:
+First unpack the outer transfer bundle and verify its inner archives:
 
 ~~~powershell
-$bundle = (Resolve-Path .\CDS_AI-transfer-bundle-d776.tar.gz).Path
+$bundle = (Resolve-Path .\CDS_AI-transfer-bundle-<12-char-sha>.tar.gz).Path
 $work = Join-Path $PWD "CDS-AI-unpack"
 New-Item -ItemType Directory -Force $work | Out-Null
 tar.exe -xzf $bundle -C $work
 Set-Location $work
-Get-Content .\TRANSFER_MANIFEST.txt
-Get-FileHash .\CDS_AI_d776ba222a34.zip -Algorithm SHA256
-Get-FileHash .\CDS_AI-wheelhouse-cp312-arm64-d776ba222a34.tar.gz -Algorithm SHA256
-Expand-Archive .\CDS_AI_d776ba222a34.zip -DestinationPath .\source
+$manifest = ConvertFrom-StringData (Get-Content .\TRANSFER_MANIFEST.txt -Raw)
+$sourceHash = (Get-Content ".\$($manifest.source_archive).sha256").Split(' ')[0]
+$wheelHash = (Get-Content ".\$($manifest.wheelhouse_archive).sha256").Split(' ')[0]
+if ((Get-FileHash ".\$($manifest.source_archive)" -Algorithm SHA256).Hash -ne $sourceHash) { throw "Source ZIP checksum mismatch" }
+if ((Get-FileHash ".\$($manifest.wheelhouse_archive)" -Algorithm SHA256).Hash -ne $wheelHash) { throw "Wheelhouse checksum mismatch" }
+Expand-Archive ".\$($manifest.source_archive)" -DestinationPath .\source
 ~~~
 
-Compare both hashes with the matching .sha256 sidecars before continuing. The expected commit is d776ba222a34cb33e23bbe890694cc24bd3abb0d.
+Compare the commit in TRANSFER_MANIFEST.txt with the exact reviewed PR head before continuing. The source ZIP and wheelhouse checksums must both match.
 
-Run the staging script included in the extracted source:
+Run the staging script included in that source archive:
 
 ~~~powershell
-$out = Join-Path $PWD "DGX-transfer-d776"
-powershell -ExecutionPolicy Bypass -File .\source\CDS_AI\scripts\prepare_dgx_transfer.ps1 -BundlePath $bundle -OutputDirectory $out
+$out = Join-Path $PWD "DGX-transfer"
+powershell -ExecutionPolicy Bypass -File .\source\CDS_AI\scripts\prepare_dgx_transfer.ps1 -BundlePath $bundle -OutputDirectory $out -ExpectedCommit $manifest.commit
 ~~~
 
-The script verifies the outer bundle SHA-256, commit, inner source/wheelhouse checksums and ARM64 Buildx support. It pulls all pinned upstream images for linux/arm64, builds the repository-pinned TypeScript image, exports the local image archive and immutable image lock, then verifies generated checksums. It does not contact the DGX.
+The script verifies the outer bundle SHA-256 sidecar, commit, release metadata, inner source/wheelhouse checksums and ARM64 Buildx support. It pulls all pinned upstream images for linux/arm64, builds the repository-pinned TypeScript image, exports the local image archive and immutable image lock, then verifies generated checksums. It does not contact the DGX.
 
 If staging is performed on Linux instead, use the equivalent command from the extracted source tree:
 
@@ -119,7 +121,7 @@ python source/CDS_AI/scripts/export_sandbox_images.py \
 ~~~
 
 The output directory must contain six files:
-- CDS_AI-transfer-bundle-d776.tar.gz and its .sha256 sidecar;
+- CDS_AI-transfer-bundle-<12-char-sha>.tar.gz and its .sha256 sidecar;
 - clicoding-sandbox-images-arm64.tar and its .sha256 sidecar;
 - sandbox-image-lock.json and its .sha256 sidecar.
 
