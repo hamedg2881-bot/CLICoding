@@ -1,3 +1,12 @@
+## 2026-11-14 — First-party CDS_AI chat interface
+
+- Added a first-party browser chat interface at `/`, packaged with the Python distribution and served by FastAPI.
+- The UI uses the existing authenticated conversation and OpenAI-compatible streaming APIs; it does not connect to internal worker endpoints.
+- Implemented RTL-first Persian layout, task-type selection, independent session-scoped chat list, server-backed history reload, direct token streaming, specialist progress rendering, and Stop through the existing conversation cancellation endpoint.
+- The progress panel maps only safe lifecycle event types to user-facing status labels; it does not display internal worker IDs, task prompts, model reasoning or raw worker output.
+- Added a route-level UI smoke test. Browser/Playwright acceptance, mobile/keyboard accessibility, cancellation race testing, and Open WebUI custom-progress rendering remain open.
+- No DGX files, services, runtimes or containers were changed. No ZIP transfer or service restart occurred.
+
 ## 2026-11-11 — Offline backup and restore
 
 - Added the packaged cds-ai-backup CLI and a source-tree wrapper. The utility uses SQLite's online backup API, includes only attachment files referenced by the database snapshot, verifies SQLite integrity and SHA-256/size metadata, and writes a versioned manifest.
@@ -23,17 +32,18 @@
 
 # Project Status
 
-**Last updated:** 2026-11-11  
+**Last updated:** 2026-11-14  
 **Product / public assistant ID:** CDS_AI  
 **Canonical source repository:** https://github.com/hamedg2881-bot/CLICoding  
 **Current candidate:** `feature/cds-ai-release-integration`, stacked on PR #13  
-**Overall state:** The integration candidate combines the conversation-first CDS_AI core, shared assistant policy, regenerate/edit lineage, cross-process turn leases/cancellation, safe versioned context compaction, specialist/direct streaming fixes, per-user isolation, workstation tools and conservative context budgeting. Latest GitHub CI passes 164 tests. No transfer to DGX or service restart has been performed.
+**Overall state:** The integration candidate combines the conversation-first CDS_AI core, shared assistant policy, regenerate/edit lineage, cross-process turn leases/cancellation, safe versioned context compaction, specialist/direct streaming fixes, per-user isolation, workstation tools and conservative context budgeting. The last pre-UI GitHub CI run passed 167 tests; the first-party chat UI slice is awaiting its own CI verification. No transfer to DGX or service restart has been performed.
 
-## Current implementation snapshot — 2026-11-11
+## Current implementation snapshot — 2026-11-14
 - Product identity: `CDS_AI`; legacy CLICoding service/database/environment identifiers remain for compatibility.
 - Conversation lifecycle: persistent history, exact retry idempotency, latest-turn regenerate and guarded edit/resubmit operations are present in PR #13; the integration candidate adds an authenticated active-turn cancellation endpoint.
 - Context lifecycle: direct chat and tool-call turns use model-assisted compaction with versioned summaries. Original events remain intact; recent three user turns are retained; summaries are invalidated when rewritten history intersects their coverage. Specialist planning, each task worker and final synthesis now receive independently budgeted context summaries when needed; canonical history is not rewritten.
-- Streaming: direct chat and tool-call deltas stream; specialist requests now emit structured plan/task lifecycle progress events during execution, followed by the final answer. Progress is carried as `x_clicoding.progress` metadata in `event: progress` SSE frames; no internal reasoning or raw worker output is exposed.
+- Streaming: direct chat and tool-call deltas stream; specialist requests emit structured plan/task lifecycle progress during execution, followed by the buffered final answer. Progress is carried as `x_clicoding.progress` metadata in `event: progress` SSE frames; no internal reasoning or raw worker output is exposed.
+- First-party UI: `/` serves a packaged RTL-aware CDS_AI chat interface with session-scoped independent conversations, history reload, task-type selection, live progress rendering, direct token display and Stop wired to the authenticated cancellation API. Browser/Playwright acceptance remains open; Open WebUI custom progress rendering is not yet verified.
 - Workstation execution: approved, allow-listed reference tool host; no arbitrary shell tool.
 - Worker example uses recorded ports 8003/8004/8005 and leaves all workers disabled. Served aliases and tool-call capability require live verification.
 - Attachments: conversation-scoped PNG/JPEG/GIF/WebP upload, bounded size, MIME sniffing, SHA-256 integrity, private local storage, owner-scoped fetch/delete, and attachment-reference resolution into model vision payloads. Automatic expiry/retention and storage backup/restore policy remain open.
