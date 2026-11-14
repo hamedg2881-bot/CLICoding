@@ -176,3 +176,45 @@ def test_browser_uploads_image_and_stop_calls_cancellation_endpoint():
                 await browser.close()
 
     asyncio.run(scenario())
+
+
+def test_mobile_sidebar_navigation_and_enter_key_submission():
+    async def scenario():
+        async with async_playwright() as playwright:
+            browser, page = await open_chat_page(playwright)
+            async def create_conversation(route):
+                await route.fulfill(json={"id": "mobile-conversation"})
+
+            async def complete_chat(route):
+                await route.fulfill(
+                    status=200,
+                    headers={"content-type": "text/event-stream"},
+                    body=(
+                        'data: {"choices":[{"index":0,"delta":{"content":"پاسخ موبایل"},"finish_reason":null}]}\\n\\n'
+                        'data: [DONE]\\n\\n'
+                    ),
+                )
+
+            await page.route("**/api/v1/conversations", create_conversation)
+            await page.route("**/v1/chat/completions", complete_chat)
+            try:
+                await page.set_viewport_size({"width": 390, "height": 844})
+                assert await page.locator("#sidebarToggle").is_visible()
+                await page.locator("#sidebarToggle").click()
+                assert await page.locator("aside").is_visible()
+                await page.locator("#newChat").click()
+                assert not await page.locator("aside").is_visible()
+
+                await page.locator("#prompt").fill("پیام از موبایل")
+                await page.locator("#prompt").press("Enter")
+                await page.wait_for_function(
+                    "() => document.querySelector('#status').textContent === 'پاسخ کامل شد'"
+                )
+                assert "پاسخ موبایل" in await page.locator(".assistant .bubble").last.inner_text()
+                assert await page.evaluate(
+                    "() => document.documentElement.scrollWidth <= window.innerWidth"
+                )
+            finally:
+                await browser.close()
+
+    asyncio.run(scenario())
