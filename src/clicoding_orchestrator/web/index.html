@@ -168,7 +168,8 @@ main{display:flex;flex-direction:column;min-width:0;height:100%;position:relativ
     if (raw === "[DONE]") return true;
     let payload; try { payload=JSON.parse(raw); } catch { return false; }
     if (eventName === "progress" || payload.x_clicoding?.progress) {
-      setStatus("در حال انجام مراحل کار...");\n      addProgress(assistant, payload.x_clicoding?.progress || payload); return false;
+      setStatus("در حال انجام مراحل کار...");
+      addProgress(assistant, payload.x_clicoding?.progress || payload); return false;
     }
     if (payload.error) throw new Error(payload.error.message || "خطای نامشخص در پاسخ");
     const delta=payload.choices?.[0]?.delta?.content;
