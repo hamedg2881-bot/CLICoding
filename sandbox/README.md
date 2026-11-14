@@ -126,6 +126,7 @@ sudo install -o root -g root -m 0644 \
 sudo install -o root -g root -m 0640 \
   sandbox/clicoding-sandbox-broker.env.example \
   /etc/cds-ai/sandbox-broker.env
+sudo chmod 0600 /etc/cds-ai/sandbox-broker.env
 sudo systemd-analyze verify \
   /etc/systemd/system/clicoding-sandbox-broker.service
 ```
