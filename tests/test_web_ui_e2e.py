@@ -42,19 +42,19 @@ def test_browser_renders_specialist_progress_and_keeps_conversations_separate():
                 requests.append(request)
                 if request["task_type"] == "coding":
                     stream = (
-                        'event: progress\\ndata: {"choices":[{"index":0,"delta":{},"finish_reason":null}],'
-                        '"x_clicoding":{"progress":{"type":"plan.created","task_count":2}}}\\n\\n'
-                        'event: progress\\ndata: {"choices":[{"index":0,"delta":{},"finish_reason":null}],'
-                        '"x_clicoding":{"progress":{"type":"task.started","task_id":"internal-task"}}}\\n\\n'
+                        'event: progress\ndata: {"choices":[{"index":0,"delta":{},"finish_reason":null}],'
+                        '"x_clicoding":{"progress":{"type":"plan.created","task_count":2}}}\n\n'
+                        'event: progress\ndata: {"choices":[{"index":0,"delta":{},"finish_reason":null}],'
+                        '"x_clicoding":{"progress":{"type":"task.started","task_id":"internal-task"}}}\n\n'
                         'data: {"choices":[{"index":0,"delta":{"content":"پاسخ تخصصی آماده شد."},'
-                        '"finish_reason":null}]}\\n\\n'
-                        'data: [DONE]\\n\\n'
+                        '"finish_reason":null}]}\n\n'
+                        'data: [DONE]\n\n'
                     )
                 else:
                     stream = (
-                        'data: {"choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}\\n\\n'
-                        'data: {"choices":[{"index":0,"delta":{"content":"پاسخ گفت‌وگوی دوم"},"finish_reason":null}]}\\n\\n'
-                        'data: [DONE]\\n\\n'
+                        'data: {"choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}\n\n'
+                        'data: {"choices":[{"index":0,"delta":{"content":"پاسخ گفت‌وگوی دوم"},"finish_reason":null}]}\n\n'
+                        'data: [DONE]\n\n'
                     )
                 await route.fulfill(
                     status=200,
@@ -131,7 +131,7 @@ def test_browser_uploads_image_and_stop_calls_cancellation_endpoint():
                     await route.fulfill(
                         status=200,
                         headers={"content-type": "text/event-stream"},
-                        body="data: [DONE]\\n\\n",
+                        body="data: [DONE]\n\n",
                     )
                 except Exception:
                     # The browser aborts the stream after the cancel API confirms.
