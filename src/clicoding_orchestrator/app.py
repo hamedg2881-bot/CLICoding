@@ -2177,6 +2177,21 @@ def create_app(
         return execution
 
 
+    def _public_workspace_approval(record: dict[str, Any]) -> dict[str, Any]:
+        files = record.get("files", [])
+        return {
+            **{key: value for key, value in record.items() if key != "files"},
+            "files": [
+                {
+                    "path": item["path"],
+                    "sha256": item["sha256"],
+                    "bytes": item["bytes"],
+                }
+                for item in files
+            ],
+            "total_bytes": sum(item["bytes"] for item in files),
+        }
+
     async def _read_workspace_approval_request(http_request: Request) -> WorkspaceSandboxApprovalCreate:
         maximum = 8 * 1024 * 1024
         chunks: list[bytes] = []
@@ -2253,13 +2268,14 @@ def create_app(
     async def create_workspace_sandbox_approval(http_request: Request) -> dict[str, Any]:
         payload = await _read_workspace_approval_request(http_request)
         try:
-            return db.create_workspace_sandbox_approval(
+            approval = db.create_workspace_sandbox_approval(
                 owner_id=http_request.state.principal_id,
                 workspace_id=payload.workspace_id,
                 action=payload.action,
                 project_path=payload.project_path,
                 files=[item.model_dump() for item in payload.files],
             )
+            return _public_workspace_approval(approval)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -2272,7 +2288,7 @@ def create_app(
         )
         if approval is None:
             raise HTTPException(status_code=404, detail="Workspace sandbox approval not found")
-        return approval
+        return _public_workspace_approval(approval)
 
     @app.post("/api/v1/workspace-sandbox-approvals/{approval_id}/decision")
     async def decide_workspace_sandbox_approval(
@@ -2291,7 +2307,7 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         if approval is None:
             raise HTTPException(status_code=404, detail="Workspace sandbox approval not found")
-        return approval
+        return _public_workspace_approval(approval)
 
     @app.post("/api/v1/workspace-sandbox-approvals/{approval_id}/execute")
     async def execute_workspace_sandbox_approval(
