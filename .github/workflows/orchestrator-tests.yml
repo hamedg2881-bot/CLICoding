@@ -21,6 +21,8 @@ jobs:
           cache: pip
       - name: Install package and test dependencies
         run: python -m pip install -e ".[test]"
+      - name: Install Chromium for browser acceptance tests
+        run: python -m playwright install --with-deps chromium
       - name: Validate packaged chat UI
         run: |
           python - <<'PY'
