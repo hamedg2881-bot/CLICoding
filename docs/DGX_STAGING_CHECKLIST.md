@@ -2,7 +2,7 @@
 
 **Status:** Staging instructions only. This document does not authorize installation, service changes, model changes, enabling workers, or runtime restarts.
 
-**Transfer policy:** Download a checksummed ZIP artifact from GitHub Actions on the exact reviewed commit and transfer it with WinSCP or another approved LAN file-transfer method. The DGX host does not need Git and must not use Git commands.
+**Transfer policy:** Download the checksummed transfer-bundle artifact from GitHub Actions on the exact reviewed commit and transfer it with WinSCP or another approved LAN file-transfer method. The DGX host does not need Git and must not use Git commands.
 
 ## 1. Select and download the exact transfer artifact
 
@@ -24,7 +24,7 @@ On DGX:
 
 \`\`\`bash
 release_root=/opt/ai/clicoding/releases/<full-commit-sha>
-sudo install -d -o root -g root -m 0755 "$release_root/incoming"
+sudo install -d -o "$USER" -g "$(id -gn)" -m 0750 "$release_root/incoming"
 cd "$release_root/incoming"
 sha256sum -c CDS_AI-transfer-bundle-<12-char-sha>.tar.gz.sha256
 mkdir bundle
@@ -67,6 +67,7 @@ Confirm ARM64 architecture, Python 3.11+, disk location for SQLite and attachmen
 
 ## 4. Offline dependency preparation (no installation yet)
 
+release_root=/opt/ai/clicoding/releases/<full-commit-sha>
 The wheelhouse archive is already included in the transfer bundle extracted in Section 2. Verify it against the packaged script before creating any virtual environment:
 
 \`\`\`bash
@@ -106,6 +107,7 @@ After explicit deployment approval, load the archive and install the lock:
 sha256sum -c clicoding-sandbox-images-arm64.tar.sha256
 sha256sum -c sandbox-image-lock.json.sha256
 sudo docker load -i clicoding-sandbox-images-arm64.tar
+sudo install -d -o root -g root -m 0755 /etc/cds-ai
 sudo install -o root -g root -m 0600 \
   sandbox-image-lock.json /etc/cds-ai/sandbox-image-lock.json
 ```
@@ -142,7 +144,8 @@ This inspects every locked image ID/platform and the feed ownership/permissions 
 7. Verify `GET /health`, authenticated `GET /v1/models`, direct chat, conversation persistence, SSE completion, cancellation, regenerate/edit and tool-call behavior.
 8. Validate each actual worker endpoint independently; test tool calling only if the exact model/runtime/parser supports it.
 9. Test backup, restore to a separate candidate path, and rollback without touching production data.
-10. Complete Open WebUI/client, sandbox and real-model quality acceptance before any production cutover.
+10. Run a real multi-file .NET sample Build and Test through the IDE adapter; verify exact approval hash, no-network Docker execution, offline NuGet restore and Stop/cancel.
+11. Complete Open WebUI/client and real-model response-quality acceptance before any production cutover.
 
 ## 8. Explicit release blockers
 
