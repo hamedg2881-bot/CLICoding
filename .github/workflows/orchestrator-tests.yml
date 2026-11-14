@@ -15,6 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
@@ -28,3 +30,34 @@ jobs:
           python -m py_compile scripts/run_response_quality.py
       - name: Run test suite
         run: pytest
+      - name: Build immutable source transfer archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          archive="CDS_AI_${GITHUB_SHA:0:12}.zip"
+          git archive --format=zip --prefix=CDS_AI/ "${GITHUB_SHA}" > "dist/${archive}"
+          (
+            cd dist
+            sha256sum "${archive}" > "${archive}.sha256"
+          )
+          printf 'revision=%s\narchive=%s\n' "${GITHUB_SHA}" "${archive}" > dist/RELEASE_INFO.txt
+          python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          archive = next(Path("dist").glob("CDS_AI_*.zip"))
+          with ZipFile(archive) as bundle:
+              names = bundle.namelist()
+              assert names and all(name.startswith("CDS_AI/") for name in names)
+              assert not any("/.env" in name and not name.endswith("/.env.example") for name in names)
+              assert not any(name.endswith((".pem", ".key", ".p12", ".pfx")) for name in names)
+              assert not any("/.git/" in name or "/__pycache__/" in name for name in names)
+          print(f"Validated {len(names)} archive entries in {archive}")
+          PY
+      - name: Publish source transfer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CDS_AI-release-${{ github.sha }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
