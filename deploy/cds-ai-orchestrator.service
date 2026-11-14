@@ -8,11 +8,11 @@ Type=simple
 User=cds-ai
 Group=cds-ai
 SupplementaryGroups=clicoding-sandbox
-WorkingDirectory=/opt/ai/clicoding/current
+WorkingDirectory=/opt/ai/clicoding/current/source/CDS_AI
 EnvironmentFile=/etc/cds-ai/orchestrator.env
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONDONTWRITEBYTECODE=1
-ExecStart=/opt/ai/clicoding/venv/bin/uvicorn clicoding_orchestrator.app:create_app --factory --app-dir /opt/ai/clicoding/current/src --host 127.0.0.1 --port 8090 --workers 1
+ExecStart=/opt/ai/clicoding/current/venv/bin/uvicorn clicoding_orchestrator.app:create_app --factory --host 127.0.0.1 --port 8090 --workers 1
 Restart=on-failure
 RestartSec=5
 TimeoutStartSec=90
