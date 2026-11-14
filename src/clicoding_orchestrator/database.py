@@ -980,7 +980,7 @@ class Database:
             or not project_path
             or len(project_path) > 512
             or "\\" in project_path
-            or "\\" in project_path
+            or "\x00" in project_path
             or PurePosixPath(project_path).is_absolute()
             or PureWindowsPath(project_path).is_absolute()
             or any(part in {"", ".", ".."} for part in PurePosixPath(project_path).parts)
