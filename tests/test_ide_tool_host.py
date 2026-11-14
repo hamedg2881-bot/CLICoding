@@ -276,7 +276,19 @@ def test_fixed_command_is_terminated_when_cancelled(tmp_path, monkeypatch):
             self.terminated = True
 
     monkeypatch.setattr("cds_ai_ide_adapter.tool_host.shutil.which", lambda name: "/usr/bin/fake")
-    monkeypatch.setattr("cds_ai_ide_adapter.tool_host.os.name", "nt")
+    def signal_fake_process(_pid, _signal):
+        process = processes[0]
+        process.terminated = True
+
+    processes = []
+    original_init = FakeProcess.__init__
+
+    def tracked_init(self, command, **kwargs):
+        original_init(self, command, **kwargs)
+        processes.append(self)
+
+    FakeProcess.__init__ = tracked_init
+    monkeypatch.setattr("cds_ai_ide_adapter.tool_host.os.killpg", signal_fake_process)
     monkeypatch.setattr("cds_ai_ide_adapter.tool_host.subprocess.Popen", FakeProcess)
 
     def cancel_after_start():
