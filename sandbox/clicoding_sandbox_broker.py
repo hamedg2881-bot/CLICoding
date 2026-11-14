@@ -406,6 +406,17 @@ def cancel_workspace_approval(approval_id: str) -> dict:
     connection = database_connection()
     try:
         connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sandbox_execution_claims (
+                approval_id TEXT PRIMARY KEY,
+                source_sha256 TEXT NOT NULL,
+                status TEXT NOT NULL,
+                claimed_at TEXT NOT NULL,
+                finished_at TEXT
+            )
+            """
+        )
         approval = connection.execute(
             "SELECT status FROM sandbox_workspace_approvals WHERE id = ?",
             (approval_id,),
