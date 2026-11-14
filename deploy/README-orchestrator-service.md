@@ -59,18 +59,29 @@ sudo unzip -q CDS_AI_<12-char-sha>.zip -d "$release_root/source"
 sudo tar -xzf CDS_AI-wheelhouse-cp312-arm64-<12-char-sha>.tar.gz -C "$release_root"
 ```
 
-Create a release-local environment and install only the prebuilt wheel from the exact wheelhouse:
+Verify the wheelhouse, create an isolated test environment, and run the complete suite before preparing the production environment:
 
 ```bash
+python3 "$release_root/source/CDS_AI/scripts/verify_wheelhouse.py" \
+  --wheelhouse "$release_root/wheelhouse" \
+  --manifest "$release_root/wheelhouse-manifest.json"
+
+sudo python3 -m venv "$release_root/test-venv"
+sudo "$release_root/test-venv/bin/python" -m pip install \
+  --no-index --find-links="$release_root/wheelhouse" \
+  'clicoding-orchestrator[test]'
+cd "$release_root/source/CDS_AI"
+sudo "$release_root/test-venv/bin/python" -m pytest
+
 sudo python3 -m venv "$release_root/venv"
 sudo "$release_root/venv/bin/python" -m pip install \
   --no-index --find-links="$release_root/wheelhouse" \
-  'clicoding-orchestrator[test]'
+  'clicoding-orchestrator'
 sudo "$release_root/venv/bin/python" -m pip check
 sudo "$release_root/venv/bin/python" -c "import clicoding_orchestrator; print('package import OK')"
 ```
 
-The command must fail if a dependency is absent from the wheelhouse; do not remove `--no-index` or add a public index fallback. The actual Python minor version must match the wheelhouse build target.
+The production `venv` intentionally omits test-only dependencies; the separate `test-venv` can be retained for audit or removed after acceptance. Every install command must fail if a dependency is absent from the wheelhouse; do not remove `--no-index` or add a public index fallback. The actual Python major/minor version must match the wheelhouse build target.
 
 Set the active release pointer only after the source, venv, package checks and staging tests have been verified:
 
