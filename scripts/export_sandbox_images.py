@@ -71,9 +71,11 @@ def inspect_image(docker: str, reference: str) -> tuple[str, str, list[str]]:
 
 def context_sha256(root: Path) -> str:
     digest = hashlib.sha256()
-    for path in sorted(item for item in root.rglob("*") if item.is_file()):
+    for path in sorted(root.rglob("*")):
         if path.is_symlink():
             raise RuntimeError("TypeScript image build context contains a symlink")
+        if not path.is_file():
+            continue
         relative = path.relative_to(root).as_posix().encode("utf-8")
         data = path.read_bytes()
         digest.update(len(relative).to_bytes(4, "big"))
