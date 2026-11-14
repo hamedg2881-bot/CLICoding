@@ -115,7 +115,7 @@ def test_workspace_sandbox_api_forwards_execute_request_to_existing_broker(tmp_p
                 "status": "succeeded",
                 "exit_code": 0,
                 "snapshot_sha256": created.json()["snapshot_sha256"],
-            }).encode() + b"\\n"
+            }).encode() + b"\n"
 
     class FakeWriter:
         def write(self, value):
@@ -162,7 +162,7 @@ def test_workspace_sandbox_api_forwards_cancel_request_to_existing_broker(tmp_pa
                 "status": "cancel_requested",
                 "approval_id": approval_id,
                 "container_stopped": True,
-            }).encode() + b"\\n"
+            }).encode() + b"\n"
 
     class FakeWriter:
         def write(self, value):
