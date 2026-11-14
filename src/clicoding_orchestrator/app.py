@@ -16,7 +16,7 @@ import httpx
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from .tool_protocol import (
     ToolProtocolError, pending_tool_call, validate_tool_calls,
@@ -107,6 +107,20 @@ class SandboxApprovalCreate(BaseModel):
 
 class SandboxApprovalDecision(BaseModel):
     decision: Literal["approve", "reject"]
+
+
+class WorkspaceSnapshotFile(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    path: str = Field(min_length=1, max_length=512)
+    content: str = Field(max_length=1_000_000)
+
+
+class WorkspaceSandboxApprovalCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    workspace_id: str = Field(min_length=1, max_length=128)
+    action: Literal["build", "test"]
+    project_path: str = Field(min_length=1, max_length=512)
+    files: list[WorkspaceSnapshotFile] = Field(min_length=1, max_length=200)
 
 
 class OpenAIChatRequest(BaseModel):
@@ -2162,6 +2176,125 @@ def create_app(
             raise HTTPException(status_code=404, detail="Execution not found")
         return execution
 
+
+    async def _read_workspace_approval_request(http_request: Request) -> WorkspaceSandboxApprovalCreate:
+        maximum = 8 * 1024 * 1024
+        chunks: list[bytes] = []
+        total = 0
+        async for chunk in http_request.stream():
+            total += len(chunk)
+            if total > maximum:
+                raise HTTPException(status_code=413, detail="Workspace snapshot exceeds 8 MiB request limit")
+            chunks.append(chunk)
+        try:
+            return WorkspaceSandboxApprovalCreate.model_validate_json(b"".join(chunks))
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=exc.errors()) from exc
+
+    async def _execute_approved_snapshot(approval_id: str) -> dict[str, Any]:
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_unix_connection(
+                    "/run/clicoding-sandbox/broker.sock", limit=600 * 1024
+                ),
+                timeout=3,
+            )
+            writer.write(
+                (json.dumps({"approval_id": approval_id}) + "\n").encode("utf-8")
+            )
+            await writer.drain()
+            raw = await asyncio.wait_for(reader.readline(), timeout=700)
+            writer.close()
+            await writer.wait_closed()
+            if not raw or len(raw) > 512 * 1024:
+                raise RuntimeError("broker returned an empty or oversized response")
+            result = json.loads(raw.decode("utf-8"))
+            if not isinstance(result, dict):
+                raise RuntimeError("broker returned an invalid response")
+            if result.get("status") == "broker_error":
+                raise RuntimeError(result.get("error", "Sandbox broker failed"))
+            if result.get("status") == "rejected":
+                raise HTTPException(status_code=409, detail=result.get("error", "Execution rejected"))
+            return result
+        except (OSError, asyncio.TimeoutError, RuntimeError, json.JSONDecodeError) as exc:
+            raise HTTPException(
+                status_code=503, detail=f"Sandbox broker unavailable or failed: {exc}"
+            ) from exc
+
+    @app.post("/api/v1/workspace-sandbox-approvals", status_code=201)
+    async def create_workspace_sandbox_approval(http_request: Request) -> dict[str, Any]:
+        payload = await _read_workspace_approval_request(http_request)
+        try:
+            return db.create_workspace_sandbox_approval(
+                owner_id=http_request.state.principal_id,
+                workspace_id=payload.workspace_id,
+                action=payload.action,
+                project_path=payload.project_path,
+                files=[item.model_dump() for item in payload.files],
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/api/v1/workspace-sandbox-approvals/{approval_id}")
+    async def get_workspace_sandbox_approval(
+        approval_id: str, http_request: Request
+    ) -> dict[str, Any]:
+        approval = db.get_workspace_sandbox_approval(
+            approval_id, owner_id=_owner_scope(http_request)
+        )
+        if approval is None:
+            raise HTTPException(status_code=404, detail="Workspace sandbox approval not found")
+        return approval
+
+    @app.post("/api/v1/workspace-sandbox-approvals/{approval_id}/decision")
+    async def decide_workspace_sandbox_approval(
+        approval_id: str, request: SandboxApprovalDecision, http_request: Request
+    ) -> dict[str, Any]:
+        current = db.get_workspace_sandbox_approval(
+            approval_id, owner_id=_owner_scope(http_request)
+        )
+        if current is None:
+            raise HTTPException(status_code=404, detail="Workspace sandbox approval not found")
+        try:
+            approval = db.decide_workspace_sandbox_approval(
+                approval_id, current["owner_id"], request.decision
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if approval is None:
+            raise HTTPException(status_code=404, detail="Workspace sandbox approval not found")
+        return approval
+
+    @app.post("/api/v1/workspace-sandbox-approvals/{approval_id}/execute")
+    async def execute_workspace_sandbox_approval(
+        approval_id: str, http_request: Request
+    ) -> dict[str, Any]:
+        approval = db.get_workspace_sandbox_approval(
+            approval_id, owner_id=_owner_scope(http_request)
+        )
+        if approval is None:
+            raise HTTPException(status_code=404, detail="Workspace sandbox approval not found")
+        if approval["status"] != "approved":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Workspace sandbox approval is not approved (status={approval['status']})",
+            )
+        return await _execute_approved_snapshot(approval_id)
+
+    @app.get("/api/v1/workspace-sandbox-approvals/{approval_id}/result")
+    async def get_workspace_sandbox_execution_result(
+        approval_id: str, http_request: Request
+    ) -> dict[str, Any]:
+        approval = db.get_workspace_sandbox_approval(
+            approval_id, owner_id=_owner_scope(http_request)
+        )
+        if approval is None:
+            raise HTTPException(status_code=404, detail="Workspace sandbox approval not found")
+        result = db.get_sandbox_execution_result(approval_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Workspace sandbox result not found")
+        return result
+
     @app.post(
         "/api/v1/executions/{execution_id}/tasks/{task_id}/sandbox-approvals",
         status_code=201,
@@ -2215,34 +2348,7 @@ def create_app(
                 status_code=409,
                 detail=f"Sandbox approval is not approved (status={approval['status']})",
             )
-        try:
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_unix_connection(
-                    "/run/clicoding-sandbox/broker.sock", limit=600 * 1024
-                ),
-                timeout=3,
-            )
-            writer.write(
-                (json.dumps({"approval_id": approval_id}) + "\n").encode("utf-8")
-            )
-            await writer.drain()
-            raw = await asyncio.wait_for(reader.readline(), timeout=90)
-            writer.close()
-            await writer.wait_closed()
-            if not raw or len(raw) > 512 * 1024:
-                raise RuntimeError("broker returned an empty or oversized response")
-            result = json.loads(raw.decode("utf-8"))
-            if not isinstance(result, dict):
-                raise RuntimeError("broker returned an invalid response")
-            if result.get("status") == "broker_error":
-                raise RuntimeError(result.get("error", "broker execution failed"))
-            if result.get("status") == "rejected":
-                raise HTTPException(status_code=409, detail=result.get("error", "Execution rejected"))
-            return result
-        except (OSError, asyncio.TimeoutError, RuntimeError, json.JSONDecodeError) as exc:
-            raise HTTPException(
-                status_code=503, detail=f"Sandbox broker unavailable or failed: {exc}"
-            ) from exc
+        return await _execute_approved_snapshot(approval_id)
 
     @app.get("/api/v1/sandbox-approvals/{approval_id}/result")
     async def get_sandbox_execution_result(
