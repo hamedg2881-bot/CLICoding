@@ -17,7 +17,6 @@ import subprocess
 import tempfile
 import threading
 import time
-import sys
 from typing import Any, Callable
 
 from clicoding_orchestrator.context import redact_sensitive_data
@@ -26,10 +25,6 @@ from clicoding_orchestrator.tool_protocol import (
     validate_tool_calls,
     validate_tool_definitions,
 )
-
-
-def sys_platform_is_linux() -> bool:
-    return sys.platform.startswith("linux")
 
 
 class ToolExecutionConflict(RuntimeError):
@@ -145,7 +140,6 @@ class WorkspaceToolHost:
         max_file_bytes: int = 1_000_000,
         max_output_chars: int = 64_000,
         command_timeout_seconds: int = 300,
-        require_command_sandbox: bool = False,
     ):
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", workspace_id):
             raise ValueError("workspace_id has an invalid format")
@@ -168,9 +162,6 @@ class WorkspaceToolHost:
         self.max_file_bytes = max_file_bytes
         self.max_output_chars = max_output_chars
         self.command_timeout_seconds = command_timeout_seconds
-        if not isinstance(require_command_sandbox, bool):
-            raise ValueError("require_command_sandbox must be a boolean")
-        self.require_command_sandbox = require_command_sandbox
         self._definitions = self._build_definitions()
         self._definitions_by_name = validate_tool_definitions(self._definitions)
 
@@ -688,35 +679,6 @@ class WorkspaceToolHost:
             "bytes": len(content.encode("utf-8")),
         }
 
-    def _sandbox_command(self, command: list[str]) -> list[str]:
-        """Build a fail-closed bubblewrap command for opt-in Linux isolation."""
-        if not self.require_command_sandbox:
-            return command
-        if os.name == "nt" or not sys_platform_is_linux():
-            raise RuntimeError("required command sandbox is supported only on Linux")
-        bubblewrap = shutil.which("bwrap")
-        if bubblewrap is None:
-            raise RuntimeError("required command sandbox is unavailable: install bubblewrap")
-        args = [
-            bubblewrap, "--die-with-parent", "--new-session", "--unshare-all",
-            "--ro-bind", "/", "/", "--tmpfs", "/tmp",
-            "--proc", "/proc", "--dev", "/dev",
-            "--tmpfs", "/home", "--tmpfs", "/root",
-        ]
-        for masked in (Path("/home"), Path("/root")):
-            try:
-                relative = self.root.relative_to(masked)
-            except ValueError:
-                continue
-            current = masked
-            for part in relative.parts:
-                current = current / part
-                args.extend(["--dir", str(current)])
-        args.extend([
-            "--bind", str(self.root), str(self.root),
-            "--chdir", str(self.root), "--", *command,
-        ])
-        return args
     def _run_fixed_command(
         self,
         command: list[str],
@@ -742,10 +704,6 @@ class WorkspaceToolHost:
         if executable is None:
             return {"status": "unavailable", "error": f"{command[0]} is not installed"}
         command = [executable, *command[1:]]
-        try:
-            command = self._sandbox_command(command)
-        except RuntimeError as exc:
-            return {"status": "unavailable", "error": str(exc)}
         allowed_env_names = {
             "PATH", "HOME", "USERPROFILE", "SYSTEMROOT", "WINDIR",
             "DOTNET_ROOT", "DOTNET_CLI_HOME", "NUGET_PACKAGES",
