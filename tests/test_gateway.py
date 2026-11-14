@@ -561,3 +561,60 @@ def test_openai_gateway_normalizes_stream_transport_errors(stream_method, error)
 
     with pytest.raises(GatewayError, match="Upstream streaming request failed"):
         asyncio.run(collect())
+
+
+
+@pytest.mark.parametrize(
+    "payload, expected_message",
+    [
+        ([], "invalid chat-completion response"),
+        ({}, "invalid or empty chat-completion choices"),
+        ({"choices": {}}, "invalid or empty chat-completion choices"),
+        ({"choices": []}, "invalid or empty chat-completion choices"),
+        ({"choices": ["bad"]}, "invalid chat-completion choice"),
+        ({"choices": [{"message": []}]}, "invalid assistant message"),
+        ({"choices": [{"message": {"content": 7}}]}, "non-text assistant content"),
+        ({"choices": [{"message": {"content": None}}]}, "neither assistant content nor tool calls"),
+        ({"choices": [{"message": {"content": None, "tool_calls": {}}}]}, "invalid tool_calls"),
+        ({"choices": [{"message": {"content": None, "tool_calls": ["bad"]}}]}, "invalid tool call"),
+        (
+            {"choices": [{"message": {"content": None, "tool_calls": [
+                {"id": "call_1", "type": "function", "function": {"name": "run", "arguments": {}}}
+            ]}}]},
+            "non-text tool-call arguments",
+        ),
+        (
+            {"choices": [{"message": {"content": None, "tool_calls": [
+                {"id": "call_1", "type": "function", "function": {"name": "", "arguments": "{}"}}
+            ]}}]},
+            "valid function name",
+        ),
+    ],
+)
+def test_openai_gateway_rejects_malformed_completion_response_shapes(
+    payload, expected_message
+):
+    gateway = OpenAICompatibleGateway(
+        "http://model/v1", "served-model",
+        client=FakeCompleteClient(FakeJSONResponse(payload)),
+    )
+
+    with pytest.raises(GatewayError, match=expected_message):
+        asyncio.run(gateway.complete([{"role": "user", "content": "Validate response"}]))
+
+
+def test_openai_gateway_rejects_non_string_returned_model():
+    payload = {
+        "model": {"name": "unexpected"},
+        "choices": [{
+            "message": {"role": "assistant", "content": "hello"},
+            "finish_reason": "stop",
+        }],
+    }
+    gateway = OpenAICompatibleGateway(
+        "http://model/v1", "served-model",
+        client=FakeCompleteClient(FakeJSONResponse(payload)),
+    )
+
+    with pytest.raises(GatewayError, match="invalid model name"):
+        asyncio.run(gateway.complete([{"role": "user", "content": "Hi"}]))
