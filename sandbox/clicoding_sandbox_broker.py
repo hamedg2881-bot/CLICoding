@@ -294,6 +294,19 @@ def persist_result(approval_id: str, digest: str, result: dict) -> None:
         connection.close()
 
 
+
+def is_cancel_requested(approval_id: str) -> bool:
+    connection = database_connection()
+    try:
+        row = connection.execute(
+            "SELECT status FROM sandbox_execution_claims WHERE approval_id = ?",
+            (approval_id,),
+        ).fetchone()
+        return row is not None and row["status"] == "cancel_requested"
+    finally:
+        connection.close()
+
+
 def execute_approval(approval_id: str) -> dict:
     try:
         language, source, digest = claim_approval(approval_id)
@@ -307,6 +320,12 @@ def execute_approval(approval_id: str) -> dict:
     payload = json.dumps(payload_object, ensure_ascii=False).encode("utf-8")
     process = None
     try:
+        if is_cancel_requested(approval_id):
+            result = {"status": "cancelled", "error": "cancelled before runner start"}
+            result["approval_id"] = approval_id
+            result["source_sha256"] = digest
+            persist_result(approval_id, digest, result)
+            return result
         process = subprocess.Popen(
             [RUNNER_PATH],
             stdin=subprocess.PIPE,
@@ -317,6 +336,11 @@ def execute_approval(approval_id: str) -> dict:
         )
         with RUNNING_EXECUTIONS_LOCK:
             RUNNING_EXECUTIONS[approval_id] = process
+        if is_cancel_requested(approval_id):
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
         stdout, stderr = process.communicate(
             input=payload, timeout=RUNNER_TIMEOUT_SECONDS
         )
@@ -414,14 +438,21 @@ def cancel_workspace_approval(approval_id: str) -> dict:
             os.killpg(process.pid, signal.SIGTERM)
         except ProcessLookupError:
             pass
+        try:
+            process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            pass
 
     stopped = False
+    docker_query_succeeded = False
     for _ in range(5):
         try:
             listed = subprocess.run(
                 [DOCKER_PATH, "ps", "-aq", "--filter", f"label=clicoding.approval={approval_id}"],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=3, check=False,
             )
+            if listed.returncode == 0:
+                docker_query_succeeded = True
             ids = [
                 item for item in listed.stdout.decode("ascii", errors="ignore").splitlines()
                 if item and all(ch in "0123456789abcdef" for ch in item.lower())
@@ -432,13 +463,13 @@ def cancel_workspace_approval(approval_id: str) -> dict:
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5, check=False,
                 )
                 stopped = removed.returncode == 0
-            else:
-                stopped = True
-            if stopped:
-                break
+                if stopped:
+                    break
         except (OSError, subprocess.TimeoutExpired):
             pass
         time.sleep(0.2)
+    if not stopped and docker_query_succeeded:
+        stopped = True
     if process is not None and process.poll() is None:
         try:
             os.killpg(process.pid, signal.SIGKILL)
