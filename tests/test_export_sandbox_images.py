@@ -63,6 +63,14 @@ def test_typescript_build_context_hash_is_stable_and_rejects_symlinks(tmp_path):
     with pytest.raises(RuntimeError, match="symlink"):
         exporter.context_sha256(context)
 
+    (context / "link").unlink()
+    linked_directory = tmp_path / "linked-directory"
+    linked_directory.mkdir()
+    (linked_directory / "outside.txt").write_text("outside", encoding="utf-8")
+    (context / "linked-directory").symlink_to(linked_directory, target_is_directory=True)
+    with pytest.raises(RuntimeError, match="symlink"):
+        exporter.context_sha256(context)
+
 
 def test_archive_checksum_streaming(tmp_path):
     archive = tmp_path / "images.tar"
