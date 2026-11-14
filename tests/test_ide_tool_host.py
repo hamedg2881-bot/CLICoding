@@ -151,6 +151,8 @@ def test_dotnet_build_uses_fixed_command_restricted_environment_and_approval(tmp
     root, host = make_host(tmp_path, approval=lambda request: True)
     (root / "Demo.csproj").write_text("<Project />", encoding="utf-8")
     captured = {}
+    approvals = []
+    host.approval = lambda request: approvals.append(request) or True
     monkeypatch.setenv("CLICODING_API_KEY", "must-not-enter-child-process")
     monkeypatch.setattr("cds_ai_ide_adapter.tool_host.shutil.which", lambda name: "/usr/bin/dotnet")
 
@@ -177,6 +179,9 @@ def test_dotnet_build_uses_fixed_command_restricted_environment_and_approval(tmp
     assert captured["shell"] is False
     assert captured["cwd"] == root
     assert "CLICODING_API_KEY" not in captured["env"]
+    assert approvals[0].details["execution_boundary"] == "workstation_host_process"
+    assert approvals[0].details["sandboxed"] is False
+    assert "host network access" in approvals[0].details["risk_warning"]
 
 
 def test_dotnet_build_is_denied_without_explicit_approval(tmp_path, monkeypatch):
