@@ -38,6 +38,7 @@ def workspace_request():
     ).encode()
     return {
         "mode": "workspace",
+        "approval_id": "d0a0f0d0-1111-4222-8333-444455556666",
         "action": "build",
         "project_path": "Demo/Demo.csproj",
         "files": files,
