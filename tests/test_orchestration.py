@@ -530,7 +530,7 @@ def test_full_original_request_and_acceptance_criteria_reach_workers_and_synthes
         assert prior_context in captured["worker_message"]
         assert prior_context in captured["synthesis_message"]
         assert "quote exact prior values" in captured["synthesis_system"]
-        assert "Never claim that information was persisted externally" in captured["synthesis_system"]
+        assert "Never claim external persistence" in captured["synthesis_system"]
         assert "{2: 2, 3: 3}" in result.answer
         assert "def find_duplicates" in result.answer
 
