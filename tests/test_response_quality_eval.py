@@ -54,6 +54,95 @@ def test_quality_runner_loads_the_versioned_case_file():
     spec.loader.exec_module(module)
 
     cases = module.load_cases(CASES_PATH)
-    assert len(cases) == 9
+    assert len(cases) == 15
     assert cases[0]["id"] == "fa-ordinary-001"
     assert cases[-1]["id"] == "en-uncertainty-015"
+
+
+
+def _load_runner_module():
+    runner_path = Path(__file__).parents[1] / "scripts" / "run_response_quality.py"
+    spec = importlib.util.spec_from_file_location("response_quality_runner", runner_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_quality_runner_records_model_usage_tool_calls_and_orchestration(monkeypatch):
+    module = _load_runner_module()
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return json.dumps({
+                "id": "chatcmpl-test",
+                "model": "CDS_AI",
+                "system_fingerprint": "fp-test",
+                "choices": [{
+                    "message": {
+                        "content": "Answer",
+                        "tool_calls": [{"id": "call-1"}],
+                    },
+                    "finish_reason": "tool_calls",
+                }],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 4},
+                "x_clicoding": {"orchestrated": True},
+            }).encode("utf-8")
+
+    monkeypatch.setattr(module, "urlopen", lambda *_args, **_kwargs: FakeResponse())
+    result = module.request_case(
+        "http://localhost/v1/chat/completions",
+        "test-token",
+        {
+            "id": "case-1",
+            "title": "test",
+            "task_type": "chat",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "acceptance_criteria": ["Returns an answer"],
+        },
+        10,
+    )
+
+    assert result["error"] is None
+    assert result["response"] == "Answer"
+    assert result["tool_calls"] == [{"id": "call-1"}]
+    assert result["usage"]["prompt_tokens"] == 10
+    assert result["orchestration"]["orchestrated"] is True
+    assert result["response_id"] == "chatcmpl-test"
+
+
+def test_quality_runner_rejects_empty_or_malformed_chat_completion(monkeypatch):
+    module = _load_runner_module()
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"choices": []}'
+
+    monkeypatch.setattr(module, "urlopen", lambda *_args, **_kwargs: FakeResponse())
+    result = module.request_case(
+        "http://localhost/v1/chat/completions",
+        None,
+        {
+            "id": "case-invalid",
+            "title": "invalid response",
+            "task_type": "chat",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "acceptance_criteria": ["Must return content"],
+        },
+        10,
+    )
+
+    assert result["response"] is None
+    assert "no valid first choice" in result["error"]
