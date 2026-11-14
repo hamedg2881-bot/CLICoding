@@ -59,6 +59,61 @@ def _parse_sse_event(raw: str) -> list[tuple[dict[str, Any], dict[str, Any]]]:
     return parsed
 
 
+def _parse_completion_response(data: Any, requested_model: str) -> Completion:
+    """Validate the non-streaming OpenAI chat-completion envelope and tool calls."""
+    if not isinstance(data, dict):
+        raise GatewayError("Upstream returned an invalid chat-completion response")
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise GatewayError("Upstream returned invalid or empty chat-completion choices")
+    choice = choices[0]
+    if not isinstance(choice, dict):
+        raise GatewayError("Upstream returned an invalid chat-completion choice")
+    message = choice.get("message")
+    if not isinstance(message, dict):
+        raise GatewayError("Upstream returned an invalid assistant message")
+
+    content = message.get("content")
+    if content is not None and not isinstance(content, str):
+        raise GatewayError("Upstream returned a non-text assistant content value")
+
+    raw_tool_calls = message.get("tool_calls")
+    if raw_tool_calls is not None:
+        if not isinstance(raw_tool_calls, list):
+            raise GatewayError("Upstream returned invalid tool_calls")
+        for tool_call in raw_tool_calls:
+            if not isinstance(tool_call, dict):
+                raise GatewayError("Upstream returned an invalid tool call")
+            if not isinstance(tool_call.get("id"), str) or not tool_call["id"]:
+                raise GatewayError("Upstream returned a tool call without a valid id")
+            if tool_call.get("type") != "function":
+                raise GatewayError("Upstream returned an unsupported tool-call type")
+            function = tool_call.get("function")
+            if not isinstance(function, dict):
+                raise GatewayError("Upstream returned an invalid tool-call function")
+            if not isinstance(function.get("name"), str) or not function["name"]:
+                raise GatewayError("Upstream returned a tool call without a valid function name")
+            if not isinstance(function.get("arguments"), str):
+                raise GatewayError("Upstream returned non-text tool-call arguments")
+
+    if content is None and not raw_tool_calls:
+        raise GatewayError("Upstream returned neither assistant content nor tool calls")
+
+    returned_model = data.get("model") or requested_model
+    if not isinstance(returned_model, str):
+        raise GatewayError("Upstream returned an invalid model name")
+    finish_reason = choice.get("finish_reason") or "stop"
+    if not isinstance(finish_reason, str):
+        raise GatewayError("Upstream returned an invalid finish_reason")
+
+    return Completion(
+        content=content or "",
+        model=returned_model,
+        tool_calls=raw_tool_calls,
+        finish_reason=finish_reason,
+    )
+
+
 class OpenAICompatibleGateway:
     """OpenAI-compatible transport; conversation and task state live elsewhere."""
 
@@ -128,28 +183,7 @@ class OpenAICompatibleGateway:
         except (httpx.HTTPError, ValueError) as exc:
             raise GatewayError(f"Upstream model request failed: {exc}") from exc
 
-        try:
-            choice = data["choices"][0]
-            message = choice["message"]
-            content = message.get("content")
-            raw_tool_calls = message.get("tool_calls")
-            returned_model = str(data.get("model") or self.model)
-            finish_reason = str(choice.get("finish_reason") or "stop")
-        except (KeyError, IndexError, AttributeError, TypeError) as exc:
-            raise GatewayError("Upstream returned an invalid chat-completion response") from exc
-
-        if content is not None and not isinstance(content, str):
-            raise GatewayError("Upstream returned a non-text assistant content value")
-        if raw_tool_calls is not None and not isinstance(raw_tool_calls, list):
-            raise GatewayError("Upstream returned invalid tool_calls")
-        if content is None and not raw_tool_calls:
-            raise GatewayError("Upstream returned neither assistant content nor tool calls")
-        return Completion(
-            content=content or "",
-            model=returned_model,
-            tool_calls=raw_tool_calls,
-            finish_reason=finish_reason,
-        )
+        return _parse_completion_response(data, self.model)
 
     async def stream_events(
         self,
