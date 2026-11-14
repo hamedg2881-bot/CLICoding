@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import pytest
 from pathlib import Path
 
 
@@ -146,3 +147,54 @@ def test_quality_runner_rejects_empty_or_malformed_chat_completion(monkeypatch):
 
     assert result["response"] is None
     assert "no valid first choice" in result["error"]
+
+
+
+@pytest.mark.parametrize(
+    "body, expected_error",
+    [
+        (b"[]", "must be a JSON object"),
+        (b'{"choices": {}}', "no valid first choice"),
+        (b'{"choices": ["bad"]}', "invalid first choice"),
+        (b'{"choices": [{"message": []}]}', "no valid message"),
+        (
+            b'{"choices": [{"message": {"content": 42}}]}',
+            "assistant content must be text or null",
+        ),
+        (
+            b'{"choices": [{"message": {"content": "ok", "tool_calls": {}}}]}',
+            "tool_calls must be a list of objects",
+        ),
+    ],
+)
+def test_quality_runner_rejects_invalid_completion_envelope_shapes(
+    monkeypatch, body, expected_error
+):
+    module = _load_runner_module()
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return body
+
+    monkeypatch.setattr(module, "urlopen", lambda *_args, **_kwargs: FakeResponse())
+    result = module.request_case(
+        "http://localhost/v1/chat/completions",
+        None,
+        {
+            "id": "case-invalid-shape",
+            "title": "invalid response shape",
+            "task_type": "chat",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "acceptance_criteria": ["Must return a valid completion envelope"],
+        },
+        10,
+    )
+
+    assert result["response"] is None
+    assert expected_error in result["error"]
