@@ -334,6 +334,14 @@ class CDSAISandboxExecutor:
                     if monitor is not None:
                         monitor.join(timeout=2)
                 if executed.is_error:
+                    if cancellation_event is not None and cancellation_event.is_set():
+                        return {
+                            "status": "cancel_pending" if cancellation_result.get("error")
+                            else "cancelled",
+                            "approval_id": approval_id,
+                            "snapshot_sha256": digest,
+                            "cancellation": cancellation_result,
+                        }
                     raise CDSAIClientError(
                         f"workspace sandbox execution failed with HTTP {executed.status_code}"
                     )
