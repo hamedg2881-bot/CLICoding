@@ -503,6 +503,14 @@ class MultiModelOrchestrator:
                     + "\n\n".join(successful)
                 )
 
+            # The final composer must not accidentally drop a concrete code artifact.
+            # If it does, fall back to the verified worker deliverables.
+            if (
+                any(self._expects_code_artifact(task.expected_output) for task in plan.tasks)
+                and not self._contains_code_artifact(answer)
+            ):
+                answer = "\n\n".join(successful)
+
             incomplete = [
                 (plan.task_map()[task_id].objective, result.status)
                 for task_id, result in execution.results.items()
@@ -516,14 +524,6 @@ class MultiModelOrchestrator:
                         for objective, status in incomplete
                     )
                 )
-
-            # The final composer must not accidentally drop a concrete code artifact.
-            # If it does, fall back to the verified worker deliverables.
-            if (
-                any(self._expects_code_artifact(task.expected_output) for task in plan.tasks)
-                and not self._contains_code_artifact(answer)
-            ):
-                answer = "\n\n".join(successful)
 
         return OrchestrationResult(
             execution_id=execution_id, answer=answer, execution=execution
