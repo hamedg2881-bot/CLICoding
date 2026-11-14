@@ -18,7 +18,7 @@ def test_response_quality_benchmark_cases_are_valid_and_versionable():
         if line.strip()
     ]
 
-    assert len(cases) >= 15
+    assert len(cases) >= 20
     identifiers = [case["id"] for case in cases]
     assert len(identifiers) == len(set(identifiers))
     assert any("fa-" in case["id"] for case in cases)
@@ -54,9 +54,9 @@ def test_quality_runner_loads_the_versioned_case_file():
     spec.loader.exec_module(module)
 
     cases = module.load_cases(CASES_PATH)
-    assert len(cases) == 15
+    assert len(cases) == 20
     assert cases[0]["id"] == "fa-ordinary-001"
-    assert cases[-1]["id"] == "en-uncertainty-015"
+    assert cases[-1]["id"] == "fa-format-020"
 
 
 
