@@ -128,6 +128,7 @@ def test_browser_uploads_image_and_stop_calls_cancellation_endpoint():
                 completion_started.set()
                 try:
                     await asyncio.wait_for(cancellation_requested.wait(), timeout=5)
+                    await asyncio.sleep(0.3)
                     await route.fulfill(
                         status=200,
                         headers={"content-type": "text/event-stream"},
