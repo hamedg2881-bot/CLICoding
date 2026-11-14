@@ -661,7 +661,7 @@ def test_partial_execution_is_disclosed_in_final_answer(tmp_path):
                                 "task_id": "implement",
                                 "objective": "Implement the requested change",
                                 "required_capabilities": ["coding"],
-                                "expected_output": "A complete implementation",
+                                "expected_output": "Complete source code: def change():",
                             },
                             {
                                 "task_id": "review",
@@ -673,7 +673,7 @@ def test_partial_execution_is_disclosed_in_final_answer(tmp_path):
                     }
                     return Completion(json.dumps(plan), "planner")
                 if self.worker_id == "coder":
-                    return Completion("Implementation completed.", "coder")
+                    return Completion("def change():\n    return True", "coder")
                 if self.worker_id == "reviewer":
                     raise RuntimeError("review runtime unavailable")
                 synthesis_messages.append(messages)
@@ -691,6 +691,7 @@ def test_partial_execution_is_disclosed_in_final_answer(tmp_path):
 
         assert result.execution.results["implement"].status == "succeeded"
         assert result.execution.results["review"].status == "failed"
+        assert "def change():" in result.answer
         assert "Work not completed" in result.answer
         assert "Perform the independent code review" in result.answer
         assert "failed" in result.answer
