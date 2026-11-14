@@ -2189,7 +2189,8 @@ def create_app(
         try:
             return WorkspaceSandboxApprovalCreate.model_validate_json(b"".join(chunks))
         except ValidationError as exc:
-            raise HTTPException(status_code=422, detail=exc.errors()) from exc
+            # Do not echo submitted file contents or other untrusted request values.
+            raise HTTPException(status_code=422, detail="Invalid workspace snapshot request") from exc
 
     async def _execute_approved_snapshot(approval_id: str) -> dict[str, Any]:
         try:
