@@ -347,29 +347,39 @@ class MultiModelOrchestrator:
                 # If the plan contains an explicit source-code example, require
                 # the worker to return an actual implementation, not just prose.
                 if self._expects_code_artifact(task.expected_output) and not self._contains_code_artifact(output):
-                    completion = await self._complete(
-                        worker,
-                        [
-                            {
-                                "role": "system",
-                                "content": (
-                                    "Your previous response omitted the required code artifact. "
-                                    "Return the complete, usable source code now; do not merely "
-                                    "describe the implementation. Include the requested example "
-                                    "and concise explanation when the task asks for them."
-                                ),
-                            },
-                            {
-                                "role": "user",
-                                "content": (
-                                    f"Task:\n{task.objective}\n\n"
-                                    f"Required output example:\n{task.expected_output}\n\n"
-                                    f"Previous incomplete response:\n{output}\n\n"
-                                    "Provide the actual implementation."
-                                ),
-                            },
-                        ],
+                    # Preserve the complete first-attempt contract during repair. Replacing
+                    # the original messages here used to discard the original request,
+                    # acceptance criteria, dependencies, compacted history and image parts.
+                    repair_instruction = (
+                        "\\n\\nRepair requirement: your previous response omitted the required "
+                        "code artifact. Return the complete, usable source code now; do not merely "
+                        "describe the implementation. Preserve every original requirement, expected "
+                        "value, output format and language. Include the requested example and concise "
+                        "explanation when requested.\\n\\n"
+                        f"Previous incomplete response:\\n{output}\\n\\n"
+                        "Provide the actual implementation."
                     )
+                    repair_content = (
+                        user_message_content + repair_instruction
+                        if isinstance(user_message_content, str)
+                        else [
+                            *user_message_content,
+                            {"type": "text", "text": repair_instruction},
+                        ]
+                    )
+                    repair_messages = [
+                        {
+                            "role": "system",
+                            "content": (
+                                messages[0]["content"]
+                                + "\\n\\n"
+                                "A prior attempt was incomplete. Repair it while preserving the "
+                                "entire original task contract and all supplied context."
+                            ),
+                        },
+                        {"role": "user", "content": repair_content},
+                    ]
+                    completion = await self._complete(worker, repair_messages)
                     output = completion.content.strip()
                     if not self._contains_code_artifact(output):
                         raise ValueError(
