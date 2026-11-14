@@ -67,7 +67,6 @@ Confirm ARM64 architecture, Python 3.11+, disk location for SQLite and attachmen
 
 ## 4. Offline dependency preparation (no installation yet)
 
-release_root=/opt/ai/clicoding/releases/<full-commit-sha>
 The wheelhouse archive is already included in the transfer bundle extracted in Section 2. Verify it against the packaged script before creating any virtual environment:
 
 \`\`\`bash
