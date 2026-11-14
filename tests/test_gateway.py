@@ -1,6 +1,7 @@
 import asyncio
 import json
 
+import httpx
 import pytest
 
 from clicoding_orchestrator.gateway import GatewayError, OpenAICompatibleGateway
@@ -463,4 +464,97 @@ def test_openai_gateway_rejects_malformed_sse_event_shapes(
         return [item async for item in iterator]
 
     with pytest.raises(GatewayError, match=expected_message):
+        asyncio.run(collect())
+
+
+
+class InvalidJSONResponse:
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        raise json.JSONDecodeError("invalid", "{", 0)
+
+
+class FailingPostClient:
+    def __init__(self, error):
+        self.error = error
+
+    async def post(self, url, **kwargs):
+        raise self.error
+
+
+class FailingStreamResponse(FakeResponse):
+    def raise_for_status(self):
+        raise self.error
+
+
+class FailingStreamContext:
+    def __init__(self, error):
+        self.error = error
+
+    async def __aenter__(self):
+        raise self.error
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
+
+
+class FailingStreamClient:
+    def __init__(self, error):
+        self.error = error
+
+    def stream(self, method, url, **kwargs):
+        return FailingStreamContext(self.error)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx.ConnectTimeout("upstream timed out"),
+        httpx.ConnectError("upstream unavailable"),
+    ],
+)
+def test_openai_gateway_normalizes_completion_transport_errors(error):
+    gateway = OpenAICompatibleGateway(
+        "http://model/v1", "served-model", client=FailingPostClient(error)
+    )
+
+    with pytest.raises(GatewayError, match="Upstream model request failed"):
+        asyncio.run(gateway.complete([{"role": "user", "content": "Hi"}]))
+
+
+def test_openai_gateway_normalizes_malformed_completion_json():
+    gateway = OpenAICompatibleGateway(
+        "http://model/v1", "served-model",
+        client=FakeCompleteClient(InvalidJSONResponse()),
+    )
+
+    with pytest.raises(GatewayError, match="Upstream model request failed"):
+        asyncio.run(gateway.complete([{"role": "user", "content": "Hi"}]))
+
+
+@pytest.mark.parametrize("stream_method", ["stream", "stream_events"])
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx.ReadTimeout("upstream timed out"),
+        httpx.ConnectError("upstream unavailable"),
+    ],
+)
+def test_openai_gateway_normalizes_stream_transport_errors(stream_method, error):
+    gateway = OpenAICompatibleGateway(
+        "http://model/v1", "served-model",
+        client=FailingStreamClient(error),
+    )
+
+    async def collect():
+        iterator = (
+            gateway.stream([{"role": "user", "content": "Hi"}])
+            if stream_method == "stream"
+            else gateway.stream_events([{"role": "user", "content": "Hi"}])
+        )
+        return [item async for item in iterator]
+
+    with pytest.raises(GatewayError, match="Upstream streaming request failed"):
         asyncio.run(collect())
