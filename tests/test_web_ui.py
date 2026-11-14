@@ -23,3 +23,4 @@ def test_root_serves_first_party_chat_ui_and_progress_controls(tmp_path):
     assert "sessionStorage" in response.text
     assert "/attachments" in response.text
     assert "image/png" in response.text
+    assert "nextToken!==state.token" in response.text
