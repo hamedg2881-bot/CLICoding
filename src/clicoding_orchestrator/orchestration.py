@@ -351,12 +351,12 @@ class MultiModelOrchestrator:
                     # the original messages here used to discard the original request,
                     # acceptance criteria, dependencies, compacted history and image parts.
                     repair_instruction = (
-                        "\\n\\nRepair requirement: your previous response omitted the required "
+                        "\n\nRepair requirement: your previous response omitted the required "
                         "code artifact. Return the complete, usable source code now; do not merely "
                         "describe the implementation. Preserve every original requirement, expected "
                         "value, output format and language. Include the requested example and concise "
-                        "explanation when requested.\\n\\n"
-                        f"Previous incomplete response:\\n{output}\\n\\n"
+                        "explanation when requested.\n\n"
+                        f"Previous incomplete response:\n{output}\n\n"
                         "Provide the actual implementation."
                     )
                     repair_content = (
@@ -372,7 +372,7 @@ class MultiModelOrchestrator:
                             "role": "system",
                             "content": (
                                 messages[0]["content"]
-                                + "\\n\\n"
+                                + "\n\n"
                                 "A prior attempt was incomplete. Repair it while preserving the "
                                 "entire original task contract and all supplied context."
                             ),
