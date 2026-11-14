@@ -630,3 +630,71 @@ def test_orchestrator_emits_structured_progress_events(tmp_path):
         assert all(event["execution_id"] == result.execution_id for event in events)
 
     asyncio.run(scenario())
+
+
+def test_partial_execution_is_disclosed_in_final_answer(tmp_path):
+    async def scenario():
+        db = Database(str(tmp_path / "orchestration-partial.sqlite3"))
+        conversation = db.create_conversation()
+        registry = WorkerRegistry([
+            Worker("planner", "http://planner/v1", "planner", frozenset({"planning"}), priority=1),
+            Worker("coder", "http://coder/v1", "coder", frozenset({"coding"})),
+            Worker("reviewer", "http://reviewer/v1", "reviewer", frozenset({"review"})),
+            Worker("synth", "http://synth/v1", "synth", frozenset({"chat"}), priority=1),
+        ])
+        synthesis_messages = []
+
+        class PartialGateway:
+            def __init__(self, worker_id):
+                self.worker_id = worker_id
+
+            async def complete(self, messages):
+                if self.worker_id == "planner":
+                    plan = {
+                        "goal": "Implement and independently review the change",
+                        "acceptance_criteria": [
+                            "Implementation is provided",
+                            "Independent review findings are provided",
+                        ],
+                        "tasks": [
+                            {
+                                "task_id": "implement",
+                                "objective": "Implement the requested change",
+                                "required_capabilities": ["coding"],
+                                "expected_output": "A complete implementation",
+                            },
+                            {
+                                "task_id": "review",
+                                "objective": "Perform the independent code review",
+                                "required_capabilities": ["review"],
+                                "expected_output": "Review findings",
+                            },
+                        ],
+                    }
+                    return Completion(json.dumps(plan), "planner")
+                if self.worker_id == "coder":
+                    return Completion("Implementation completed.", "coder")
+                if self.worker_id == "reviewer":
+                    raise RuntimeError("review runtime unavailable")
+                synthesis_messages.append(messages)
+                return Completion("The implementation is ready.", "synth")
+
+        orchestrator = MultiModelOrchestrator(
+            db,
+            CapabilityRouter(registry),
+            gateway_factory=lambda worker: PartialGateway(worker.id),
+        )
+        result = await orchestrator.run(
+            conversation["id"],
+            "Implement the change and independently review it",
+        )
+
+        assert result.execution.results["implement"].status == "succeeded"
+        assert result.execution.results["review"].status == "failed"
+        assert "Work not completed" in result.answer
+        assert "Perform the independent code review" in result.answer
+        assert "failed" in result.answer
+        assert "Work not completed" in synthesis_messages[0][1]["content"]
+        assert "Independent review findings are provided" in synthesis_messages[0][1]["content"]
+
+    asyncio.run(scenario())
