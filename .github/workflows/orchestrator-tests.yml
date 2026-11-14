@@ -53,7 +53,8 @@ jobs:
           archive = next(Path("dist").glob("CDS_AI_*.zip"))
           blocked_names = {
               ".env", ".git-credentials", "id_rsa", "id_ed25519",
-              "credentials.json", "secrets.json", ".npmrc", ".pypirc",
+              "credentials.json", "secrets.json", "settings.secrets.json",
+              ".npmrc", ".pypirc", "nuget.config",
           }
           with ZipFile(archive) as bundle:
               infos = bundle.infolist()
@@ -64,7 +65,10 @@ jobs:
                   mode = item.external_attr >> 16
                   parts = [part.casefold() for part in name.split("/") if part]
                   assert not stat.S_ISLNK(mode), f"symlink is not allowed in source bundle: {name}"
-                  assert not any(part in {".git", "__pycache__", ".venv", "node_modules"} for part in parts)
+                  assert not any(part in {
+                      ".git", "__pycache__", ".venv", "node_modules",
+                      ".ssh", ".aws", ".azure", ".gnupg", "secrets", "credentials",
+                  } for part in parts)
                   filename = parts[-1] if parts else ""
                   assert filename not in blocked_names, f"credential file in source bundle: {name}"
                   assert not (filename.startswith(".env.") and filename != ".env.example")
