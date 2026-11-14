@@ -326,8 +326,9 @@ class CDSAISandboxExecutor:
                 result.setdefault("approval_id", approval_id)
                 result.setdefault("snapshot_sha256", digest)
                 if cancellation_event is not None and cancellation_event.is_set():
-                    if result.get("status") != "cancelled":
-                        result["status"] = "cancel_pending"
+                    if cancellation_result.get("status") in {"cancel_requested", "cancel_pending"} or cancellation_result.get("error"):
+                        if result.get("status") != "cancelled":
+                            result["status"] = "cancel_pending"
                     if cancellation_result:
                         result["cancellation"] = cancellation_result
                 return result
