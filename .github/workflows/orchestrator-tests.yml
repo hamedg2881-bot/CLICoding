@@ -141,8 +141,28 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  powershell-check:
+    runs-on: windows-latest
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@v4
+      - name: Parse Windows staging script
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $PWD "scripts/prepare_dgx_transfer.ps1"),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | Format-List | Out-String | Write-Error
+          }
+          Write-Host "PowerShell staging script syntax is valid."
+
   transfer-bundle:
-    needs: [test, wheelhouse-arm64]
+    needs: [test, wheelhouse-arm64, powershell-check]
     runs-on: ubuntu-latest
     steps:
       - name: Download exact source archive
