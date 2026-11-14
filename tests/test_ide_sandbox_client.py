@@ -62,6 +62,7 @@ def test_remote_sandbox_executor_requires_approval_and_executes_exact_snapshot()
     assert approval_requests[0].details["execution_boundary"] == "existing_root_owned_Docker_sandbox"
     assert approval_requests[0].details["host_project_execution"] is False
     assert approval_requests[0].details["snapshot_sha256"] == digest
+    assert approval_requests[0].details["file_previews"][0]["content_preview"]
 
 
 def test_remote_sandbox_executor_denial_never_calls_execute():
@@ -144,3 +145,43 @@ def test_remote_sandbox_executor_rejects_approval_if_stop_arrives_during_dialog(
 
     assert result["status"] == "cancelled"
     assert not any(path.endswith("/execute") for path in paths)
+
+
+def test_remote_sandbox_approval_previews_redact_secret_values():
+    captured = []
+    approval_id = "d0a0f0d0-1111-4222-8333-444455556669"
+
+    def handler(request):
+        if request.url.path == "/api/v1/workspace-sandbox-approvals":
+            return httpx.Response(201, json={
+                "id": approval_id,
+                "status": "pending",
+                "snapshot_sha256": "e" * 64,
+                "total_bytes": 42,
+                "files": [
+                    {"path": "Demo.csproj", "sha256": "f" * 64, "bytes": 42}
+                ],
+            })
+        if request.url.path.endswith("/decision"):
+            return httpx.Response(200, json={"status": "rejected"})
+        return httpx.Response(500)
+
+    executor = CDSAISandboxExecutor(
+        "http://orchestrator.local",
+        api_key=None,
+        approval=lambda request: captured.append(request) or False,
+        transport=httpx.MockTransport(handler),
+    )
+    secret = "sk-abcdefghijklmnopqrstuvwx"
+    result = executor(
+        "demo-workspace",
+        "build",
+        "Demo.csproj",
+        [{"path": "Demo.csproj", "content": f"api_key={secret}"}],
+        None,
+    )
+
+    assert result["status"] == "approval_denied"
+    preview = captured[0].details["file_previews"][0]["content_preview"]
+    assert secret not in preview
+    assert "[REDACTED]" in preview
