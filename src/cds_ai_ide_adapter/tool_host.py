@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import closing
 from dataclasses import dataclass
+import errno
 import hashlib
 import json
 import os
@@ -11,6 +12,7 @@ import secrets
 import shutil
 import signal
 import sqlite3
+import stat
 import subprocess
 import tempfile
 import threading
@@ -367,7 +369,7 @@ class WorkspaceToolHost:
             file_fd = os.open(name, flags, dir_fd=parent_fd)
             try:
                 metadata = os.fstat(file_fd)
-                if not __import__("stat").S_ISREG(metadata.st_mode):
+                if not stat.S_ISREG(metadata.st_mode):
                     raise ValueError("path must identify a regular file")
                 if metadata.st_size > self.max_file_bytes:
                     raise ValueError(f"file exceeds the {self.max_file_bytes}-byte read limit")
@@ -474,13 +476,35 @@ class WorkspaceToolHost:
                 os.fsync(stream.fileno())
             if cancellation_event is not None and cancellation_event.is_set():
                 return {"status": "cancelled", "path": relative_path}
-            # Re-check the leaf without following links immediately before atomic replacement.
+            # Revalidate the destination after approval and immediately before commit.
             try:
-                current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+                current_fd = os.open(
+                    name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=parent_fd
+                )
             except FileNotFoundError:
-                current = None
-            if current is not None and not __import__("stat").S_ISREG(current.st_mode):
-                raise ValueError("target must remain a regular file")
+                if exists:
+                    return {"status": "conflict", "error": "file changed before replacement"}
+            except OSError as exc:
+                if exc.errno in {errno.ELOOP, errno.EMLINK}:
+                    raise ValueError("symbolic links are not allowed in workspace tool paths") from exc
+                raise
+            else:
+                try:
+                    current_meta = os.fstat(current_fd)
+                    if not stat.S_ISREG(current_meta.st_mode):
+                        raise ValueError("target must remain a regular file")
+                    if not exists:
+                        return {"status": "conflict", "error": "target appeared before replacement"}
+                    current_digest = hashlib.sha256()
+                    while True:
+                        chunk = os.read(current_fd, 65536)
+                        if not chunk:
+                            break
+                        current_digest.update(chunk)
+                    if current_digest.hexdigest() != before_sha:
+                        return {"status": "conflict", "error": "file changed before replacement"}
+                finally:
+                    os.close(current_fd)
             os.replace(
                 temporary, name,
                 src_dir_fd=parent_fd, dst_dir_fd=parent_fd,
