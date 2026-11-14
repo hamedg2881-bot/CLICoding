@@ -245,7 +245,7 @@ main{display:flex;flex-direction:column;min-width:0;height:100%;position:relativ
   $("attachButton").addEventListener("click",()=>$("imageFile").click());
   $("imageFile").addEventListener("change",event=>{
     const file=event.target.files?.[0] || null;
-    if(file && !["image/png","image/jpeg","image/gif","image/webp"].includes(file.type)){
+    if(file && file.type && !["image/png","image/jpeg","image/gif","image/webp"].includes(file.type)){
       setStatus("فرمت تصویر پشتیبانی نمی‌شود"); event.target.value=""; return;
     }
     state.pendingImage=file; $("fileName").textContent=file ? file.name : "";
@@ -257,7 +257,7 @@ main{display:flex;flex-direction:column;min-width:0;height:100%;position:relativ
   $("newChat").addEventListener("click",()=>{if(state.busy)return;state.conversationId=null;$("messages").replaceChildren();showWelcome();renderChatList();setStatus("گفت‌وگوی جدید");$("prompt").focus();});
   $("settingsButton").addEventListener("click",()=>{$("settings").hidden=!$("settings").hidden;});
   $("closeSettings").addEventListener("click",()=>$("settings").hidden=true);
-  $("saveToken").addEventListener("click",()=>{state.token=$("apiToken").value.trim();if(state.token)sessionStorage.setItem("cds-ai-token",state.token);else sessionStorage.removeItem("cds-ai-token");$("settings").hidden=true;setStatus("تنظیمات اتصال ذخیره شد");});
+  $("saveToken").addEventListener("click",()=>{const nextToken=$("apiToken").value.trim();if(nextToken!==state.token){state.token=nextToken;state.chats=[];state.conversationId=null;sessionStorage.removeItem(indexKey);$("messages").replaceChildren();showWelcome();renderChatList();}if(state.token)sessionStorage.setItem("cds-ai-token",state.token);else sessionStorage.removeItem("cds-ai-token");$("settings").hidden=true;setStatus("تنظیمات اتصال ذخیره شد");});
   renderChatList();
   if(state.chats.length) openChat(state.chats[0].id); else showWelcome();
 })();
