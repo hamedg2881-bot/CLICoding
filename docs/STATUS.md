@@ -2,9 +2,9 @@
 
 - Added a first-party browser chat interface at `/`, packaged with the Python distribution and served by FastAPI.
 - The UI uses the existing authenticated conversation and OpenAI-compatible streaming APIs; it does not connect to internal worker endpoints.
-- Implemented RTL-first Persian layout, task-type selection, independent session-scoped chat list, server-backed history reload, direct token streaming, specialist progress rendering, and Stop through the existing conversation cancellation endpoint.
+- Implemented RTL-first Persian layout, task-type selection, independent session-scoped chat list with API-identity isolation, server-backed history reload, direct token streaming, specialist progress rendering, Stop through the existing conversation cancellation endpoint, and PNG/JPEG/GIF/WebP upload through the authenticated attachment API.
 - The progress panel maps only safe lifecycle event types to user-facing status labels; it does not display internal worker IDs, task prompts, model reasoning or raw worker output.
-- Added a route-level UI smoke test. Browser/Playwright acceptance, mobile/keyboard accessibility, cancellation race testing, and Open WebUI custom-progress rendering remain open.
+- Added a route-level UI smoke test. CI validates inline JavaScript syntax and confirms the HTML asset is included in the built wheel. Browser/Playwright acceptance, mobile/keyboard accessibility, cancellation race testing, and Open WebUI custom-progress rendering remain open. Image upload uses the existing bounded, MIME-checked, SHA-256-verified attachment API; changing API identity clears the browser's session-scoped chat index.
 - No DGX files, services, runtimes or containers were changed. No ZIP transfer or service restart occurred.
 
 ## 2026-11-11 — Offline backup and restore
@@ -36,7 +36,7 @@
 **Product / public assistant ID:** CDS_AI  
 **Canonical source repository:** https://github.com/hamedg2881-bot/CLICoding  
 **Current candidate:** `feature/cds-ai-release-integration`, stacked on PR #13  
-**Overall state:** The integration candidate combines the conversation-first CDS_AI core, shared assistant policy, regenerate/edit lineage, cross-process turn leases/cancellation, safe versioned context compaction, specialist/direct streaming fixes, per-user isolation, workstation tools and conservative context budgeting. The last pre-UI GitHub CI run passed 167 tests; the first-party chat UI slice is awaiting its own CI verification. No transfer to DGX or service restart has been performed.
+**Overall state:** The integration candidate combines the conversation-first CDS_AI core, shared assistant policy, regenerate/edit lineage, cross-process turn leases/cancellation, safe versioned context compaction, specialist/direct streaming fixes, per-user isolation, workstation tools and conservative context budgeting. Latest GitHub Actions run [43563386491](https://github.com/hamedg2881-bot/CLICoding/actions/runs/43563386491) passed **168 tests in 4.40s** on commit `fc3cd0fa4d2057dd69a0718c7a98b1e957a90c1f`; CI also passed JavaScript syntax validation and verified that the chat UI asset is packaged in the wheel. No transfer to DGX or service restart has been performed.
 
 ## Current implementation snapshot — 2026-11-14
 - Product identity: `CDS_AI`; legacy CLICoding service/database/environment identifiers remain for compatibility.
