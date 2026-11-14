@@ -36,7 +36,7 @@ The multi-file runner supports .NET SDK 10.0.402 Build/Test only:
 - The workspace is mounted read-only; Docker copies it into a private writable container `/tmp` workspace.
 - Network is disabled, the container root filesystem is read-only, capabilities are dropped, and memory/CPU/PID/time/output limits are fixed.
 - NuGet restore uses only the root-owned local feed at `/var/cache/clicoding-sandbox/nuget-feed`. No public package feed or network fallback is allowed. Missing packages cause the build/test to fail.
-- The Docker SDK image must already exist locally; the runner uses a pinned image digest and `--pull=never`.
+- All runtime images are exported for `linux/arm64` with `scripts/export_sandbox_images.py`; the transfer includes a root-owned image lock mapping pinned source references to immutable local Docker image IDs. The runner verifies the local tag against that ID and invokes Docker by image ID with `--pull=never`.
 
 This extends the same broker and runner used by single-file snippets. It does not create a parallel sandbox.
 
