@@ -8,8 +8,8 @@
 |---|---|
 | Versioned source releases | `/opt/ai/clicoding/releases/<full-commit-sha>/source/CDS_AI` |
 | Active source symlink | `/opt/ai/clicoding/current` |
-| Stable Python environment | `/opt/ai/clicoding/venv` |
-| Offline wheelhouse | `/opt/ai/clicoding/wheelhouse` |
+| Versioned Python environment | `/opt/ai/clicoding/releases/<sha>/venv` |
+| Versioned offline wheelhouse | `/opt/ai/clicoding/releases/<sha>/wheelhouse` |
 | Private service configuration | `/etc/cds-ai/orchestrator.env` |
 | Private worker registry | `/etc/cds-ai/workers.yaml` |
 | Broker configuration | `/etc/cds-ai/sandbox-broker.env` |
@@ -42,7 +42,7 @@ sudo install -d -o root -g cds-ai -m 0750 /etc/cds-ai
 sudo install -d -o cds-ai -g cds-ai -m 0750 /var/lib/cds-ai
 sudo install -d -o root -g root -m 0755 /opt/ai/clicoding
 sudo install -d -o root -g root -m 0755 /opt/ai/clicoding/releases
-sudo install -d -o root -g root -m 0755 /opt/ai/clicoding/wheelhouse
+sudo install -d -o root -g root -m 0755 /opt/ai/clicoding/releases
 ```
 
 If either identity already exists, inspect it and do not recreate or change it blindly.
@@ -51,23 +51,32 @@ If either identity already exists, inspect it and do not recreate or change it b
 
 After transferring and verifying the artifact, extract it into its commit-specific release directory. Make the release source root readable but not writable by the service account.
 
-Create the stable virtual environment only after the wheelhouse is complete:
+Extract both verified artifacts into one versioned release root. The source ZIP creates `source/CDS_AI/`; the wheelhouse tarball creates `wheelhouse/` and `wheelhouse-manifest.json`.
 
 ```bash
-sudo python3 -m venv /opt/ai/clicoding/venv
-sudo /opt/ai/clicoding/venv/bin/python -m pip install \
-  --no-index --find-links=/opt/ai/clicoding/wheelhouse \
-  '/opt/ai/clicoding/releases/<full-commit-sha>/source/CDS_AI'
+release_root=/opt/ai/clicoding/releases/<full-commit-sha>
+sudo install -d -o root -g root -m 0755 "$release_root"
+sudo unzip -q CDS_AI_<12-char-sha>.zip -d "$release_root/source"
+sudo tar -xzf CDS_AI-wheelhouse-cp312-arm64-<12-char-sha>.tar.gz -C "$release_root"
+```
+
+Create a release-local environment and install only the prebuilt wheel from the exact wheelhouse:
+
+```bash
+sudo python3 -m venv "$release_root/venv"
+sudo "$release_root/venv/bin/python" -m pip install \
+  --no-index --find-links="$release_root/wheelhouse" \
+  'clicoding-orchestrator[test]'
+sudo "$release_root/venv/bin/python" -m pip check
+sudo "$release_root/venv/bin/python" -c "import clicoding_orchestrator; print('package import OK')"
 ```
 
 The command must fail if a dependency is absent from the wheelhouse; do not remove `--no-index` or add a public index fallback. The actual Python minor version must match the wheelhouse build target.
 
-Set the active source pointer only after the release contents and package installation have been verified:
+Set the active release pointer only after the source, venv, package checks and staging tests have been verified:
 
 ```bash
-sudo ln -sfn \
-  /opt/ai/clicoding/releases/<full-commit-sha>/source/CDS_AI \
-  /opt/ai/clicoding/current.next
+sudo ln -sfn "$release_root" /opt/ai/clicoding/current.next
 sudo mv -Tf /opt/ai/clicoding/current.next /opt/ai/clicoding/current
 ```
 
