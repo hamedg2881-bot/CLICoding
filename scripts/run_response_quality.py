@@ -74,7 +74,15 @@ def request_case(endpoint: str, api_key: str | None, case: dict, timeout: float)
             parsed = json.loads(body)
         elapsed_ms = round((time.monotonic() - started) * 1000)
         choices = parsed.get("choices") or []
-        message = choices[0].get("message", {}) if choices else {}
+        if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+            raise ValueError("API response contains no valid first choice")
+        message = choices[0].get("message", {})
+        if not isinstance(message, dict):
+            raise ValueError("API response first choice has no valid message")
+        response_text = message.get("content")
+        tool_calls = message.get("tool_calls")
+        if response_text is None and not tool_calls:
+            raise ValueError("API response contains neither assistant content nor tool calls")
         return {
             "case_id": case["id"],
             "title": case["title"],
@@ -83,8 +91,13 @@ def request_case(endpoint: str, api_key: str | None, case: dict, timeout: float)
             "critical_dimensions": case.get("critical_dimensions", []),
             "elapsed_ms": elapsed_ms,
             "served_model": parsed.get("model"),
-            "response": message.get("content"),
-            "finish_reason": choices[0].get("finish_reason") if choices else None,
+            "response_id": parsed.get("id"),
+            "system_fingerprint": parsed.get("system_fingerprint"),
+            "response": response_text,
+            "tool_calls": tool_calls,
+            "finish_reason": choices[0].get("finish_reason"),
+            "usage": parsed.get("usage"),
+            "orchestration": parsed.get("x_clicoding"),
             "error": None,
         }
     except HTTPError as exc:
@@ -98,6 +111,9 @@ def request_case(endpoint: str, api_key: str | None, case: dict, timeout: float)
             "critical_dimensions": case.get("critical_dimensions", []),
             "elapsed_ms": elapsed_ms,
             "response": None,
+            "tool_calls": None,
+            "usage": None,
+            "orchestration": None,
             "error": f"HTTP {exc.code}: {detail[:2000]}",
         }
     except (URLError, TimeoutError, OSError, ValueError) as exc:
