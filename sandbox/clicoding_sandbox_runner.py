@@ -440,6 +440,21 @@ def run_workspace(request: dict[str, Any]) -> dict[str, Any]:
             "error": "offline NuGet feed is not staged at the root-owned configured path",
             "snapshot_sha256": request["snapshot_sha256"],
         }
+    feed_metadata = feed.stat()
+    if feed_metadata.st_uid != 0 or feed_metadata.st_mode & 0o022:
+        return {
+            "status": "unavailable",
+            "error": "offline NuGet feed must be root-owned and not group/world writable",
+            "snapshot_sha256": request["snapshot_sha256"],
+        }
+    for feed_item in feed.rglob("*"):
+        metadata = feed_item.lstat()
+        if feed_item.is_symlink() or metadata.st_uid != 0 or metadata.st_mode & 0o022:
+            return {
+                "status": "unavailable",
+                "error": "offline NuGet feed contains an unsafe entry",
+                "snapshot_sha256": request["snapshot_sha256"],
+            }
 
     execution_id = uuid.uuid4().hex
     cid_file = f"/run/clicoding-sandbox/workspace-{execution_id}.cid"
@@ -499,7 +514,7 @@ def run_workspace(request: dict[str, Any]) -> dict[str, Any]:
             "sh", "-lc",
             (
                 "set -eu; mkdir -p /tmp/workspace /tmp/nuget; "
-                "cp -R /input/. /tmp/workspace/; "
+                "cp -R /input/. /tmp/workspace/; chmod -R u+rwX /tmp/workspace/; "
                 "printf '%s\\n' '<configuration><packageSources><clear /><add key=\"offline\" value=\"/nuget-feed\" /></packageSources></configuration>' > /tmp/NuGet.Config; "
                 "cd /tmp/workspace; "
                 "dotnet restore \"$PROJECT_PATH\" --configfile /tmp/NuGet.Config --source /nuget-feed --packages /tmp/nuget --disable-parallel; "
