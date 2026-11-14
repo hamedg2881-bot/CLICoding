@@ -102,25 +102,23 @@ This pulls the pinned upstream images for ARM64, builds `clicoding-typescript:7.
 
 The lock records the source reference, local transfer tag, immutable Docker image ID and ARM64 platform. Transfer all four files to the DGX. The image archive may be large; ensure sufficient staging disk space.
 
-After explicit deployment approval, load the archive and install the lock:
+After explicit deployment approval, transfer all four files to \`$release_root/incoming/\`, then load the archive and install the lock:
 
-```bash
+\`\`\`bash
+release_root=/opt/ai/clicoding/releases/<full-commit-sha>
+cd "$release_root/incoming"
 sha256sum -c clicoding-sandbox-images-arm64.tar.sha256
 sha256sum -c sandbox-image-lock.json.sha256
 sudo docker load -i clicoding-sandbox-images-arm64.tar
 sudo install -d -o root -g root -m 0755 /etc/cds-ai
 sudo install -o root -g root -m 0600 \
   sandbox-image-lock.json /etc/cds-ai/sandbox-image-lock.json
-```
-
-The runner resolves each pinned source reference to its locked local image ID at execution time; it does not depend on registry access or mutable tags. Then run the read-only preflight:
-
-```bash
-sudo python3 source/CDS_AI/scripts/check_sandbox_runtime.py \
+sudo python3 "$release_root/source/CDS_AI/scripts/check_sandbox_runtime.py" \
   --nuget-feed /var/cache/clicoding-sandbox/nuget-feed
-```
+\`\`\`
 
-This inspects every locked image ID/platform and the feed ownership/permissions without pulling images or changing Docker state. Do not start the broker if the image lock or any image check fails.
+The runner resolves each pinned source reference to its locked local image ID at execution time; it does not depend on registry access or mutable tags. The preflight inspects every locked image ID/platform and the feed ownership/permissions without pulling images or changing Docker state. Do not start the broker if the image lock or any image check fails.
+
 
 ## 6. Initial safe runtime configuration (after source, dependency and image gates)
 
