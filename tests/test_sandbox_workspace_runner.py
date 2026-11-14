@@ -1,6 +1,7 @@
 import hashlib
 import importlib.util
 import json
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -81,3 +82,74 @@ def test_runner_preserves_existing_single_file_request_contract():
         runner.parse_code_request(
             {"language": "python", "code": "print(1)", "mode": "workspace"}
         )
+
+
+def test_runner_resolves_exported_image_by_locked_immutable_id(tmp_path, monkeypatch):
+    lock_path = tmp_path / "sandbox-image-lock.json"
+    source_reference = "example/dotnet@sha256:" + "a" * 64
+    image_id = "sha256:" + "b" * 64
+    lock_path.write_text(
+        json.dumps({
+            "format_version": 1,
+            "platform": "linux/arm64",
+            "images": [{
+                "source_reference": source_reference,
+                "local_tag": "clicoding-sandbox/dotnet:arm64",
+                "image_id": image_id,
+            }],
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(runner, "IMAGE_LOCK_PATH", str(lock_path))
+    original_stat = Path.stat
+
+    def fake_stat(path, *args, **kwargs):
+        if path == lock_path:
+            return SimpleNamespace(st_uid=0, st_mode=0o100600)
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", fake_stat)
+    monkeypatch.setattr(
+        runner.subprocess,
+        "run",
+        lambda *args, **kwargs: __import__("subprocess").CompletedProcess(
+            args[0], 0, stdout=f"{image_id}|linux/arm64\n", stderr=""
+        ),
+    )
+    assert runner.resolve_runtime_image(source_reference, required_lock=True) == image_id
+
+
+def test_runner_rejects_image_lock_identity_mismatch(tmp_path, monkeypatch):
+    lock_path = tmp_path / "sandbox-image-lock.json"
+    source_reference = "example/dotnet@sha256:" + "a" * 64
+    expected_id = "sha256:" + "b" * 64
+    lock_path.write_text(
+        json.dumps({
+            "format_version": 1,
+            "platform": "linux/arm64",
+            "images": [{
+                "source_reference": source_reference,
+                "local_tag": "clicoding-sandbox/dotnet:arm64",
+                "image_id": expected_id,
+            }],
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(runner, "IMAGE_LOCK_PATH", str(lock_path))
+    original_stat = Path.stat
+
+    def fake_stat(path, *args, **kwargs):
+        if path == lock_path:
+            return SimpleNamespace(st_uid=0, st_mode=0o100600)
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", fake_stat)
+    monkeypatch.setattr(
+        runner.subprocess,
+        "run",
+        lambda *args, **kwargs: __import__("subprocess").CompletedProcess(
+            args[0], 0, stdout=f"sha256:{'c' * 64}|linux/arm64\n", stderr=""
+        ),
+    )
+    with pytest.raises(runner.RequestError, match="identity/platform mismatch"):
+        runner.resolve_runtime_image(source_reference, required_lock=True)
