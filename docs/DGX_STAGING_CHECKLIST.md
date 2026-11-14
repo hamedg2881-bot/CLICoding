@@ -63,7 +63,7 @@ nvidia-smi
 docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
 ```
 
-Confirm ARM64 architecture, Python 3.11+, disk location for SQLite and attachments, available host memory, Docker availability for the existing sandbox, and the actual OpenAI-compatible worker endpoints. Do not infer worker ports or model aliases from an example file or old notes.
+Confirm ARM64 architecture and CPython 3.12.x (the packaged wheelhouse is specifically CPython 3.12; Python 3.11 or another implementation is not compatible), disk location for SQLite and attachments, available host memory, Docker availability for the existing sandbox, and the actual OpenAI-compatible worker endpoints. Do not infer worker ports or model aliases from an example file or old notes.
 
 ## 4. Offline dependency preparation (no installation yet)
 
