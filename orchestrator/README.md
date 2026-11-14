@@ -6,13 +6,13 @@ This service is the single public conversation gateway for **CDS_AI**. Open WebU
 
 - **Public identity:** `CDS_AI`. Internal worker IDs and served model aliases are never exposed through `/v1/models`.
 - **Conversation-first routing:** ordinary chat goes directly to a chat-capable worker and does not invoke Planner. Explicit coding/review/vision or forced multi-step work uses the specialist orchestrator.
-- **Streaming:** direct chat and OpenAI function-tool deltas stream from upstream SSE. Specialist execution currently returns a buffered final answer with valid SSE framing; it does not yet emit live progress events.
+- **Streaming:** direct chat and OpenAI function-tool deltas stream from upstream SSE. Specialist execution emits structured plan/task lifecycle progress as `event: progress` SSE metadata (`x_clicoding.progress`) and then returns a buffered final answer; it does not stream specialist tokens.
 - **History:** SQLite-backed conversations, tool-call metadata, summaries, retry idempotency, latest-turn regenerate, guarded edit/resubmit and active-turn cancellation.
 - **Context:** per-worker admission/output limits and versioned model-assisted compaction. Token estimation is conservative and not tokenizer-specific; live model limits must be verified before increasing context sizes.
 - **Tools:** typed OpenAI tool-call round-trip. The workstation-side Python reference adapter owns workspace tools, approval and execution. The DGX Orchestrator does not mount developer workspaces and exposes no arbitrary shell tool.
 - **Images:** conversation-scoped PNG/JPEG/GIF/WebP attachments with bounded upload, signature checks, SHA-256 integrity and owner-scoped retrieval/deletion.
 - **Security:** per-user bearer identities, durable token issue/list/revoke, per-principal SQLite rate limits, request IDs and administrator-only audit export. Trusted identity headers are safe only behind a private proxy that strips/reinjects them.
-- **Storage:** SQLite event sequence allocation is serialized across connections. Conversation locks and active-turn cancellation remain process-local; run exactly one Uvicorn worker until distributed turn locking is implemented.
+- **Storage:** SQLite event sequence allocation, durable cross-process conversation-turn leases, lease renewal/expiry recovery and persisted cancellation are implemented. Keep one Uvicorn worker until live supervisor/multi-process acceptance is completed.
 
 ## Install and run locally
 
@@ -74,11 +74,11 @@ All conversation and attachment operations enforce the authenticated owner scope
 
 Install the project on the developer workstation and use `cds_ai_ide_adapter.CDSAIClient` with a `WorkspaceToolHost` bound to one explicitly selected workspace. File writes and .NET build/test require approval; Git status/diff are fixed read-only commands. No general-purpose shell tool is exposed. Tool results are redacted for common credential-shaped values, but this is defense in depth and not a guarantee that every secret format is detected.
 
-The adapter is currently a Python reference library, not a packaged VS Code, Visual Studio, Rider or JetBrains extension. Browser automation, Playwright screenshots, visual correction and cross-platform process sandboxing remain release gates.
+The adapter is currently a Python reference library, not a packaged VS Code, Visual Studio, Rider or JetBrains extension. Its .NET build/test tools still execute on the workstation host after approval and are not OS-sandboxed. The existing privileged Docker runner isolates approved single-file snippets only; multi-file workspace snapshot build/test integration must extend that same broker/runner before release. Browser automation, Playwright screenshots, visual correction and cross-platform process confinement remain release gates.
 
 ## Backup and restore
 
-Install the package to obtain the `cds-ai-backup` command. See [docs/BACKUP_RESTORE.md](../docs/BACKUP_RESTORE.md) for verified SQLite/attachment backup, integrity checking, restore and rollback procedures. Stop CDS_AI before restore. Backups contain sensitive conversation data and must be encrypted at rest by the operator.
+Install the package to obtain the `cds-ai-backup` command. See [docs/BACKUP_RESTORE.md](../docs/BACKUP_RESTORE.md) for verified SQLite/attachment backup, integrity checking, restore and rollback procedures. Stop CDS_AI before restore. Backups contain sensitive conversation data and must be encrypted at rest by the operator. The proposed systemd unit and controlled offline install/upgrade/rollback procedure are documented in [deploy/README-orchestrator-service.md](../deploy/README-orchestrator-service.md).
 
 ## Validation and release status
 
