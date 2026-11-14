@@ -105,15 +105,14 @@ Confirm `aarch64`/ `arm64`, Docker daemon availability, and Buildx availability.
 release_root=/opt/ai/clicoding/releases/<full-commit-sha>
 mkdir -p "$release_root/sandbox-prep"
 python3 "$release_root/source/CDS_AI/scripts/export_sandbox_images.py" \
-  --pull --build-typescript \
-  --output "$release_root/sandbox-prep/clicoding-sandbox-images-arm64.tar"
+  --pull --build-typescript --lock-only \
+  --output-dir "$release_root/sandbox-prep"
 ```
 
-The exporter pulls each upstream reference by its digest-pinned reference for `linux/arm64`, builds the repository-pinned TypeScript image for `linux/arm64`, verifies each image's platform and ID, creates local immutable tags, and writes:
-- `clicoding-sandbox-images-arm64.tar` and its SHA-256 sidecar;
+The exporter pulls each upstream reference by its digest-pinned reference for `linux/arm64`, builds the repository-pinned TypeScript image for `linux/arm64`, verifies each image's platform and ID, creates local immutable tags, and writes only:
 - `sandbox-image-lock.json` and its SHA-256 sidecar.
 
-Because the images are already present in the DGX Docker image store, the tar archive is a local recovery/transfer artifact; it is not necessary to load it back into the same daemon. Keep it with the versioned release for recovery and reproducibility. Do not install the image lock into `/etc/cds-ai` or enable/start the broker until the separate deployment approval.
+The `--lock-only` mode deliberately skips `docker save`, avoiding a large redundant archive on the same DGX daemon. Images remain in the local Docker image store. If a portable recovery copy is required later, rerun the exporter without `--lock-only` and provide `--output`. Do not install the image lock into `/etc/cds-ai` or enable/start the broker until the separate deployment approval.
 
 If a registry is unreachable, an image digest is unavailable, Buildx fails, or any platform/ID check fails, stop. Do not substitute a mutable tag or a different image. Use Option B instead.
 
