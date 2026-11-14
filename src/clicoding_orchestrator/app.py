@@ -2222,6 +2222,33 @@ def create_app(
                 status_code=503, detail=f"Sandbox broker unavailable or failed: {exc}"
             ) from exc
 
+
+    async def _cancel_approved_snapshot(approval_id: str) -> dict[str, Any]:
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_unix_connection(
+                    "/run/clicoding-sandbox/broker.sock", limit=64 * 1024
+                ),
+                timeout=3,
+            )
+            writer.write(
+                (json.dumps({"cancel_approval_id": approval_id}) + "\\n").encode("utf-8")
+            )
+            await writer.drain()
+            raw = await asyncio.wait_for(reader.readline(), timeout=20)
+            writer.close()
+            await writer.wait_closed()
+            if not raw or len(raw) > 64 * 1024:
+                raise RuntimeError("broker returned an empty or oversized cancellation response")
+            result = json.loads(raw.decode("utf-8"))
+            if not isinstance(result, dict):
+                raise RuntimeError("broker returned an invalid cancellation result")
+            return result
+        except (OSError, asyncio.TimeoutError, RuntimeError, json.JSONDecodeError) as exc:
+            raise HTTPException(
+                status_code=503, detail=f"Sandbox broker cancellation failed: {exc}"
+            ) from exc
+
     @app.post("/api/v1/workspace-sandbox-approvals", status_code=201)
     async def create_workspace_sandbox_approval(http_request: Request) -> dict[str, Any]:
         payload = await _read_workspace_approval_request(http_request)
@@ -2281,6 +2308,21 @@ def create_app(
                 detail=f"Workspace sandbox approval is not approved (status={approval['status']})",
             )
         return await _execute_approved_snapshot(approval_id)
+
+
+    @app.post("/api/v1/workspace-sandbox-approvals/{approval_id}/cancel")
+    async def cancel_workspace_sandbox_execution(
+        approval_id: str, http_request: Request
+    ) -> dict[str, Any]:
+        approval = db.get_workspace_sandbox_approval(
+            approval_id, owner_id=_owner_scope(http_request)
+        )
+        if approval is None:
+            raise HTTPException(status_code=404, detail="Workspace sandbox approval not found")
+        result = await _cancel_approved_snapshot(approval_id)
+        if result.get("status") in {"not_cancellable", "already_finished"}:
+            raise HTTPException(status_code=409, detail=result)
+        return result
 
     @app.get("/api/v1/workspace-sandbox-approvals/{approval_id}/result")
     async def get_workspace_sandbox_execution_result(
