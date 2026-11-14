@@ -95,8 +95,8 @@ def test_workspace_approval_expiry_is_enforced(tmp_path):
     ("files", "project_path", "message"),
     [
         ([{"path": "../escape.csproj", "content": "x"}], "../escape.csproj", "path"),
-        ([{"path": "Demo/.env", "content": "SECRET=x"}], "Demo/.env", "blocked"),
-        ([{"path": "Demo/id_rsa", "content": "secret"}], "Demo/id_rsa", "blocked"),
+        ([{"path": "Demo/Demo.csproj", "content": "x"}, {"path": "Demo/.env", "content": "SECRET=x"}], "Demo/Demo.csproj", "blocked"),
+        ([{"path": "Demo/Demo.csproj", "content": "x"}, {"path": "Demo/id_rsa", "content": "secret"}], "Demo/Demo.csproj", "blocked"),
         ([{"path": "Demo/Demo.csproj", "content": "x"}], "Missing.csproj", "not present"),
         (
             [
