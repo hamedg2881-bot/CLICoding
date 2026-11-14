@@ -37,6 +37,9 @@ main{display:flex;flex-direction:column;min-width:0;height:100%;position:relativ
     <div class="composer">
       <textarea id="prompt" rows="1" placeholder="پیامت را برای CDS_AI بنویس..." aria-label="پیام"></textarea>
       <div class="composer-tools">
+        <button class="attach" id="attachButton" type="button" title="پیوست تصویر">＋ تصویر</button>
+        <input id="imageFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden>
+        <span class="file-name" id="fileName"></span>
         <select id="taskType" aria-label="نوع درخواست"><option value="chat">گفت‌وگوی عادی</option><option value="coding">توسعه و کدنویسی</option><option value="review">بازبینی کد</option><option value="vision">تحلیل تصویر</option></select>
         <span class="spacer"></span>
         <button class="stop" id="stopButton" hidden>توقف</button>
