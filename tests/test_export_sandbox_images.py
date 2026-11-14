@@ -71,29 +71,50 @@ def test_archive_checksum_streaming(tmp_path):
 
 
 
-def test_lock_only_output_writes_inventory_without_docker_archive(tmp_path, monkeypatch):
-    entries = [{
-        "source_reference": "example/image@sha256:" + "a" * 64,
-        "runtime_names": ["python"],
-        "local_tag": "clicoding-sandbox/python:arm64",
-        "image_id": "sha256:" + "b" * 64,
-        "platform": "linux/arm64",
-        "source_repo_digests": ["example/image@sha256:" + "a" * 64],
-        "build_context_sha256": None,
-    }]
-    output_dir = tmp_path / "prepared"
-    output_dir.mkdir()
-    lock = {
-        "format_version": 1,
-        "platform": "linux/arm64",
-        "images": entries,
-    }
-    lock_path = output_dir / "sandbox-image-lock.json"
-    lock_path.write_text(json.dumps(lock, indent=2) + "\\n", encoding="utf-8")
-    digest = exporter.sha256_file(lock_path)
-    sidecar = output_dir / "sandbox-image-lock.json.sha256"
-    sidecar.write_text(f"{digest}  {lock_path.name}\\n", encoding="utf-8")
+def test_lock_only_prepares_images_without_docker_save(tmp_path, monkeypatch):
+    import sys
+    from types import SimpleNamespace
 
-    assert json.loads(lock_path.read_text(encoding="utf-8")) == lock
-    assert sidecar.read_text(encoding="utf-8").startswith(digest)
-    assert not (output_dir / "clicoding-sandbox-images-arm64.tar").exists()
+    refs = {
+        "python": "registry.example/python@sha256:" + "a" * 64,
+        "typescript": "clicoding-typescript:7.0.2",
+    }
+    fake_runner = SimpleNamespace(
+        RUNTIMES={name: {"image": image} for name, image in refs.items()},
+        DOTNET_WORKSPACE_IMAGE="registry.example/dotnet@sha256:" + "c" * 64,
+    )
+    commands = []
+
+    def fake_run(command, timeout=1800):
+        commands.append(command)
+        if command[:3] == ["docker", "run", "--rm"]:
+            return "Version 7.0.2"
+        return ""
+
+    def fake_inspect(docker, reference):
+        digest = hashlib.sha256(reference.encode()).hexdigest()
+        repo_digests = (
+            [reference] if "@sha256:" in reference else []
+        )
+        return "sha256:" + digest, "linux/arm64", repo_digests
+
+    monkeypatch.setattr(exporter, "load_runner", lambda: fake_runner)
+    monkeypatch.setattr(exporter, "run", fake_run)
+    monkeypatch.setattr(exporter, "inspect_image", fake_inspect)
+    monkeypatch.setattr(
+        sys, "argv",
+        [
+            "export_sandbox_images.py", "--pull", "--build-typescript",
+            "--lock-only", "--output-dir", str(tmp_path),
+        ],
+    )
+
+    assert exporter.main() == 0
+    lock_path = tmp_path / "sandbox-image-lock.json"
+    sidecar = tmp_path / "sandbox-image-lock.json.sha256"
+    lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    assert len(lock["images"]) == 3
+    assert sidecar.is_file()
+    assert not any(command[1:2] == ["save"] for command in commands)
+    assert any(command[1:2] == ["pull"] for command in commands)
+    assert any(command[1:2] == ["buildx"] for command in commands)
