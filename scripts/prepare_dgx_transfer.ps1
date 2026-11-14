@@ -55,11 +55,9 @@ if ($ExpectedBundleSha256) {
     Assert-Sidecar -Path $bundle
 }
 
-$work = Join-Path $output ".cds-ai-transfer-work"
-if (Test-Path -LiteralPath $work) {
-    Remove-Item -LiteralPath $work -Recurse -Force
-}
-New-Item -ItemType Directory -Force -Path $work | Out-Null
+# Use a unique per-run workspace. Never delete or reuse a pre-existing path.
+$work = Join-Path $output (".cds-ai-transfer-work-" + [guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path $work -ErrorAction Stop | Out-Null
 
 try {
     & tar.exe -xzf $bundle -C $work
