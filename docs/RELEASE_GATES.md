@@ -41,6 +41,7 @@
 - [x] Recursively redact common credential-shaped values from workstation tool results before persistence/transmission.
 - [ ] Broaden secret scanning for nonstandard credentials, connection strings and high-entropy values.
 - [ ] OS-level process sandboxing and Windows/macOS/Linux adapter tests.
+- [ ] A multi-file workstation build/test sandbox; current `.NET build/test` runs as the workstation user after explicit approval and is not isolated by the single-file Docker runner.
 - [x] Durable per-principal API rate limits backed by SQLite transactions.
 - [x] Administrator token issue/list/revoke API; only token hashes are stored and plaintext is returned once.
 - [x] Paginated administrator-only audit export without request bodies or bearer-token values.
