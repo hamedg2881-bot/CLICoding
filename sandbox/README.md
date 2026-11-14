@@ -1,8 +1,9 @@
 # CLICoding Sandbox Runner
 
-The root-owned runner supports eleven single-file languages. Execution is
-available only through an immutable, human-approved source snapshot and the
-privileged Unix-socket broker; model output is never executed automatically.
+The root-owned runner supports eleven single-file languages plus an approved
+multi-file .NET 10 workspace Build/Test mode. Both modes execute only through
+an immutable, human-approved snapshot and the privileged Unix-socket broker;
+model output is never executed automatically.
 
 ## Supported runtimes
 
@@ -150,11 +151,53 @@ them as a versioned Docker image archive, transfer that archive separately,
 verify its SHA-256, and load it only during the explicitly approved deployment.
 Do not pull images on DGX during offline staging.
 
-### Current limitations
+### Multi-file .NET workspace mode
 
-This broker/runner integration still supports approved **single-file snippets**
-only. It does not yet accept a multi-file workspace snapshot or run project
-Build/Test. The IDE adapter's current .NET build/test functions still execute
-on the workstation host after approval. Do not treat this single-file runner as
-the multi-file project build security boundary; that integration remains a
-release blocker and must extend this same broker and runner.
+The same runner and broker now accept a workspace approval created by the
+Orchestrator's \`/api/v1/workspace-sandbox-approvals\` API. The approval binds:
+workspace ID, action (\`build\` or \`test\`), project path, every file path and
+content digest, and the aggregate snapshot SHA-256. The broker revalidates the
+snapshot and atomically claims the approval before invoking the runner. The
+single-file API and its behavior remain backward-compatible.
+
+Limits and policy:
+- Up to 200 files, 5 MiB total UTF-8 source, and 1 MiB per file.
+- Relative paths only; traversal, absolute paths, duplicate/case-colliding
+  paths, symlinks, credential files and sensitive directories are rejected.
+- The selected target must be an included \`.sln\`, \`.slnx\` or \`.csproj\`.
+- The current workspace mode is .NET SDK 10.0.402 Build/Test only.
+- The project snapshot is mounted read-only; the container copies it into its
+  private writable \`/tmp\` workspace for compilation.
+- Restore uses only the root-owned local feed at
+  \`/var/cache/clicoding-sandbox/nuget-feed\`; no public package source or
+  network is available. Missing packages cause restore to fail closed.
+- Container root filesystem is read-only; no host home, Docker socket, GPU,
+  network or general host workspace mount is exposed.
+- The SDK image must already be present locally and is selected by a pinned
+  digest. The runner uses \`--pull=never\`.
+
+Create the offline feed directory during approved host provisioning:
+
+\`\`\`bash
+sudo install -d -o root -g root -m 0755 \\
+  /var/cache/clicoding-sandbox/nuget-feed
+\`\`\`
+
+Stage only reviewed \`.nupkg\` files into this directory using the approved
+offline package process. Do not place credentials or source configuration in
+the feed. The directory and every file must remain root-owned and not
+group/world writable; the runner rejects unsafe ownership or permissions.
+
+### Remaining sandbox gates
+
+- Binary workspace assets are not yet included; workspace snapshots currently
+  accept UTF-8 text files only. A project containing required binary assets
+  will fail snapshot creation rather than silently omit them.
+- The current .NET workspace mode has bounded build/test execution but does not
+  yet implement an end-to-end remote Stop/cancel operation while Docker is
+  running.
+- The root-owned local NuGet feed must be populated and verified for the exact
+  projects being built. The runner does not download or install packages.
+- No live DGX Docker execution test has been performed for this workspace mode.
+- OS/container-runtime escape resistance remains defense-in-depth, not a
+  mathematical isolation guarantee.
