@@ -114,6 +114,17 @@ def claim_workspace_approval(approval_id: str) -> dict:
     connection = database_connection()
     try:
         connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sandbox_execution_claims (
+                approval_id TEXT PRIMARY KEY,
+                source_sha256 TEXT NOT NULL,
+                status TEXT NOT NULL,
+                claimed_at TEXT NOT NULL,
+                finished_at TEXT
+            )
+            """
+        )
         row = connection.execute(
             """
             SELECT action, project_path, files_json, snapshot_sha256, status, expires_at
