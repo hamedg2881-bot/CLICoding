@@ -667,6 +667,28 @@ def test_openai_api_rejects_tool_results_without_a_matching_pending_call(tmp_pat
     assert response.status_code == 400
 
 
+def test_openai_api_returns_client_error_for_malformed_imported_tool_call_history(tmp_path):
+    client, _ = make_client(tmp_path)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "CDS_AI",
+            "messages": [
+                {"role": "assistant", "content": None, "tool_calls": [{}]},
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_123",
+                    "name": "read_file",
+                    "content": "untrusted result",
+                },
+            ],
+            "tools": tool_definitions(),
+        },
+    )
+    assert response.status_code == 400
+    assert "tool call" in response.json()["detail"]
+
+
 def test_openai_api_requires_a_tool_capable_worker_before_dispatch(tmp_path):
     gateway = FakeGateway()
     database = Database(str(tmp_path / "no-tools.sqlite3"))
