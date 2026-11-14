@@ -190,8 +190,8 @@ def test_mobile_sidebar_navigation_and_enter_key_submission():
                     status=200,
                     headers={"content-type": "text/event-stream"},
                     body=(
-                        'data: {"choices":[{"index":0,"delta":{"content":"پاسخ موبایل"},"finish_reason":null}]}\\n\\n'
-                        'data: [DONE]\\n\\n'
+                        'data: {"choices":[{"index":0,"delta":{"content":"پاسخ موبایل"},"finish_reason":null}]}\n\n'
+                        'data: [DONE]\n\n'
                     ),
                 )
 
