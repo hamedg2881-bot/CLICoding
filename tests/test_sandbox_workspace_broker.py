@@ -61,6 +61,7 @@ def test_broker_rejects_tampered_workspace_content_before_claim(tmp_path, monkey
         ).fetchone()
         files = json.loads(row["files_json"])
         files[0]["content"] += "tampered"
+        files[0]["bytes"] = len(files[0]["content"].encode())
         connection.execute(
             "UPDATE sandbox_workspace_approvals SET files_json = ? WHERE id = ?",
             (json.dumps(files), approval["id"]),
