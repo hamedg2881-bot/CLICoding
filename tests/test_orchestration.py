@@ -434,7 +434,7 @@ def test_code_artifact_contract_triggers_one_repair_attempt(tmp_path):
         repair_system = captured["repair_messages"][0]["content"]
         repair_user = captured["repair_messages"][1]["content"]
         assert original_request in repair_user
-        assert "code artifact now" in repair_user
+        assert "Repair requirement:" in repair_user
         assert "{2: 2, 3: 3}" in repair_user
         assert "explain in Persian" in repair_user
         assert prior_context in repair_user
