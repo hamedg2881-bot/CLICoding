@@ -6,11 +6,14 @@ import pytest
 from cds_ai_ide_adapter.tool_host import ToolApproval, ToolExecutionStore, WorkspaceToolHost
 
 
-def make_host(tmp_path, approval=None):
+def make_host(tmp_path, approval=None, sandbox_executor=None):
     root = tmp_path / "workspace"
     root.mkdir(exist_ok=True)
     store = ToolExecutionStore(tmp_path / "tool-ledger.sqlite3")
-    return root, WorkspaceToolHost(root, "workspace-test", store, approval=approval)
+    return root, WorkspaceToolHost(
+        root, "workspace-test", store, approval=approval,
+        sandbox_executor=sandbox_executor,
+    )
 
 
 def call(name, arguments, call_id="call_1"):
@@ -145,56 +148,69 @@ def test_workspace_tool_catalog_has_no_general_shell_tool(tmp_path):
     assert not any("shell" in name or name == "run_command" for name in names)
 
 
-def test_dotnet_build_uses_fixed_command_restricted_environment_and_approval(tmp_path, monkeypatch):
-    import subprocess
-
-    root, host = make_host(tmp_path, approval=lambda request: True)
+def test_dotnet_build_routes_full_snapshot_to_existing_docker_sandbox(tmp_path, monkeypatch):
+    root = tmp_path / "workspace"
+    root.mkdir()
     (root / "Demo.csproj").write_text("<Project />", encoding="utf-8")
+    (root / "Program.cs").write_text("Console.WriteLine(42);", encoding="utf-8")
+    approval_callback = lambda request: True
     captured = {}
-    approvals = []
-    host.approval = lambda request: approvals.append(request) or True
-    monkeypatch.setenv("CLICODING_API_KEY", "must-not-enter-child-process")
-    monkeypatch.setattr("cds_ai_ide_adapter.tool_host.shutil.which", lambda name: "/usr/bin/dotnet")
 
-    class FakeProcess:
-        pid = 12345
-        returncode = 0
+    def sandbox_executor(workspace_id, action, project_path, files, approval, cancellation):
+        captured.update({
+            "workspace_id": workspace_id,
+            "action": action,
+            "project_path": project_path,
+            "files": files,
+            "approval": approval,
+            "cancellation": cancellation,
+        })
+        return {
+            "status": "succeeded",
+            "exit_code": 0,
+            "stdout": "Build succeeded",
+            "stderr": "",
+        }
 
-        def __init__(self, command, **kwargs):
-            captured["command"] = command
-            captured.update(kwargs)
-
-        def communicate(self, timeout=None):
-            return "Build succeeded", ""
-
-    monkeypatch.setattr("cds_ai_ide_adapter.tool_host.subprocess.Popen", FakeProcess)
-    output = result(host.execute_tool_call(call(
-        "workspace_dotnet_build", {"project": "Demo.csproj"}
-    )))
-
-    assert output["status"] == "ok"
-    assert captured["command"] == [
-        "/usr/bin/dotnet", "build", str(root / "Demo.csproj"), "--no-restore"
-    ]
-    assert captured["shell"] is False
-    assert captured["cwd"] == root
-    assert "CLICODING_API_KEY" not in captured["env"]
-    assert approvals[0].details["execution_boundary"] == "workstation_host_process"
-    assert approvals[0].details["sandboxed"] is False
-    assert "host network access" in approvals[0].details["risk_warning"]
-
-
-def test_dotnet_build_is_denied_without_explicit_approval(tmp_path, monkeypatch):
-    root, host = make_host(tmp_path)
-    (root / "Demo.csproj").write_text("<Project />", encoding="utf-8")
+    host = WorkspaceToolHost(
+        root,
+        "sandbox-build",
+        ToolExecutionStore(tmp_path / "sandbox-build.sqlite3"),
+        approval=approval_callback,
+        sandbox_executor=sandbox_executor,
+    )
     monkeypatch.setattr(
         "cds_ai_ide_adapter.tool_host.subprocess.Popen",
-        lambda *args, **kwargs: pytest.fail("denied command must not execute"),
+        lambda *args, **kwargs: pytest.fail("project code must never execute on the host"),
     )
     output = result(host.execute_tool_call(call(
         "workspace_dotnet_build", {"project": "Demo.csproj"}
     )))
-    assert output["status"] == "approval_denied"
+
+    assert output["status"] == "succeeded"
+    assert captured["workspace_id"] == "sandbox-build"
+    assert captured["action"] == "build"
+    assert captured["project_path"] == "Demo.csproj"
+    assert {item["path"] for item in captured["files"]} == {
+        "Demo.csproj", "Program.cs"
+    }
+    assert captured["approval"] is approval_callback
+
+
+def test_dotnet_build_is_unavailable_without_sandbox_and_never_falls_back_to_host(
+    tmp_path, monkeypatch
+):
+    root, host = make_host(tmp_path)
+    (root / "Demo.csproj").write_text("<Project />", encoding="utf-8")
+    monkeypatch.setattr(
+        "cds_ai_ide_adapter.tool_host.subprocess.Popen",
+        lambda *args, **kwargs: pytest.fail("host project execution must remain disabled"),
+    )
+    output = result(host.execute_tool_call(call(
+        "workspace_dotnet_build", {"project": "Demo.csproj"}
+    )))
+    assert output["status"] == "unavailable"
+    assert "host Build/Test is disabled" in output["error"]
 
 
 def test_idempotency_key_cannot_be_reused_with_different_arguments(tmp_path):
