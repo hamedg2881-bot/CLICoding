@@ -77,3 +77,77 @@ def test_cds_ai_client_runs_tool_loop_on_workstation_and_continues_same_conversa
         assert tool_result["content"] == "Local project instructions"
 
     asyncio.run(scenario())
+
+class ToolErrorSequenceGateway:
+    def __init__(self):
+        self.calls = []
+
+    async def complete(self, messages, *, tools=None, tool_choice=None):
+        self.calls.append(messages)
+        if len(self.calls) == 1:
+            return Completion(
+                content="",
+                model="tool-model",
+                tool_calls=[{
+                    "id": "call_missing_file",
+                    "type": "function",
+                    "function": {
+                        "name": "workspace_read_file",
+                        "arguments": '{"path":"missing.txt"}',
+                    },
+                }],
+                finish_reason="tool_calls",
+            )
+        tool_message = messages[-1]
+        assert tool_message["role"] == "tool"
+        result = json.loads(tool_message["content"])
+        assert result["status"] == "error"
+        return Completion(
+            content="I could not read the file because it does not exist.",
+            model="tool-model",
+        )
+
+
+def test_cds_ai_client_returns_tool_errors_to_model_and_continues_conversation(tmp_path):
+    async def scenario():
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        host = WorkspaceToolHost(
+            workspace,
+            "ide-tool-error",
+            ToolExecutionStore(tmp_path / "tool-error-ledger.sqlite3"),
+        )
+        gateway = ToolErrorSequenceGateway()
+        database = Database(str(tmp_path / "tool-error-conversation.sqlite3"))
+        registry = WorkerRegistry([
+            Worker(
+                "tool-worker",
+                "http://model/v1",
+                "tool-model",
+                frozenset({"chat", "tool_calling"}),
+            )
+        ])
+        app = create_app(
+            settings=Settings(database_path=str(tmp_path / "tool-error-conversation.sqlite3")),
+            gateway=gateway,
+            database=database,
+            registry=registry,
+        )
+        client = CDSAIClient(
+            "http://test/v1",
+            transport=httpx.ASGITransport(app=app),
+        )
+        result = await client.chat_with_tools(
+            [{"role": "user", "content": "Read missing.txt"}],
+            host,
+        )
+
+        assert result.tool_rounds == 1
+        assert "does not exist" in result.message["content"]
+        assert len(gateway.calls) == 2
+        tool_message = gateway.calls[1][-1]
+        assert tool_message["role"] == "tool"
+        assert tool_message["tool_call_id"] == "call_missing_file"
+        assert json.loads(tool_message["content"])["status"] == "error"
+
+    asyncio.run(scenario())
