@@ -101,6 +101,34 @@ def test_rejects_mismatched_tool_result_identity():
         validate_tool_result(events, "call_123", "write_file")
 
 
+@pytest.mark.parametrize(
+    "calls",
+    [
+        [],
+        [{}],
+        [{"id": "call_123", "type": "function"}],
+        [{"id": "bad id", "function": {"name": "read_file"}}],
+        [{"id": "call_123", "function": {"name": ""}}],
+        [{"id": "call_123", "function": {"name": "read_file"}}, {"id": "call_124", "function": {"name": "read_file"}}],
+    ],
+)
+def test_pending_tool_call_rejects_malformed_imported_assistant_history(calls):
+    events = [{"role": "assistant", "metadata": {"tool_calls": calls}}]
+    with pytest.raises(ToolProtocolError):
+        pending_tool_call(events)
+
+
+def test_pending_tool_call_rejects_reused_call_ids_across_completed_calls():
+    call = valid_call()[0]
+    events = [
+        {"role": "assistant", "metadata": {"tool_calls": [call]}},
+        {"role": "tool", "metadata": {"tool_call_id": "call_123", "name": "read_file"}, "content": "ok"},
+        {"role": "assistant", "metadata": {"tool_calls": [call]}},
+    ]
+    with pytest.raises(ToolProtocolError, match="reuses"):
+        pending_tool_call(events)
+
+
 
 @pytest.mark.parametrize(
     "schema",
