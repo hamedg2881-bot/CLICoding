@@ -8,7 +8,7 @@
 
 1. Open the Draft PR for the reviewed candidate: https://github.com/hamedg2881-bot/CLICoding/pull/14
 2. Confirm the PR is still open and Draft. Record its exact head commit SHA.
-3. Open the successful GitHub Actions run for that exact SHA. Download the artifact named `CDS_AI-release-<full-commit-sha>`.
+3. Open the successful **push** GitHub Actions run whose head SHA exactly equals the PR head. Do not use the `pull_request` run artifact: GitHub tests that event on a synthetic merge commit. Download the source artifact named `CDS_AI-release-<full-commit-sha>` from the matching push run.
 4. The downloaded artifact contains:
    - `CDS_AI_<12-char-sha>.zip` — source archive;
    - matching `.zip.sha256` — SHA-256 checksum;
@@ -66,7 +66,7 @@ Confirm ARM64 architecture, Python 3.11+, disk location for SQLite and attachmen
 
 ## 4. Offline dependency preparation (not yet an install command)
 
-1. From the same successful Actions run and exact source commit, download the artifact named `CDS_AI-wheelhouse-cp312-arm64-<full-commit-sha>`.
+1. From that same successful **push** Actions run and exact source commit, download the artifact named `CDS_AI-wheelhouse-cp312-arm64-<full-commit-sha>`.
 2. Transfer its `.tar.gz` and matching `.tar.gz.sha256` sidecar to the DGX staging directory.
 3. Verify and extract:
 
