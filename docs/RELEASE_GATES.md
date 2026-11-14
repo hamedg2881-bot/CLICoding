@@ -62,7 +62,8 @@ The sample registry uses recorded ports 8003/8004/8005 but leaves all workers di
 
 ## Client and offline release
 - [ ] Open WebUI multi-turn, SSE, Stop, regenerate/edit and multi-user acceptance, including actual rendering or documented fallback for custom `x_clicoding.progress` SSE events.
-- [ ] First-party CDS_AI UI Playwright acceptance: desktop/mobile RTL layout, independent conversations, history reload, direct token streaming, specialist progress, Stop/cancellation and error recovery.
+- [x] Desktop Playwright browser-contract tests (mocked API): specialist progress rendering without internal task IDs, independent conversations, image attachment upload request and Stop-to-cancel API call.
+- [ ] Full first-party UI acceptance against the live backend, plus mobile/keyboard accessibility, history reload under real authentication, real cancellation race behavior and error recovery.
 - [ ] Packaged IDE workspace selection, approvals, diff review/apply and build/test evidence.
 - [ ] Diagnose and repair a deliberately failing sample project; capture successful build/test exit codes.
 - [ ] Browser screenshot, verified Vision handoff, visual correction and before/after evidence.
