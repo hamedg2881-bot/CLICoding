@@ -1,4 +1,5 @@
 import hashlib
+import os
 import sqlite3
 import uuid
 
@@ -75,3 +76,30 @@ def test_backup_verification_rejects_unreferenced_files(tmp_path):
     extra.write_bytes(b"not in the database snapshot")
     with pytest.raises(BackupError, match="unreferenced attachment"):
         verify_backup(backup)
+
+
+
+def test_backup_verification_rejects_unreferenced_top_level_content(tmp_path):
+    database, attachments, _, _ = make_source(tmp_path)
+    backup = create_backup(database, attachments, tmp_path / "backups")
+    (backup / "unexpected.txt").write_text("not part of this backup")
+    with pytest.raises(BackupError, match="top-level content"):
+        verify_backup(backup)
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="named pipes are unavailable")
+def test_backup_verification_rejects_special_files(tmp_path):
+    database, attachments, _, _ = make_source(tmp_path)
+    backup = create_backup(database, attachments, tmp_path / "backups")
+    os.mkfifo(backup / "attachments" / "unexpected.pipe")
+    with pytest.raises(BackupError, match="special file"):
+        verify_backup(backup)
+
+
+def test_backup_verification_rejects_symlinked_backup_root(tmp_path):
+    database, attachments, _, _ = make_source(tmp_path)
+    backup = create_backup(database, attachments, tmp_path / "backups")
+    alias = tmp_path / "backup-alias"
+    alias.symlink_to(backup, target_is_directory=True)
+    with pytest.raises(BackupError, match="symbolic link"):
+        verify_backup(alias)
