@@ -1853,7 +1853,7 @@ def create_app(
                     api_key=stream_worker.api_key,
                     timeout_seconds=stream_worker.timeout_seconds,
                 )
-                await prepare_context_history(
+                prepared_history = await prepare_context_history(
                     conversation_id,
                     effective_system_messages(supplied_system),
                     stream_source_events,
@@ -1872,7 +1872,7 @@ def create_app(
             return StreamingResponse(
                 stream_direct_turn(
                     conversation_id, last_user, supplied_system, stream_worker,
-                    stream_gateway, response_id, created_at, history,
+                    stream_gateway, response_id, created_at, prepared_history,
                     [event["id"] for event in existing_events], generation_options,
                     tool_definitions or None, chat_request.tool_choice,
                     last_message.role,
