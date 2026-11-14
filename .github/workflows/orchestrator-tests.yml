@@ -136,3 +136,41 @@ jobs:
             dist/CDS_AI-wheelhouse-cp312-arm64-*.tar.gz.sha256
           if-no-files-found: error
           retention-days: 30
+
+  transfer-bundle:
+    needs: [test, wheelhouse-arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download exact source archive
+        uses: actions/download-artifact@v4
+        with:
+          name: CDS_AI-release-${{ github.sha }}
+          path: bundle
+      - name: Download exact ARM64 wheelhouse
+        uses: actions/download-artifact@v4
+        with:
+          name: CDS_AI-wheelhouse-cp312-arm64-${{ github.sha }}
+          path: bundle
+      - name: Assemble one transfer bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          printf 'commit=%s\\nsource_archive=%s\\nwheelhouse_archive=%s\\npython_abi=cp312\\narchitecture=aarch64\\n' \
+            "${GITHUB_SHA}" \
+            "$(basename "$(find bundle -maxdepth 1 -name 'CDS_AI_*.zip' -print -quit)")" \
+            "$(basename "$(find bundle -maxdepth 1 -name 'CDS_AI-wheelhouse-cp312-arm64-*.tar.gz' -print -quit)")" \
+            > bundle/TRANSFER_MANIFEST.txt
+          tar -C bundle -czf "dist/CDS_AI-transfer-bundle-${GITHUB_SHA:0:12}.tar.gz" .
+          cd dist
+          sha256sum "CDS_AI-transfer-bundle-${GITHUB_SHA:0:12}.tar.gz" \
+            > "CDS_AI-transfer-bundle-${GITHUB_SHA:0:12}.tar.gz.sha256"
+      - name: Publish single offline transfer bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: CDS_AI-transfer-bundle-${{ github.sha }}
+          path: |
+            dist/CDS_AI-transfer-bundle-*.tar.gz
+            dist/CDS_AI-transfer-bundle-*.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 30
