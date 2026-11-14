@@ -819,7 +819,7 @@ class WorkspaceToolHost:
             kept_directories = []
             for name in sorted(dirnames):
                 child = current / name
-                if name in self.IGNORED_DIRECTORIES:
+                if name.casefold() in {item.casefold() for item in self.IGNORED_DIRECTORIES}:
                     continue
                 if child.is_symlink():
                     raise ValueError("workspace snapshot refuses symbolic-link directories")
@@ -832,9 +832,12 @@ class WorkspaceToolHost:
                 target = current / name
                 if target.is_symlink():
                     raise ValueError("workspace snapshot refuses symbolic-link files")
-                if name in self.BLOCKED_FILENAMES or name.casefold() in {
-                    ".npmrc", ".pypirc", "nuget.config",
-                } or target.suffix.lower() in self.BLOCKED_SUFFIXES:
+                if (
+                    name.casefold() in {item.casefold() for item in self.BLOCKED_FILENAMES}
+                    or name.casefold() in {".npmrc", ".pypirc", "nuget.config"}
+                    or (name.casefold().startswith(".env.") and name.casefold() != ".env.example")
+                    or target.suffix.lower() in self.BLOCKED_SUFFIXES
+                ):
                     continue
                 relative = target.relative_to(self.root).as_posix()
                 metadata = target.stat(follow_symlinks=False)
