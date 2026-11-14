@@ -19,6 +19,8 @@ def verify(wheelhouse: Path, manifest_path: Path) -> int:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if manifest.get("format_version") != 1:
         raise ValueError("unsupported wheelhouse manifest version")
+    if manifest.get("implementation") != "cpython":
+        raise ValueError("wheelhouse must target CPython")
     expected_python = str(manifest.get("python", "")).split()[0]
     expected_parts = expected_python.split(".")
     if len(expected_parts) < 2:
