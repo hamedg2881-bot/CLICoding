@@ -388,3 +388,49 @@ def test_openai_gateway_closes_upstream_stream_when_consumer_is_cancelled():
     asyncio.run(exercise())
     assert client.context.exited is True
     assert client.context.exit_exception is asyncio.CancelledError
+
+
+
+class ConcurrentSharedClient:
+    def __init__(self):
+        self.started = 0
+        self.max_active = 0
+        self.both_started = asyncio.Event()
+        self.calls = []
+
+    async def post(self, url, **kwargs):
+        self.started += 1
+        active = self.started
+        self.max_active = max(self.max_active, active)
+        self.calls.append((url, kwargs))
+        if self.started == 2:
+            self.both_started.set()
+        await asyncio.wait_for(self.both_started.wait(), timeout=1)
+        self.started -= 1
+        return FakeJSONResponse({
+            "model": "served-model",
+            "choices": [{
+                "message": {"role": "assistant", "content": "concurrent reply"},
+                "finish_reason": "stop",
+            }],
+        })
+
+
+def test_openai_gateway_shared_client_supports_concurrent_completions():
+    client = ConcurrentSharedClient()
+    gateway = OpenAICompatibleGateway(
+        "http://model/v1", "served-model", client=client
+    )
+
+    async def exercise():
+        return await asyncio.gather(
+            gateway.complete([{"role": "user", "content": "first"}]),
+            gateway.complete([{"role": "user", "content": "second"}]),
+        )
+
+    results = asyncio.run(exercise())
+    assert [item.content for item in results] == [
+        "concurrent reply", "concurrent reply"
+    ]
+    assert len(client.calls) == 2
+    assert client.max_active == 2
