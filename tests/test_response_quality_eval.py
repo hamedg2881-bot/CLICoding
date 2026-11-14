@@ -1,3 +1,4 @@
+import importlib.util
 import json
 from pathlib import Path
 
@@ -42,3 +43,17 @@ def test_quality_runner_documents_human_scoring_and_does_not_auto_judge():
     assert "Score each response manually" in runner
     assert "CDS_AI_API_KEY" in runner
     assert "Authorization" in runner
+
+
+
+def test_quality_runner_loads_the_versioned_case_file():
+    runner_path = Path(__file__).parents[1] / "scripts" / "run_response_quality.py"
+    spec = importlib.util.spec_from_file_location("response_quality_runner", runner_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    cases = module.load_cases(CASES_PATH)
+    assert len(cases) == 9
+    assert cases[0]["id"] == "fa-ordinary-001"
+    assert cases[-1]["id"] == "fa-math-009"
