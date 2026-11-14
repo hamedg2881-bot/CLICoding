@@ -225,6 +225,7 @@ def claim_workspace_approval(approval_id: str) -> dict:
         )
         connection.commit()
         return {
+            "approval_id": approval_id,
             "action": row["action"],
             "project_path": project_path,
             "files": files,
