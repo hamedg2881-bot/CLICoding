@@ -695,7 +695,7 @@ def test_partial_execution_is_disclosed_in_final_answer(tmp_path):
         assert "Work not completed" in result.answer
         assert "Perform the independent code review" in result.answer
         assert "failed" in result.answer
-        assert "Final synthesis was unavailable" in result.answer
+        assert "final synthesis was unavailable" in result.answer
         assert "tasks completed" not in result.answer.lower()
         assert "Work not completed" in synthesis_messages[0][1]["content"]
         assert "Independent review findings are provided" in synthesis_messages[0][1]["content"]
