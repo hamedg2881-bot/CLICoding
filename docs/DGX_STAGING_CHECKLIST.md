@@ -75,9 +75,17 @@ sha256sum -c CDS_AI-wheelhouse-cp312-arm64-<12-char-sha>.tar.gz.sha256
 tar -xzf CDS_AI-wheelhouse-cp312-arm64-<12-char-sha>.tar.gz
 ```
 
-4. Inspect `wheelhouse-manifest.json`: the Python implementation/version and `aarch64` machine must match the DGX target. Verify every wheel against its SHA-256 entry before installation.
-5. Keep the wheelhouse, virtual environment, secrets and runtime data outside the source tree.
-6. Install only with pip offline mode and an explicit local wheelhouse; public package indexes must not be fallback sources.
+4. Run the packaged verifier from the extracted source tree:
+
+```bash
+python3 source/CDS_AI/scripts/verify_wheelhouse.py \
+  --wheelhouse wheelhouse \
+  --manifest wheelhouse-manifest.json
+```
+
+5. The verifier checks the Python major/minor ABI, ARM64 architecture, exact wheel inventory, file sizes and every wheel SHA-256. It must succeed before installation.
+6. Keep the wheelhouse, virtual environment, secrets and runtime data outside the source tree.
+7. Install only with pip offline mode and an explicit local wheelhouse; public package indexes must not be fallback sources.
 
 The CI workflow now builds the complete project plus test-dependency wheelhouse on a native ARM64 runner using CPython 3.12.3. The last passing packaging run produced 32 wheels for aarch64. This is a reproducible candidate wheelhouse, not proof of compatibility with the exact DGX OS/glibc/runtime. Confirm the DGX Python minor version and platform first; do not use this artifact if they differ. No offline install on DGX has been performed yet.
 
