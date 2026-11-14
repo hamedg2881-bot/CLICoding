@@ -14,7 +14,7 @@ button,input,textarea,select{font:inherit}button{cursor:pointer;color:inherit;bo
 .new-chat{width:100%;text-align:right;background:#272333;border-color:#49405f}.section-label{color:var(--muted);font-size:11px;padding:22px 8px 9px}.chat-list{overflow:auto;display:flex;flex-direction:column;gap:4px}.chat-item{width:100%;text-align:right;background:transparent;border-color:transparent;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#d8dae0}.chat-item.active{background:#252831;border-color:#343944}.side-bottom{margin-top:auto;border-top:1px solid var(--line);padding-top:12px;display:flex;gap:8px}.side-bottom button{flex:1;font-size:12px}
 main{display:flex;flex-direction:column;min-width:0;height:100%;position:relative}.topbar{height:62px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 24px;gap:12px}.topbar .model{font-size:13px;color:#d6d1fa}.topbar .status{font-size:12px;color:var(--muted)}
 .messages{width:min(850px,100%);margin:0 auto;padding:30px 24px 24px;overflow:auto;flex:1;display:flex;flex-direction:column;gap:24px;scroll-behavior:smooth}.welcome{margin:auto;text-align:center;max-width:580px;padding:30px 10px}.welcome h1{font-size:30px;font-weight:650;margin:0 0 10px}.welcome p{color:var(--muted);line-height:1.9;margin:0}.message{display:flex;gap:12px;align-items:flex-start;max-width:100%}.message.user{flex-direction:row-reverse}.avatar{width:30px;height:30px;flex:0 0 30px;border-radius:10px;background:#282b33;display:grid;place-items:center;color:#c7bdfb;font-size:12px;font-weight:700}.user .avatar{background:#30313b;color:#e5e7eb}.bubble{max-width:min(760px,calc(100% - 44px));line-height:1.85;font-size:14px;white-space:pre-wrap;overflow-wrap:anywhere}.user .bubble{background:#22252d;padding:12px 15px;border-radius:16px 5px 16px 16px}.assistant .bubble{padding:3px 2px}.progress{border:1px solid var(--line);background:#17191f;border-radius:12px;padding:10px 12px;margin:0 0 10px;min-width:240px}.progress-head{font-size:12px;color:#c9c2f7;margin-bottom:7px}.progress-item{font-size:12px;color:var(--muted);padding:4px 0;display:flex;align-items:center;gap:7px}.dot{width:7px;height:7px;border-radius:50%;background:#777;flex:0 0 7px}.dot.running{background:#a78bfa;box-shadow:0 0 0 3px #a78bfa22}.dot.done{background:var(--ok)}.dot.failed{background:var(--danger)}
-.composer-wrap{padding:12px 24px 22px}.composer{width:min(850px,100%);margin:0 auto;border:1px solid #383c47;background:#191b21;border-radius:20px;padding:12px;box-shadow:0 10px 40px #0003}.composer textarea{width:100%;resize:none;max-height:180px;min-height:54px;background:transparent;color:var(--text);border:0;outline:0;padding:7px 8px;line-height:1.7}.composer-tools{display:flex;align-items:center;gap:8px}.composer-tools select{background:#22252d;color:#ddd;border:1px solid var(--line);border-radius:10px;padding:7px 9px;font-size:12px}.spacer{flex:1}.send{background:#c4b5fd;color:#171326;border:0;font-weight:700;min-width:74px}.stop{background:#3b2025;color:#fecaca;border-color:#65343b}.hint{width:min(850px,100%);margin:8px auto 0;text-align:center;color:#747b87;font-size:10px}
+.composer-wrap{padding:12px 24px 22px}.composer{width:min(850px,100%);margin:0 auto;border:1px solid #383c47;background:#191b21;border-radius:20px;padding:12px;box-shadow:0 10px 40px #0003}.composer textarea{width:100%;resize:none;max-height:180px;min-height:54px;background:transparent;color:var(--text);border:0;outline:0;padding:7px 8px;line-height:1.7}.composer-tools{display:flex;align-items:center;gap:8px}.composer-tools select{background:#22252d;color:#ddd;border:1px solid var(--line);border-radius:10px;padding:7px 9px;font-size:12px}.attach{font-size:12px;padding:7px 10px}.file-name{font-size:11px;color:var(--muted);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.spacer{flex:1}.send{background:#c4b5fd;color:#171326;border:0;font-weight:700;min-width:74px}.stop{background:#3b2025;color:#fecaca;border-color:#65343b}.hint{width:min(850px,100%);margin:8px auto 0;text-align:center;color:#747b87;font-size:10px}
 .settings{position:absolute;z-index:5;top:70px;left:20px;background:#1b1e24;border:1px solid var(--line);border-radius:14px;padding:14px;width:min(340px,calc(100vw - 32px));box-shadow:0 15px 50px #0008}.settings[hidden]{display:none}.settings label{display:block;font-size:12px;color:var(--muted);margin-bottom:8px}.settings input{width:100%;background:#101216;border:1px solid var(--line);border-radius:9px;padding:10px;color:var(--text);direction:ltr}.settings-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}.error{color:#fca5a5;font-size:12px;padding:8px 2px}
 @media(max-width:760px){.shell{grid-template-columns:1fr}aside{display:none}.topbar{padding:0 14px}.messages{padding:22px 14px}.composer-wrap{padding:10px 12px 16px}.welcome h1{font-size:25px}}
 </style>
@@ -55,7 +55,7 @@ main{display:flex;flex-direction:column;min-width:0;height:100%;position:relativ
 <script>
 (() => {
   const $ = id => document.getElementById(id);
-  const state = { token: sessionStorage.getItem("cds-ai-token") || "", conversationId: null, chats: [], controller: null, busy: false, currentProgress: null };
+  const state = { token: sessionStorage.getItem("cds-ai-token") || "", conversationId: null, chats: [], controller: null, busy: false, pendingImage: null };
   const indexKey = "cds-ai-chat-index-v1";
   try { state.chats = JSON.parse(sessionStorage.getItem(indexKey) || "[]"); } catch { state.chats = []; }
   $("apiToken").value = state.token;
@@ -227,6 +227,14 @@ main{display:flex;flex-direction:column;min-width:0;height:100%;position:relativ
     state.controller?.abort();
     $("stopButton").disabled=false;
   }
+  $("attachButton").addEventListener("click",()=>$("imageFile").click());
+  $("imageFile").addEventListener("change",event=>{
+    const file=event.target.files?.[0] || null;
+    if(file && !["image/png","image/jpeg","image/gif","image/webp"].includes(file.type)){
+      setStatus("فرمت تصویر پشتیبانی نمی‌شود"); event.target.value=""; return;
+    }
+    state.pendingImage=file; $("fileName").textContent=file ? file.name : "";
+  });
   $("sendButton").addEventListener("click",sendStreaming);
   $("stopButton").addEventListener("click",stop);
   $("prompt").addEventListener("keydown",event=>{if(event.key==="Enter"&&!event.shiftKey){event.preventDefault();sendStreaming();}});
