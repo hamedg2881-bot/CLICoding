@@ -6,7 +6,6 @@ import argparse
 import hashlib
 import importlib.util
 import json
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -129,7 +128,7 @@ def main() -> int:
         image_id, platform_value, repo_digests = inspect_image(args.docker, reference)
         tag_name = "-".join(sorted(runtime_names))
         local_tag = f"clicoding-sandbox/{tag_name}:arm64"
-        run([args.docker, "tag", reference, local_tag], timeout=60)
+        run([args.docker, "tag", image_id, local_tag], timeout=60)
         tagged_id, tagged_platform, _ = inspect_image(args.docker, local_tag)
         if tagged_id != image_id or tagged_platform != platform_value:
             raise RuntimeError(f"local export tag did not preserve image identity: {local_tag}")
