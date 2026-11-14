@@ -48,7 +48,11 @@ def inspect_image(docker: str, image: str) -> tuple[bool, str]:
 def inspect_locked_image(docker: str, entry: dict) -> tuple[bool, str]:
     local_tag = entry.get("local_tag")
     expected_id = entry.get("image_id")
-    if not isinstance(local_tag, str) or not isinstance(expected_id, str):
+    if (
+        entry.get("platform") != "linux/arm64"
+        or not isinstance(local_tag, str)
+        or not isinstance(expected_id, str)
+    ):
         return False, "invalid image lock entry"
     try:
         result = subprocess.run(
