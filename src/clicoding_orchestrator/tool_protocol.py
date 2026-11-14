@@ -227,19 +227,44 @@ def validate_tool_calls(
 def pending_tool_call(events: list[dict[str, Any]]) -> tuple[str, str] | None:
     """Return the single outstanding call ID/name, or None when the turn is complete."""
     pending: tuple[str, str] | None = None
-    for event in events:
+    seen_call_ids: set[str] = set()
+    for index, event in enumerate(events):
+        if not isinstance(event, dict):
+            raise ToolProtocolError(f"conversation event {index} must be an object")
         metadata = event.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            raise ToolProtocolError(f"conversation event {index} metadata must be an object")
         if event.get("role") == "assistant":
-            calls = metadata.get("tool_calls") if isinstance(metadata, dict) else None
-            if calls:
-                if pending is not None:
-                    raise ToolProtocolError("conversation contains overlapping pending tool calls")
-                call = calls[0]
-                pending = (call["id"], call["function"]["name"])
+            if "tool_calls" not in metadata:
+                continue
+            calls = metadata["tool_calls"]
+            if not isinstance(calls, list) or len(calls) != 1:
+                raise ToolProtocolError("assistant event must contain exactly one supported tool call")
+            call = calls[0]
+            if not isinstance(call, dict):
+                raise ToolProtocolError("assistant tool call must be an object")
+            call_id = call.get("id")
+            function = call.get("function")
+            if not isinstance(call_id, str) or not _CALL_ID.fullmatch(call_id):
+                raise ToolProtocolError("assistant tool call has an invalid call ID")
+            if call_id in seen_call_ids:
+                raise ToolProtocolError("conversation reuses a tool call ID")
+            if not isinstance(function, dict):
+                raise ToolProtocolError("assistant tool call function must be an object")
+            name = function.get("name")
+            if not isinstance(name, str) or not _TOOL_NAME.fullmatch(name):
+                raise ToolProtocolError("assistant tool call has an invalid function name")
+            if pending is not None:
+                raise ToolProtocolError("conversation contains overlapping pending tool calls")
+            seen_call_ids.add(call_id)
+            pending = (call_id, name)
         elif event.get("role") == "tool":
-            call_id = metadata.get("tool_call_id") if isinstance(metadata, dict) else None
+            call_id = metadata.get("tool_call_id")
+            tool_name = metadata.get("name")
             if pending is None or call_id != pending[0]:
                 raise ToolProtocolError("tool result does not match the pending assistant tool call")
+            if tool_name is not None and tool_name != pending[1]:
+                raise ToolProtocolError("tool result name does not match the pending assistant tool call")
             pending = None
     return pending
 
