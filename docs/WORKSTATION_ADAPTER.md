@@ -42,7 +42,7 @@ This extends the same broker and runner used by single-file snippets. It does no
 
 ## Approval and idempotency
 
-Integrators provide an approval callback. If no callback is provided, file writes and remote Build/Test are denied. The workspace approval request includes the workspace ID, operation, selected project, complete path/hash/size manifest and snapshot digest. It does not show source contents in the approval details; an editor integration should add a human-readable diff review before production use.
+Integrators provide an approval callback. If no callback is provided, file writes and remote Build/Test are denied. The workspace approval request includes the workspace ID, operation, selected project, complete path/hash/size manifest, snapshot digest and bounded source previews after credential redaction. A production editor integration must still provide a human-readable full diff review and clearly indicate truncated previews before approval.
 
 Every tool call is bound to `workspace_id + conversation_id + tool_call_id` and a hash of the function name and arguments. A local SQLite ledger records a running invocation before execution. Successful results are cached; duplicate calls return the cached result. A call ID reused with different arguments is rejected. If the process crashes while a side effect is running, the ledger remains pending and refuses to execute the same call again automatically; the user must reconcile the workspace before retrying with a new call ID.
 
