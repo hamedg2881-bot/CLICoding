@@ -246,8 +246,7 @@ def test_openai_gateway_streams_structured_tool_call_deltas(monkeypatch):
             "parameters": {
                 "type": "object",
                 "properties": {"path": {"type": "string"}},
-                "required": ["path"],
-                "additionalProperties": False,
+                "required": ["path"],                "additionalProperties": False,
             },
         },
     }]
@@ -434,3 +433,34 @@ def test_openai_gateway_shared_client_supports_concurrent_completions():
     ]
     assert len(client.calls) == 2
     assert client.max_active == 2
+
+
+@pytest.mark.parametrize("stream_method", ["stream", "stream_events"])
+@pytest.mark.parametrize(
+    "event_payload, expected_message",
+    [
+        ('[]', "invalid streaming event"),
+        ('{"choices": {}}', "invalid streaming choices"),
+        ('{"choices": ["not-a-choice"]}', "invalid streaming choice"),
+        ('{"choices": [{"delta": []}]}', "invalid streaming delta"),
+    ],
+)
+def test_openai_gateway_rejects_malformed_sse_event_shapes(
+    stream_method, event_payload, expected_message
+):
+    response = FakeResponse([f"data: {event_payload}", "data: [DONE]"])
+    client = FakeAsyncClient(response)
+    gateway = OpenAICompatibleGateway(
+        "http://model/v1", "served-model", client=client
+    )
+
+    async def collect():
+        iterator = (
+            gateway.stream([{"role": "user", "content": "Hi"}])
+            if stream_method == "stream"
+            else gateway.stream_events([{"role": "user", "content": "Hi"}])
+        )
+        return [item async for item in iterator]
+
+    with pytest.raises(GatewayError, match=expected_message):
+        asyncio.run(collect())
