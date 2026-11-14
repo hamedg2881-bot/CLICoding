@@ -7,6 +7,7 @@ from typing import Any, Callable
 
 import httpx
 
+from clicoding_orchestrator.context import redact_sensitive_data
 from .tool_host import ToolApproval, WorkspaceToolHost
 
 
@@ -223,6 +224,19 @@ class CDSAISandboxExecutor:
                     }
                     for item in approval_record.get("files", [])
                 ]
+                preview_budget = 32_000
+                previews = []
+                for item in files:
+                    if preview_budget <= 0:
+                        break
+                    redacted = redact_sensitive_data(item["content"])
+                    preview = redacted[: min(2048, preview_budget)]
+                    preview_budget -= len(preview)
+                    previews.append({
+                        "path": item["path"],
+                        "content_preview": preview,
+                        "truncated": len(redacted) > len(preview),
+                    })
                 request = ToolApproval(
                     tool_name=f"workspace_dotnet_{action}",
                     workspace_id=workspace_id,
@@ -234,6 +248,9 @@ class CDSAISandboxExecutor:
                         "file_count": len(manifest),
                         "total_bytes": approval_record.get("total_bytes"),
                         "file_manifest": manifest,
+                        "file_previews": previews,
+                        "source_review_required": any(item["truncated"] for item in previews)
+                        or len(previews) < len(files),
                         "execution_boundary": "existing_root_owned_Docker_sandbox",
                         "network": "disabled",
                         "workspace_mount": "read-only",
