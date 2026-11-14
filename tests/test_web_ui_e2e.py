@@ -79,6 +79,7 @@ def test_browser_renders_specialist_progress_and_keeps_conversations_separate():
                 assert "internal-task" not in progress
 
                 await page.locator("#newChat").click()
+                await page.locator("#taskType").select_option("chat")
                 await page.locator("#prompt").fill("یک گفت‌وگوی مستقل")
                 await page.locator("#sendButton").click()
                 await page.wait_for_function(
