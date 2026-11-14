@@ -105,7 +105,7 @@ A phase may be marked complete only when its exit gate has reproducible evidence
 
 ## Phase 2A — Conversation and orchestration core (required before multi-model workflows)
 
-**Status:** Source implementation is substantially complete for the conversation-first baseline: durable history, direct-chat streaming, explicit specialist routing, validated plans/tasks, tool-call transport, cancellation, context budgeting/compaction, image references, ownership and retry idempotency. PR #14 previously passed 167 CI tests before the first-party chat UI slice; the new UI slice requires a fresh CI run. Live DGX compatibility, worker-wide distributed concurrency and production acceptance remain open; worker-specific specialist context compaction and structured specialist progress SSE are implemented.
+**Status:** Source implementation is substantially complete for the conversation-first baseline: durable history, direct-chat streaming, explicit specialist routing, validated plans/tasks, tool-call transport, cancellation, context budgeting/compaction, image references, ownership and retry idempotency. Latest CI run [43563386491](https://github.com/hamedg2881-bot/CLICoding/actions/runs/43563386491) passes 168 tests in 4.40s on the current UI candidate; CI also validates the inline JavaScript and confirms the UI asset is included in the wheel. Live DGX compatibility, worker-wide distributed concurrency and production acceptance remain open; worker-specific specialist context compaction and structured specialist progress SSE are implemented.
 
 Deliverables:
 - [x] Initial conversation/event persistence contract with stable conversation identity independent of model (single-process SQLite slice).
