@@ -329,3 +329,62 @@ def test_openai_gateway_reuses_injected_client_for_completion_and_streaming(monk
     assert shared_client.streams[0][2]["timeout"] == 180.0
     assert shared_client.closed is False
 
+
+
+
+class BlockingStreamResponse(FakeResponse):
+    def __init__(self):
+        super().__init__([])
+        self.started = asyncio.Event()
+        self.never = asyncio.Event()
+
+    async def aiter_lines(self):
+        yield 'data: ' + json.dumps({"choices": [{"delta": {"content": "first"}}]})
+        self.started.set()
+        await self.never.wait()
+
+
+class TrackingStreamContext(FakeStreamContext):
+    def __init__(self, response):
+        super().__init__(response)
+        self.exited = False
+        self.exit_exception = None
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        self.exited = True
+        self.exit_exception = exc_type
+        return False
+
+
+class CancellationTrackingClient:
+    def __init__(self, response):
+        self.response = response
+        self.context = TrackingStreamContext(response)
+
+    def stream(self, method, url, **kwargs):
+        return self.context
+
+
+def test_openai_gateway_closes_upstream_stream_when_consumer_is_cancelled():
+    response = BlockingStreamResponse()
+    client = CancellationTrackingClient(response)
+    gateway = OpenAICompatibleGateway(
+        "http://model/v1", "served-model", client=client
+    )
+
+    async def exercise():
+        iterator = gateway.stream(
+            [{"role": "user", "content": "Keep streaming"}]
+        )
+        first = await anext(iterator)
+        assert first == "first"
+        next_piece = asyncio.create_task(anext(iterator))
+        await response.started.wait()
+        next_piece.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await next_piece
+        await iterator.aclose()
+
+    asyncio.run(exercise())
+    assert client.context.exited is True
+    assert client.context.exit_exception is asyncio.CancelledError
