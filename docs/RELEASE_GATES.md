@@ -23,7 +23,6 @@
 ## Remaining source capabilities
 - [x] Worker-specific specialist context compaction for planning, each specialist task, and final synthesis; mandatory task/request/result context is reserved before summarizing history, and canonical conversation events are not rewritten.
 - [x] Specialist task lifecycle progress is emitted as structured `event: progress` SSE metadata alongside the final OpenAI-compatible completion stream; internal model reasoning and raw worker outputs are not exposed.
-- [x] First-party CDS_AI browser chat interface at `/` with RTL layout, API-identity-isolated session conversations, history reload, task-type selection, PNG/JPEG/GIF/WebP attachment upload, live specialist progress rendering, direct-chat token streaming and Stop wired to the authenticated cancellation API.
 - [x] CI syntax-checks the packaged UI JavaScript and verifies the HTML asset is present in the built Python wheel.
 - [x] Typed, conversation-scoped image attachment records, bounded binary upload, MIME sniffing, SHA-256 integrity checks, private storage and authenticated retrieval/deletion.
 - [x] Offline SQLite and attachment backup/restore CLI with versioned manifest, integrity verification and retained pre-restore rollback paths.
@@ -74,9 +73,6 @@ The sample registry uses recorded ports 8003/8004/8005 but leaves all workers di
 
 ## Client and offline release
 - [ ] Open WebUI multi-turn, SSE, Stop, regenerate/edit and multi-user acceptance, including actual rendering or documented fallback for custom `x_clicoding.progress` SSE events.
-- [x] Desktop Playwright browser-contract tests (mocked API): specialist progress rendering without internal task IDs, independent conversations, image attachment upload request and Stop-to-cancel API call.
-- [x] Live FastAPI browser integration with a fake model gateway: actual conversation creation/history persistence, image upload and attachment resolution into the vision request, and cancellation of an active backend turn.
-- [x] Basic mobile viewport browser checks: sidebar overlay opens/closes, new-chat action closes it, Enter submits a message, and the viewport has no horizontal overflow.
 - [ ] Real-model/DGX browser acceptance, broader mobile/keyboard/screen-reader accessibility, multi-user auth behavior, and error recovery against the production-like runtime.
 - [ ] Packaged IDE workspace selection, approvals, diff review/apply and build/test evidence.
 - [ ] Diagnose and repair a deliberately failing sample project; capture successful build/test exit codes.
