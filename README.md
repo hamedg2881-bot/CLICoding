@@ -2,7 +2,7 @@
 
 **Assistant identity:** CDS_AI. **Source repository:** CLICoding.
 
-**Project status:** CDS_AI identity, conversation-first routing, direct and tool-call streaming, regenerate/edit/cancel operations, context compaction, per-user ownership, workstation reference tools, durable token issue/revoke, per-user rate limiting, admin audit export and common credential redaction on workstation tool results, and verified SQLite/attachment backup and restore are implemented in the GitHub integration candidate. Packaged IDE UI, specialist progress streaming, OS-level sandboxing, automatic attachment expiry/retention, image decoding/content validation, and live DGX/offline acceptance remain release gates.  
+**Project status:** CDS_AI identity, conversation-first routing, direct and tool-call streaming, regenerate/edit/cancel operations, context compaction, per-user ownership, workstation reference tools, durable token issue/revoke, per-user rate limiting, admin audit export and common credential redaction on workstation tool results, verified SQLite/attachment backup and restore, and a first-party RTL-aware CDS_AI chat interface with live specialist progress and Stop controls are implemented in the GitHub integration candidate. Packaged IDE UI, Open WebUI progress-metadata rendering acceptance, browser/Playwright UI acceptance, OS-level sandboxing, automatic attachment expiry/retention, image decoding/content validation, and live DGX/offline acceptance remain release gates.  
 **Operating mode:** Internet unavailable during development; internal LAN available.  
 **IDE policy:** IDE-agnostic.  
 **Canonical project repository:** https://github.com/hamedg2881-bot/CLICoding
