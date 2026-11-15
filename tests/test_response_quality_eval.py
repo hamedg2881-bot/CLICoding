@@ -57,7 +57,7 @@ def test_quality_runner_loads_the_versioned_case_file():
     cases = module.load_cases(CASES_PATH)
     assert len(cases) == 21
     assert cases[0]["id"] == "fa-ordinary-001"
-    assert cases[-1]["id"] == "fa-format-020"
+    assert cases[-1]["id"] == "fa-deployment-architecture-021"
 
 
 
