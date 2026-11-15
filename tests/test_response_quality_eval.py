@@ -55,7 +55,7 @@ def test_quality_runner_loads_the_versioned_case_file():
     spec.loader.exec_module(module)
 
     cases = module.load_cases(CASES_PATH)
-    assert len(cases) == 20
+    assert len(cases) == 21
     assert cases[0]["id"] == "fa-ordinary-001"
     assert cases[-1]["id"] == "fa-format-020"
 
