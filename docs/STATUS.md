@@ -1,3 +1,13 @@
+# Current deployment correction — 2026-11-15
+
+The repository contains historical staging notes that say no DGX deployment or host mutation had occurred. Those statements describe the earlier state at the dates of those entries; they are **not** the current project status. CDS_AI was subsequently deployed on DGX Spark. The last host verification available for this update is 2026-11-14. See [CURRENT_DEPLOYMENT.md](CURRENT_DEPLOYMENT.md) for the dated service, worker, endpoint, client and configuration snapshot.
+
+The current live worker configuration recorded on 2026-11-14 is not the same as the intended target topology in [THREE_MODEL_TOPOLOGY.md](THREE_MODEL_TOPOLOGY.md). In particular, the live `multimodal-primary` worker is `qwen3-vl-2b` with the `vision` capability only; it is not the target Qwen3.6 general/multimodal model. Global parallelism was configured to 1, despite the source default/target design allowing up to 3.
+
+Do not treat the dated snapshot as a real-time health check. Re-run read-only host inventory before making operational changes or claiming current availability. No deployment or host changes were performed by this documentation/source update.
+
+---
+
 ## 2026-11-14 — Windows Docker image staging automation
 
 - Added `scripts/prepare_dgx_transfer.ps1` for a Windows staging workstation using Docker Desktop Linux containers, Python and Buildx. It verifies the outer bundle sidecar, transfer manifest, release metadata, source and wheelhouse sidecars, confirms the Buildx builder advertises linux/arm64, invokes the existing image exporter with pinned pulls and TypeScript image build, and verifies the resulting image archive and immutable image-lock checksums.
