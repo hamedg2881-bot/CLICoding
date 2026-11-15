@@ -1010,7 +1010,7 @@ def create_app(
     ) -> tuple[dict[str, Any], dict[str, Any], str, str | None]:
         if not db.conversation_exists(conversation_id):
             raise HTTPException(status_code=404, detail="Conversation not found")
-        system_messages = effective_system_messages(system_messages)
+        system_messages = effective_system_messages(system_messages, user_content=content)
         lock = conversation_locks.setdefault(conversation_id, asyncio.Lock())
         async with lock:
             regeneration_event = None
@@ -1897,7 +1897,7 @@ def create_app(
                 stream_gateway = gateway_for_worker(stream_worker)
                 prepared_history = await prepare_context_history(
                     conversation_id,
-                    effective_system_messages(supplied_system),
+                    effective_system_messages(supplied_system, user_content=last_user),
                     stream_source_events,
                     None if regenerate else stream_input,
                     stream_worker,
@@ -2139,7 +2139,7 @@ def create_app(
                 "user_event_id": input_event["id"],
                 "assistant_event_id": assistant_event["id"],
                 "producer": assistant_event["producer"],
-                "system_messages_applied": len(effective_system_messages(supplied_system)),
+                "system_messages_applied": len(effective_system_messages(supplied_system, user_content=last_user)),
                 "execution_id": execution_id,
                 "orchestrated": execution_id is not None,
             },
