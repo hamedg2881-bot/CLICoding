@@ -379,3 +379,230 @@ def test_database_deletes_target_and_all_later_events_transactionally(tmp_path):
     assert database.list_events(conversation_id) == []
     with pytest.raises(ValueError, match="target event does not exist"):
         database.delete_events_from(conversation_id, first["id"])
+
+def test_conversation_summary_is_versioned_and_never_rewrites_original_events(tmp_path):
+    database = Database(str(tmp_path / "summaries.sqlite3"))
+    conversation_id = database.create_conversation()["id"]
+    for role, content in [
+        ("user", "first question"),
+        ("assistant", "first answer"),
+        ("user", "second question"),
+        ("assistant", "second answer"),
+    ]:
+        database.append_event(conversation_id, role, content)
+
+    first = database.save_summary(
+        conversation_id, 2, "Summary of first turn", "summary-model"
+    )
+    assert database.get_latest_summary(conversation_id) == first
+    second = database.save_summary(
+        conversation_id, 4, "Updated summary of both turns", "summary-model"
+    )
+    assert database.get_latest_summary(conversation_id) == second
+    assert [event["content"] for event in database.list_events(conversation_id)] == [
+        "first question", "first answer", "second question", "second answer"
+    ]
+
+
+def test_conversation_summary_rejects_non_monotonic_or_unknown_boundaries(tmp_path):
+    import pytest
+
+    database = Database(str(tmp_path / "summary-boundary.sqlite3"))
+    conversation_id = database.create_conversation()["id"]
+    database.append_event(conversation_id, "user", "question")
+    database.append_event(conversation_id, "assistant", "answer")
+    database.save_summary(conversation_id, 2, "Summary", "model")
+
+    with pytest.raises(ValueError, match="advance"):
+        database.save_summary(conversation_id, 1, "Older summary", "model")
+    with pytest.raises(ValueError, match="existing conversation event"):
+        database.save_summary(conversation_id, 99, "Unknown boundary", "model")
+
+
+
+def test_rewriting_conversation_history_invalidates_only_affected_summaries(tmp_path):
+    database = Database(str(tmp_path / "summary-invalidation.sqlite3"))
+    conversation_id = database.create_conversation()["id"]
+    for index in range(6):
+        database.append_event(
+            conversation_id,
+            "user" if index % 2 == 0 else "assistant",
+            f"event-{index}",
+        )
+    database.save_summary(conversation_id, 2, "summary through 2", "model")
+    database.save_summary(conversation_id, 4, "summary through 4", "model")
+
+    deleted = database.invalidate_summaries_from_sequence(conversation_id, 4)
+
+    assert deleted == 1
+    assert database.get_latest_summary(conversation_id)["through_sequence"] == 2
+
+
+
+def test_replacing_or_deleting_history_invalidates_covered_summaries(tmp_path):
+    database = Database(str(tmp_path / "summary-rewrite.sqlite3"))
+    conversation_id = database.create_conversation()["id"]
+    first = database.append_event(conversation_id, "user", "first")
+    database.append_event(conversation_id, "assistant", "first answer")
+    target = database.append_event(conversation_id, "user", "second")
+    database.append_event(conversation_id, "assistant", "second answer")
+    database.save_summary(conversation_id, 2, "summary first turn", "model")
+    database.save_summary(conversation_id, 4, "summary both turns", "model")
+
+    database.replace_events_from(
+        conversation_id,
+        target["id"],
+        [
+            {"role": "user", "content": "edited second", "producer": "user"},
+            {"role": "assistant", "content": "edited answer", "producer": "chat"},
+        ],
+    )
+    latest = database.get_latest_summary(conversation_id)
+    assert latest is not None and latest["through_sequence"] == 2
+
+    database.save_summary(conversation_id, 4, "summary edited history", "model")
+    tail = database.list_events(conversation_id)[-1]
+    database.delete_last_event(conversation_id, tail["id"])
+    assert database.get_latest_summary(conversation_id)["through_sequence"] == 2
+
+
+def test_cancel_from_second_app_instance_reaches_active_turn(tmp_path):
+    import asyncio
+    import httpx
+
+    async def scenario():
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        class SlowGateway:
+            async def complete(self, messages):
+                started.set()
+                try:
+                    await asyncio.sleep(30)
+                except asyncio.CancelledError:
+                    cancelled.set()
+                    raise
+
+        database_path = str(tmp_path / "shared-apps.sqlite3")
+        first_database = Database(database_path)
+        second_database = Database(database_path)
+        conversation_id = first_database.create_conversation()["id"]
+        settings = Settings(database_path=database_path)
+        first_app = create_app(
+            settings=settings, gateway=SlowGateway(), database=first_database
+        )
+        second_app = create_app(
+            settings=settings, gateway=FakeGateway(), database=second_database
+        )
+        first_transport = httpx.ASGITransport(app=first_app)
+        second_transport = httpx.ASGITransport(app=second_app)
+
+        async with (
+            httpx.AsyncClient(transport=first_transport, base_url="http://first") as first,
+            httpx.AsyncClient(transport=second_transport, base_url="http://second") as second,
+        ):
+            turn = asyncio.create_task(first.post(
+                f"/api/v1/conversations/{conversation_id}/turns",
+                json={"content": "A deliberately slow request"},
+            ))
+            await asyncio.wait_for(started.wait(), timeout=3)
+            cancellation = await second.post(
+                f"/api/v1/conversations/{conversation_id}/cancel"
+            )
+            assert cancellation.status_code == 200
+            assert cancellation.json() == {"cancelled": True}
+            response = await asyncio.wait_for(turn, timeout=3)
+            assert response.status_code == 409
+            assert cancelled.is_set()
+
+        assert second_database.acquire_conversation_turn(
+            conversation_id, "post-cancel-verification"
+        )
+        assert second_database.release_conversation_turn(
+            conversation_id, "post-cancel-verification"
+        )
+
+    asyncio.run(scenario())
+
+
+def test_specialist_stream_includes_live_progress_events(tmp_path):
+    import asyncio
+    import httpx
+    from types import SimpleNamespace
+
+    async def scenario():
+        database_path = str(tmp_path / "specialist-progress.sqlite3")
+        database = Database(database_path)
+        registry = WorkerRegistry([
+            Worker(
+                "planner", "http://planner/v1", "planner",
+                frozenset({"planning"}), priority=1,
+            ),
+            Worker(
+                "coder", "http://coder/v1", "coder",
+                frozenset({"coding"}),
+            ),
+        ])
+
+        class ProgressOrchestrator:
+            async def run(
+                self, conversation_id, user_request, conversation_context="",
+                user_content=None, progress_callback=None,
+            ):
+                assert progress_callback is not None
+                progress_callback({
+                    "type": "plan.created",
+                    "execution_id": "execution-progress",
+                    "task_count": 1,
+                })
+                progress_callback({
+                    "type": "task.started",
+                    "execution_id": "execution-progress",
+                    "task_id": "implement",
+                })
+                progress_callback({
+                    "type": "task.succeeded",
+                    "execution_id": "execution-progress",
+                    "task_id": "implement",
+                })
+                progress_callback({
+                    "type": "execution.completed",
+                    "execution_id": "execution-progress",
+                    "status": "succeeded",
+                })
+                return SimpleNamespace(
+                    execution_id="execution-progress",
+                    answer="The specialist task completed successfully.",
+                )
+
+        app = create_app(
+            settings=Settings(database_path=database_path),
+            database=database,
+            registry=registry,
+            orchestrator=ProgressOrchestrator(),
+        )
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "CDS_AI",
+                    "task_type": "coding",
+                    "stream": True,
+                    "messages": [{
+                        "role": "user",
+                        "content": "Implement the requested feature",
+                    }],
+                },
+            )
+
+        assert response.status_code == 200
+        assert "event: progress" in response.text
+        assert '"type":"task.started"' in response.text
+        assert '"type":"execution.completed"' in response.text
+        assert "The specialist task completed successfully." in response.text
+        assert "data: [DONE]" in response.text
+
+    asyncio.run(scenario())

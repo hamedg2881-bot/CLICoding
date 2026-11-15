@@ -1,6 +1,6 @@
 # CDS_AI identity and conversation ownership
 
-**Status:** Ownership isolation and credential mapping implemented. Open WebUI header trust is conditional on private-network deployment.
+**Status:** Ownership isolation, environment-mapped tokens, durable token issue/revoke, per-principal rate limiting and admin audit export are implemented in source. Trusted Open WebUI header mode and production network boundaries still require live deployment verification.
 
 ## Authentication modes
 
@@ -45,8 +45,16 @@ When trusted-header mode is enabled, the global key is user-scoped (not an admin
 
 Existing conversations created before owner migration remain owned by `shared`. In multi-user mode, normal user principals cannot access those legacy records. Use an administrator to export or explicitly reassign legacy conversations before enabling multi-user mode. Do not auto-claim shared history for the first user who requests it.
 
+## Implemented token and operational controls
+
+- Administrators can issue and list tokens through `POST/GET /api/v1/admin/tokens` and revoke through `DELETE /api/v1/admin/tokens/{token_id}`.
+- Generated user tokens are cryptographically random; only SHA-256 hashes are stored. The plaintext is returned once at issuance.
+- Authentication remains enabled after the first token is issued, even if all issued tokens are later revoked.
+- Per-principal rate limiting is controlled by `CLICODING_RATE_LIMIT_PER_WINDOW` (default 120) and `CLICODING_RATE_LIMIT_WINDOW_SECONDS` (default 60).
+- Administrators can read paginated metadata-only audit events through `GET /api/v1/admin/audit`; bodies, prompts and bearer-token values are excluded.
+
 ## Remaining security work
 
-- The trusted-header mode depends on the deployment network boundary and does not sign the identity header.
-- Add rate limits, token rotation/revocation management, audit export, and explicit admin APIs.
-- Verify Open WebUI header behavior in a deployed multi-user acceptance test before enabling trusted-header mode.
+- The trusted-header mode depends on the deployment network boundary and does not sign the identity header. Verify Open WebUI header stripping/reinjection in a deployed multi-user acceptance test before enabling it.
+- Define audit retention, export signing, alerting and key-rotation procedures.
+- Cross-process turn locking/cancellation remains open; production must use one service worker until that gate is closed.

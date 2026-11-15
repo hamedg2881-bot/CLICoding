@@ -1,7 +1,7 @@
 """Workstation-side CDS_AI tool host; no machine tools run on the DGX model server."""
 
 from .tool_host import ToolApproval, ToolExecutionStore, WorkspaceToolHost
-from .client import CDSAIClient, CDSAIClientError, CDSAIChatResult
+from .client import CDSAIClient, CDSAIClientError, CDSAIChatResult, CDSAISandboxExecutor
 
 __all__ = [
     "ToolApproval",
@@ -10,4 +10,5 @@ __all__ = [
     "CDSAIClient",
     "CDSAIClientError",
     "CDSAIChatResult",
+    "CDSAISandboxExecutor",
 ]

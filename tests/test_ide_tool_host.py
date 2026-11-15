@@ -6,11 +6,14 @@ import pytest
 from cds_ai_ide_adapter.tool_host import ToolApproval, ToolExecutionStore, WorkspaceToolHost
 
 
-def make_host(tmp_path, approval=None):
+def make_host(tmp_path, approval=None, sandbox_executor=None):
     root = tmp_path / "workspace"
     root.mkdir(exist_ok=True)
     store = ToolExecutionStore(tmp_path / "tool-ledger.sqlite3")
-    return root, WorkspaceToolHost(root, "workspace-test", store, approval=approval)
+    return root, WorkspaceToolHost(
+        root, "workspace-test", store, approval=approval,
+        sandbox_executor=sandbox_executor,
+    )
 
 
 def call(name, arguments, call_id="call_1"):
@@ -145,45 +148,69 @@ def test_workspace_tool_catalog_has_no_general_shell_tool(tmp_path):
     assert not any("shell" in name or name == "run_command" for name in names)
 
 
-def test_dotnet_build_uses_fixed_command_restricted_environment_and_approval(tmp_path, monkeypatch):
-    import subprocess
-
-    root, host = make_host(tmp_path, approval=lambda request: True)
+def test_dotnet_build_routes_full_snapshot_to_existing_docker_sandbox(tmp_path, monkeypatch):
+    root = tmp_path / "workspace"
+    root.mkdir()
     (root / "Demo.csproj").write_text("<Project />", encoding="utf-8")
+    (root / "Program.cs").write_text("Console.WriteLine(42);", encoding="utf-8")
+    approval_callback = lambda request: True
     captured = {}
-    monkeypatch.setenv("CLICODING_API_KEY", "must-not-enter-child-process")
-    monkeypatch.setattr("cds_ai_ide_adapter.tool_host.shutil.which", lambda name: "/usr/bin/dotnet")
 
-    def fake_run(command, **kwargs):
-        captured["command"] = command
-        captured.update(kwargs)
-        return subprocess.CompletedProcess(command, 0, stdout="Build succeeded", stderr="")
+    def sandbox_executor(workspace_id, action, project_path, files, approval, cancellation):
+        captured.update({
+            "workspace_id": workspace_id,
+            "action": action,
+            "project_path": project_path,
+            "files": files,
+            "approval": approval,
+            "cancellation": cancellation,
+        })
+        return {
+            "status": "succeeded",
+            "exit_code": 0,
+            "stdout": "Build succeeded",
+            "stderr": "",
+        }
 
-    monkeypatch.setattr("cds_ai_ide_adapter.tool_host.subprocess.run", fake_run)
-    output = result(host.execute_tool_call(call(
-        "workspace_dotnet_build", {"project": "Demo.csproj"}
-    )))
-
-    assert output["status"] == "ok"
-    assert captured["command"] == [
-        "/usr/bin/dotnet", "build", str(root / "Demo.csproj"), "--no-restore"
-    ]
-    assert captured["shell"] is False
-    assert captured["cwd"] == root
-    assert "CLICODING_API_KEY" not in captured["env"]
-
-
-def test_dotnet_build_is_denied_without_explicit_approval(tmp_path, monkeypatch):
-    root, host = make_host(tmp_path)
-    (root / "Demo.csproj").write_text("<Project />", encoding="utf-8")
+    host = WorkspaceToolHost(
+        root,
+        "sandbox-build",
+        ToolExecutionStore(tmp_path / "sandbox-build.sqlite3"),
+        approval=approval_callback,
+        sandbox_executor=sandbox_executor,
+    )
     monkeypatch.setattr(
-        "cds_ai_ide_adapter.tool_host.subprocess.run",
-        lambda *args, **kwargs: pytest.fail("denied command must not execute"),
+        "cds_ai_ide_adapter.tool_host.subprocess.Popen",
+        lambda *args, **kwargs: pytest.fail("project code must never execute on the host"),
     )
     output = result(host.execute_tool_call(call(
         "workspace_dotnet_build", {"project": "Demo.csproj"}
     )))
-    assert output["status"] == "approval_denied"
+
+    assert output["status"] == "succeeded"
+    assert captured["workspace_id"] == "sandbox-build"
+    assert captured["action"] == "build"
+    assert captured["project_path"] == "Demo.csproj"
+    assert {item["path"] for item in captured["files"]} == {
+        "Demo.csproj", "Program.cs"
+    }
+    assert captured["approval"] is approval_callback
+
+
+def test_dotnet_build_is_unavailable_without_sandbox_and_never_falls_back_to_host(
+    tmp_path, monkeypatch
+):
+    root, host = make_host(tmp_path)
+    (root / "Demo.csproj").write_text("<Project />", encoding="utf-8")
+    monkeypatch.setattr(
+        "cds_ai_ide_adapter.tool_host.subprocess.Popen",
+        lambda *args, **kwargs: pytest.fail("host project execution must remain disabled"),
+    )
+    output = result(host.execute_tool_call(call(
+        "workspace_dotnet_build", {"project": "Demo.csproj"}
+    )))
+    assert output["status"] == "unavailable"
+    assert "host Build/Test is disabled" in output["error"]
 
 
 def test_idempotency_key_cannot_be_reused_with_different_arguments(tmp_path):
@@ -198,3 +225,153 @@ def test_idempotency_key_cannot_be_reused_with_different_arguments(tmp_path):
     )))
     assert first["content"] == "alpha"
     assert second["status"] == "conflict"
+
+
+def test_idempotency_scope_isolated_between_conversations(tmp_path):
+    root, host = make_host(tmp_path)
+    (root / "first.txt").write_text("first", encoding="utf-8")
+    invocation = call("workspace_list_files", {}, "reused_call_id")
+
+    first = result(host.execute_tool_call(invocation, conversation_id="conversation-one"))
+    (root / "second.txt").write_text("second", encoding="utf-8")
+    second = result(host.execute_tool_call(invocation, conversation_id="conversation-two"))
+
+    assert "first.txt" in first["files"]
+    assert "second.txt" not in first["files"]
+    assert "first.txt" in second["files"]
+    assert "second.txt" in second["files"]
+
+
+def test_workspace_tool_results_redact_credential_values(tmp_path):
+    root, host = make_host(tmp_path)
+    secret_api_key = "sk-abcdefghijklmnopqrstuvwx"
+    secret_bearer = "Bearer abcdefghijklmnopqrstuvwxyz012345"
+    (root / "config.txt").write_text(
+        f"api_key={secret_api_key}\nauthorization: {secret_bearer}\n",
+        encoding="utf-8",
+    )
+
+    read = result(host.execute_tool_call(call(
+        "workspace_read_file", {"path": "config.txt"}, "redact_read"
+    )))
+    searched = result(host.execute_tool_call(call(
+        "workspace_search_text", {"query": "api_key", "directory": "."}, "redact_search"
+    )))
+
+    serialized = json.dumps({"read": read, "searched": searched})
+    assert secret_api_key not in serialized
+    assert secret_bearer not in serialized
+    assert "[REDACTED]" in serialized
+
+
+def test_fixed_command_is_terminated_when_cancelled(tmp_path, monkeypatch):
+    import subprocess
+    import threading
+
+    root, host = make_host(tmp_path)
+    started = threading.Event()
+    cancelled = threading.Event()
+    captured = {}
+
+    class FakeProcess:
+        pid = 54321
+        returncode = -15
+
+        def __init__(self, command, **kwargs):
+            captured.update(kwargs)
+            self.calls = 0
+            self.terminated = False
+
+        def communicate(self, timeout=None):
+            self.calls += 1
+            if self.calls == 1:
+                started.set()
+                assert cancelled.wait(2)
+                raise subprocess.TimeoutExpired("fake-command", timeout)
+            assert self.terminated
+            return "partial stdout", "partial stderr"
+
+        def terminate(self):
+            self.terminated = True
+
+        def kill(self):
+            self.terminated = True
+
+    monkeypatch.setattr("cds_ai_ide_adapter.tool_host.shutil.which", lambda name: "/usr/bin/fake")
+    def signal_fake_process(_pid, _signal):
+        process = processes[0]
+        process.terminated = True
+
+    processes = []
+    original_init = FakeProcess.__init__
+
+    def tracked_init(self, command, **kwargs):
+        original_init(self, command, **kwargs)
+        processes.append(self)
+
+    FakeProcess.__init__ = tracked_init
+    monkeypatch.setattr("cds_ai_ide_adapter.tool_host.os.killpg", signal_fake_process)
+    monkeypatch.setattr("cds_ai_ide_adapter.tool_host.subprocess.Popen", FakeProcess)
+
+    def cancel_after_start():
+        assert started.wait(2)
+        cancelled.set()
+
+    cancel_thread = threading.Thread(target=cancel_after_start)
+    cancel_thread.start()
+    output = host._run_fixed_command(
+        ["fake", "build"], "workspace_dotnet_build", "Build",
+        require_approval=False, cancellation_event=cancelled,
+    )
+    cancel_thread.join(timeout=2)
+
+    assert output["status"] == "cancelled"
+    assert output["stdout"] == "partial stdout"
+    assert output["stderr"] == "partial stderr"
+    assert captured["shell"] is False
+
+
+def test_workspace_posix_write_rejects_symlink_destination_and_parent(tmp_path):
+    import os
+
+    if os.name == "nt" or os.open not in getattr(os, "supports_dir_fd", set()):
+        pytest.skip("directory-descriptor operations are POSIX-specific")
+    root, host = make_host(tmp_path, approval=lambda request: True)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("protected", encoding="utf-8")
+    (root / "linked.txt").symlink_to(outside)
+
+    symlink_write = result(host.execute_tool_call(call(
+        "workspace_write_file",
+        {"path": "linked.txt", "content": "overwrite"},
+        "write_symlink",
+    )))
+    assert symlink_write["status"] == "error"
+    assert outside.read_text(encoding="utf-8") == "protected"
+
+    outside_dir = tmp_path / "outside-dir"
+    outside_dir.mkdir()
+    (root / "linked-dir").symlink_to(outside_dir, target_is_directory=True)
+    parent_write = result(host.execute_tool_call(call(
+        "workspace_write_file",
+        {"path": "linked-dir/new.txt", "content": "escape"},
+        "write_parent_symlink",
+    )))
+    assert parent_write["status"] == "error"
+    assert not (outside_dir / "new.txt").exists()
+
+
+def test_workspace_posix_read_rejects_symlink_destination(tmp_path):
+    import os
+
+    if os.name == "nt" or os.open not in getattr(os, "supports_dir_fd", set()):
+        pytest.skip("directory-descriptor operations are POSIX-specific")
+    root, host = make_host(tmp_path)
+    outside = tmp_path / "private.txt"
+    outside.write_text("outside secret", encoding="utf-8")
+    (root / "private-link.txt").symlink_to(outside)
+
+    output = result(host.execute_tool_call(call(
+        "workspace_read_file", {"path": "private-link.txt"}, "read_symlink"
+    )))
+    assert output["status"] == "error"

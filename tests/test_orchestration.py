@@ -362,6 +362,8 @@ def test_code_artifact_contract_triggers_one_repair_attempt(tmp_path):
             ]
         )
 
+        captured = {}
+
         class RepairGateway:
             def __init__(self, worker_id):
                 self.worker_id = worker_id
@@ -369,6 +371,8 @@ def test_code_artifact_contract_triggers_one_repair_attempt(tmp_path):
 
             async def complete(self, messages):
                 self.calls += 1
+                if self.worker_id == "coding-primary" and self.calls == 2:
+                    captured["repair_messages"] = messages
                 if self.worker_id == "fast-reasoning" and self.calls > 1:
                     return Completion(
                         "Implementation:\n\n```python\n"
@@ -417,11 +421,26 @@ def test_code_artifact_contract_triggers_one_repair_attempt(tmp_path):
         orchestrator = MultiModelOrchestrator(
             db, CapabilityRouter(registry), gateway_factory=gateway_factory
         )
+        original_request = (
+            "Write a Python duplicate finder. Preserve this exact expected value: "
+            "{2: 2, 3: 3}; explain in Persian."
+        )
+        prior_context = "Earlier decision: retain API name duplicate_lookup_v2."
         result = await orchestrator.run(
-            conversation["id"], "Write a Python duplicate finder"
+            conversation["id"], original_request, prior_context
         )
 
         assert result.execution.succeeded
+        repair_system = captured["repair_messages"][0]["content"]
+        repair_user = captured["repair_messages"][1]["content"]
+        assert original_request in repair_user
+        assert "Repair requirement:" in repair_user
+        assert "{2: 2, 3: 3}" in repair_user
+        assert "explain in Persian" in repair_user
+        assert prior_context in repair_user
+        assert "preserving the entire original task contract" in repair_system
+        assert "Previous incomplete response" in repair_user
+        assert "The function counts values" in repair_user
         assert "def find_duplicates" in result.answer
         assert gateways["coding-primary"].calls == 2
         saved = db.get_execution(result.execution_id)
@@ -530,7 +549,7 @@ def test_full_original_request_and_acceptance_criteria_reach_workers_and_synthes
         assert prior_context in captured["worker_message"]
         assert prior_context in captured["synthesis_message"]
         assert "quote exact prior values" in captured["synthesis_system"]
-        assert "Never claim that information was persisted externally" in captured["synthesis_system"]
+        assert "Never claim external persistence" in captured["synthesis_system"]
         assert "{2: 2, 3: 3}" in result.answer
         assert "def find_duplicates" in result.answer
 
@@ -546,3 +565,158 @@ def test_code_artifact_detection_accepts_fenced_blocks_for_all_languages():
         )
         assert MultiModelOrchestrator._contains_code_artifact(output)
 
+
+
+def test_specialist_context_compaction_is_worker_budgeted(tmp_path):
+    async def scenario():
+        db = Database(str(tmp_path / "specialist-context.sqlite3"))
+        registry = WorkerRegistry([
+            Worker(
+                "small-coder", "http://coder/v1", "small-coder",
+                frozenset({"coding"}), context_window_tokens=2048,
+                max_output_tokens=256,
+            )
+        ])
+        calls = []
+
+        class SummarizingGateway:
+            async def complete(self, messages):
+                calls.append(messages)
+                return Completion("Compact factual continuity summary.", "small-coder")
+
+        orchestrator = MultiModelOrchestrator(
+            db,
+            CapabilityRouter(registry),
+            gateway_factory=lambda worker: SummarizingGateway(),
+        )
+        worker = registry.enabled_workers()[0]
+        long_context = "\n".join(
+            f"Conversation fact {index}: preserve the exact project decision and value."
+            for index in range(200)
+        )
+        compacted = await orchestrator._compact_context_for_worker(
+            worker, long_context, reserved_input_tokens=256
+        )
+
+        assert compacted.count("Compact factual continuity summary.") == len(calls)
+        assert "Conversation fact" not in compacted
+        assert len(calls) > 1
+        assert all(
+            "untrusted data" in message[0]["content"]
+            for message in calls
+        )
+
+    asyncio.run(scenario())
+
+
+def test_orchestrator_emits_structured_progress_events(tmp_path):
+    async def scenario():
+        db = Database(str(tmp_path / "orchestration-progress.sqlite3"))
+        conversation = db.create_conversation()
+        registry = WorkerRegistry([
+            Worker("planner", "http://planner/v1", "planner", frozenset({"planning"}), priority=1),
+            Worker("coder", "http://coder/v1", "coder", frozenset({"coding"})),
+            Worker("vision", "http://vision/v1", "vision", frozenset({"vision"})),
+            Worker("synth", "http://synth/v1", "synth", frozenset({"chat"}), priority=1),
+        ])
+        gateways = {}
+
+        def gateway_factory(worker):
+            gateways.setdefault(worker.id, FakeGateway(worker.id))
+            return gateways[worker.id]
+
+        events = []
+        orchestrator = MultiModelOrchestrator(
+            db,
+            CapabilityRouter(registry),
+            max_parallel_tasks=2,
+            gateway_factory=gateway_factory,
+        )
+        result = await orchestrator.run(
+            conversation["id"],
+            "Review code and screenshot",
+            "Prior conversation facts",
+            progress_callback=events.append,
+        )
+
+        assert result.execution.succeeded
+        assert events[0]["type"] == "plan.created"
+        assert events[0]["task_count"] == 2
+        assert sum(event["type"] == "task.started" for event in events) == 2
+        assert sum(event["type"] == "task.succeeded" for event in events) == 2
+        assert events[-1]["type"] == "execution.completed"
+        assert events[-1]["status"] == "succeeded"
+        assert all(event["execution_id"] == result.execution_id for event in events)
+
+    asyncio.run(scenario())
+
+
+def test_partial_execution_is_disclosed_in_final_answer(tmp_path):
+    async def scenario():
+        db = Database(str(tmp_path / "orchestration-partial.sqlite3"))
+        conversation = db.create_conversation()
+        registry = WorkerRegistry([
+            Worker("planner", "http://planner/v1", "planner", frozenset({"planning"}), priority=1),
+            Worker("coder", "http://coder/v1", "coder", frozenset({"coding"})),
+            Worker("reviewer", "http://reviewer/v1", "reviewer", frozenset({"review"})),
+            Worker("synth", "http://synth/v1", "synth", frozenset({"chat"}), priority=1),
+        ])
+        synthesis_messages = []
+
+        class PartialGateway:
+            def __init__(self, worker_id):
+                self.worker_id = worker_id
+
+            async def complete(self, messages):
+                if self.worker_id == "planner":
+                    plan = {
+                        "goal": "Implement and independently review the change",
+                        "acceptance_criteria": [
+                            "Implementation is provided",
+                            "Independent review findings are provided",
+                        ],
+                        "tasks": [
+                            {
+                                "task_id": "implement",
+                                "objective": "Implement the requested change",
+                                "required_capabilities": ["coding"],
+                                "expected_output": "Complete source code: def change():",
+                            },
+                            {
+                                "task_id": "review",
+                                "objective": "Perform the independent code review",
+                                "required_capabilities": ["review"],
+                                "expected_output": "Review findings",
+                            },
+                        ],
+                    }
+                    return Completion(json.dumps(plan), "planner")
+                if self.worker_id == "coder":
+                    return Completion("def change():\n    return True", "coder")
+                if self.worker_id == "reviewer":
+                    raise RuntimeError("review runtime unavailable")
+                synthesis_messages.append(messages)
+                raise RuntimeError("final synthesis runtime unavailable")
+
+        orchestrator = MultiModelOrchestrator(
+            db,
+            CapabilityRouter(registry),
+            gateway_factory=lambda worker: PartialGateway(worker.id),
+        )
+        result = await orchestrator.run(
+            conversation["id"],
+            "Implement the change and independently review it",
+        )
+
+        assert result.execution.results["implement"].status == "succeeded"
+        assert result.execution.results["review"].status == "failed"
+        assert "def change():" in result.answer
+        assert "Work not completed" in result.answer
+        assert "Perform the independent code review" in result.answer
+        assert "failed" in result.answer
+        assert "final synthesis was unavailable" in result.answer
+        assert "tasks completed" not in result.answer.lower()
+        assert "Work not completed" in synthesis_messages[0][1]["content"]
+        assert "Independent review findings are provided" in synthesis_messages[0][1]["content"]
+
+    asyncio.run(scenario())
