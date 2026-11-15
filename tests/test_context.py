@@ -87,6 +87,8 @@ def test_summary_redaction_masks_common_credential_shapes():
     )
     redacted = redact_sensitive_text(value)
     assert "super-secret-value" not in redacted
+    assert "api_key=" in redacted
+    assert "\\1\\2" not in redacted
     assert "topsecret" not in redacted
     assert "abcdefghijklmnopqrstuvwxyz" not in redacted
     assert "ghp_123456789012345678901234" not in redacted
