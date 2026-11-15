@@ -1303,7 +1303,7 @@ def create_app(
         edit_event_id: str | None = None,
     ):
         """Stream direct chat and validated function-tool deltas; persist only on success."""
-        system_messages = effective_system_messages(system_messages)
+        system_messages = effective_system_messages(system_messages, user_content=content)
         lock = conversation_locks.setdefault(conversation_id, asyncio.Lock())
         async with lock:
             # The preflight runs before the SSE body is opened. Fail closed if
